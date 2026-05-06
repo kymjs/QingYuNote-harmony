@@ -1,0 +1,83 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "storeFile": "/Users/kymjs/code/flutter/note/harmony/keys/qingyu.p12",
+          "storePassword": "0000001C2498ABE9D086BD597B3E3C5DC11BD208ED006AECAB7DDF6413B0C17962E5D2BDB29E1F02BBC1C50F",
+          "keyAlias": "qingyunote",
+          "keyPassword": "0000001CBDC84BF0BE55D6980F8FEF345A9683BF3091F7CF31A7B5D288C45032645C626F0DA0138AF704BC58",
+          "signAlg": "SHA256withECDSA",
+          "profile": "/Users/kymjs/code/flutter/note/harmony/keys/Release.p7b",
+          "certpath": "/Users/kymjs/code/flutter/note/harmony/keys/qingyu.cer"
+        }
+      },
+      {
+        "name": "debug",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "/Users/kymjs/.ohos/config/debug_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B317FEBD3D67C1EEF3CAED21A814DFC419E5911344C425E5F8664C397BE7F4D3E449D4D89F2E16F",
+          "profile": "/Users/kymjs/.ohos/config/debug_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/kymjs/.ohos/config/debug_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.p12",
+          "storePassword": "0000001BB3C045444BEFA7CBC4B1AFE277AE2B33B69AFA199A9D1BD269BFDEE4A832D8186F71A1DFF4FEDC"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "debug",
+        "signingConfig": "debug",
+        "targetSdkVersion": "6.0.0(20)",
+        "compatibleSdkVersion": "6.0.0(20)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      },
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "6.0.0(20)",
+        "compatibleSdkVersion": "6.0.0(20)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default",
+            "debug"
+          ]
+        }
+      ]
+    }
+  ]
+}

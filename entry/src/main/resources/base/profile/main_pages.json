@@ -1,0 +1,12 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/NoteEdit",
+    "pages/Settings",
+    "pages/RecycleBin",
+    "pages/About",
+    "pages/Feedback",
+    "pages/TagManage",
+    "pages/TagNoteAssign"
+  ]
+}

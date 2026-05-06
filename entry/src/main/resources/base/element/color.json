@@ -1,0 +1,88 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#FFF3F4F8"
+    },
+    {
+      "name": "app_background",
+      "value": "#FFF3F4F8"
+    },
+    {
+      "name": "card_background",
+      "value": "#FFFFFFFF"
+    },
+    {
+      "name": "panel_background",
+      "value": "#FFF0F2F7"
+    },
+    {
+      "name": "surface_muted",
+      "value": "#FFEEF1F6"
+    },
+    {
+      "name": "primary_text",
+      "value": "#FF111827"
+    },
+    {
+      "name": "secondary_text",
+      "value": "#FF6B7280"
+    },
+    {
+      "name": "tertiary_text",
+      "value": "#FF9CA3AF"
+    },
+    {
+      "name": "divider",
+      "value": "#FFE5E7EB"
+    },
+    {
+      "name": "card_border",
+      "value": "#FFE8EBF0"
+    },
+    {
+      "name": "accent",
+      "value": "#FF0DAA4A"
+    },
+    {
+      "name": "tag_text_accent",
+      "value": "#E50DAA4A"
+    },
+    {
+      "name": "accent_subtle",
+      "value": "#1A0DAA4A"
+    },
+    {
+      "name": "on_accent",
+      "value": "#FF0B0F14"
+    },
+    {
+      "name": "success",
+      "value": "#FF059669"
+    },
+    {
+      "name": "warning",
+      "value": "#FFD97706"
+    },
+    {
+      "name": "danger",
+      "value": "#FFDC2626"
+    },
+    {
+      "name": "danger_subtle",
+      "value": "#1ADC2626"
+    },
+    {
+      "name": "preview_background",
+      "value": "#FFFAFAFB"
+    },
+    {
+      "name": "editor_background",
+      "value": "#FFFFFFFF"
+    },
+    {
+      "name": "shadow_color",
+      "value": "#14000000"
+    }
+  ]
+}

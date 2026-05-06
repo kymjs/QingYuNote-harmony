@@ -1,0 +1,730 @@
+import type common from '@ohos.app.ability.common'
+import type { CreateNoteInput, Note, NoteFilePayload, NoteStateBlock, NoteSyncState, RecycleBinLoadResult,
+  UpdateNoteInput } from '../common/model/Note'
+import { Logger } from '../common/utils/Logger'
+import { MarkdownUtils } from '../common/utils/MarkdownUtils'
+import { NoteSortUtils } from '../common/utils/NoteSortUtils'
+import { NoteStateCodec } from '../common/utils/NoteStateCodec'
+import { IdUtils } from '../common/utils/IdUtils'
+import { DatabaseService } from './DatabaseService'
+import { FileService } from './FileService'
+import { AppContextHolder } from './AppContextHolder'
+import { PreferencesService } from './PreferencesService'
+import { WebDAVClient } from './WebDAVClient'
+
+export class NoteRepository {
+  private static instance: NoteRepository = new NoteRepository()
+  private initialized: boolean = false
+  private context: common.UIAbilityContext | undefined = undefined
+  private scheduleSyncHandler?: (noteId: string) => void
+  private notesVersion: number = 0
+  private cachedActiveNotes?: Note[]
+  private cachedAllNotes?: Note[]
+  private cachedActiveNotesVersion: number = -1
+  private cachedAllNotesVersion: number = -1
+  private notificationSuspendCount: number = 0
+  private pendingNotesChanged: boolean = false
+  /** 本地全量读盘时的并发度；仅缩短墙钟时间，不改变解析与合并顺序。 */
+  private static readonly LOAD_ALL_NOTES_CONCURRENCY: number = 6
+
+  static getInstance(): NoteRepository {
+    return NoteRepository.instance
+  }
+
+  async init(context?: common.UIAbilityContext): Promise<void> {
+    if (this.initialized) {
+      return
+    }
+    const resolvedContext: common.UIAbilityContext = context ?? AppContextHolder.getContext()
+    if (!resolvedContext) {
+      throw new Error('NoteRepository requires ability context')
+    }
+    await DatabaseService.getInstance().init(resolvedContext)
+    await FileService.getInstance().init(resolvedContext)
+    this.context = resolvedContext
+    this.notesVersion = 0
+    this.initialized = true
+  }
+
+  setScheduleSyncHandler(handler: (noteId: string) => void): void {
+    this.scheduleSyncHandler = handler
+  }
+
+  getNotesVersion(): number {
+    return this.notesVersion
+  }
+
+  notifyNotesChanged(): void {
+    if (this.notificationSuspendCount > 0) {
+      this.pendingNotesChanged = true
+      return
+    }
+    this.bumpVersion()
+  }
+
+  beginBulkNotification(): void {
+    this.notificationSuspendCount += 1
+  }
+
+  endBulkNotification(): void {
+    if (this.notificationSuspendCount <= 0) {
+      return
+    }
+    this.notificationSuspendCount -= 1
+    if (this.notificationSuspendCount === 0 && this.pendingNotesChanged) {
+      this.pendingNotesChanged = false
+      this.bumpVersion()
+    }
+  }
+
+  async createNote(input: CreateNoteInput): Promise<Note> {
+    await this.init()
+    const now = Date.now()
+    const id = IdUtils.uuid()
+    const trimmedContent = input.content
+    const resolvedTitle = input.title.trim().length > 0 ? input.title.trim() : MarkdownUtils.extractTitle(trimmedContent)
+    const state = NoteStateCodec.createDefaultState(id, resolvedTitle, now)
+    const note = this.createNoteFromState(state, trimmedContent, {
+      noteId: id,
+      remoteModified: 0,
+      deleted: false,
+      deletedAt: 0,
+      lastOperationAt: now,
+      syncStatus: 'pending'
+    }, input.tags)
+    await FileService.getInstance().writeNoteFile(note)
+    await DatabaseService.getInstance().upsertSyncState(this.toSyncState(note))
+    this.bumpVersion()
+    this.scheduleSyncHandler?.(id)
+    return note
+  }
+
+  async getNote(id: string): Promise<Note | null> {
+    await this.init()
+    const payload = await FileService.getInstance().readParsedNote(id)
+    if (!payload) {
+      return null
+    }
+    const syncState = await DatabaseService.getInstance().getSyncState(id)
+    return this.createNoteFromPayload(payload, syncState ?? undefined)
+  }
+
+  async listNotes(): Promise<Note[]> {
+    await this.init()
+    if (this.cachedActiveNotesVersion === this.notesVersion && this.cachedActiveNotes) {
+      return this.cloneNotes(this.cachedActiveNotes)
+    }
+    const notes = (await this.loadAllNotes()).filter((note: Note) => !note.deleted && note.deletedTime === 0)
+    const sortedNotes = NoteSortUtils.sortByLastEditedDesc(notes)
+    this.cachedActiveNotes = sortedNotes
+    this.cachedActiveNotesVersion = this.notesVersion
+    return this.cloneNotes(sortedNotes)
+  }
+
+  async listAllNotes(): Promise<Note[]> {
+    await this.init()
+    if (this.cachedAllNotesVersion === this.notesVersion && this.cachedAllNotes) {
+      return this.cloneNotes(this.cachedAllNotes)
+    }
+    const notes = await this.loadAllNotes()
+    const sortedNotes = NoteSortUtils.sortByLastEditedDesc(notes)
+    this.cachedAllNotes = sortedNotes
+    this.cachedAllNotesVersion = this.notesVersion
+    return this.cloneNotes(sortedNotes)
+  }
+
+  /**
+   * 本地回收站：同步库中 delete=1 的墓碑，以及笔记文件中 deleted_time=1 的条目。
+   */
+  async listRecycleBinNotes(): Promise<Note[]> {
+    await this.init()
+    const map: Map<string, Note> = new Map()
+    const tombstones = await DatabaseService.getInstance().listDeletedSyncStates()
+    for (const state of tombstones) {
+      const fromFile = await this.getNote(state.noteId)
+      if (fromFile) {
+        // 仅「回收站」条目（deleted_time=1）留在列表；彻底删除（如 2）或已还原的不展示
+        if (fromFile.deletedTime === 1) {
+          map.set(fromFile.id, fromFile)
+        }
+      } else {
+        map.set(state.noteId, this.createDeletedTombstoneNote(state))
+      }
+    }
+    const allLocal = await this.loadAllNotes()
+    for (const note of allLocal) {
+      if (note.deletedTime === 1) {
+        map.set(note.id, note)
+      }
+    }
+    return NoteSortUtils.sortByLastEditedDesc(Array.from(map.values()))
+  }
+
+  /**
+   * 在 listRecycleBinNotes 基础上合并远端：下载远程 .md 并解析，若文档状态中 deleted_time 为 1 则纳入列表。
+   * 仅存在于远端且未写入本地的条目 id 记入 remoteOnlyIds（打开详情前需 persistRemoteRecycleBinSnapshot）。
+   */
+  async listRecycleBinNotesMergedWithRemote(): Promise<RecycleBinLoadResult> {
+    const localNotes = await this.listRecycleBinNotes()
+    const map: Map<string, Note> = new Map()
+    localNotes.forEach((note: Note) => {
+      map.set(note.id, note)
+    })
+    const remoteOnlyIds: string[] = []
+    const context = AppContextHolder.tryGetContext()
+    if (!context) {
+      return { notes: localNotes, remoteOnlyIds: [] }
+    }
+    try {
+      await PreferencesService.getInstance().init(context)
+    } catch (_) {
+      return { notes: localNotes, remoteOnlyIds: [] }
+    }
+    const config = await PreferencesService.getInstance().getWebDAVConfig()
+    if (!config || !config.enabled || await PreferencesService.getInstance().isAuthInvalid()) {
+      return { notes: localNotes, remoteOnlyIds: [] }
+    }
+    try {
+      const remoteIds = await WebDAVClient.getInstance().listRemoteNotes()
+      for (let i = 0; i < remoteIds.length; i += 1) {
+        const noteId = remoteIds[i]
+        // 本地仅有墓碑或无文件时仍需拉远端；仅当本地已有 deleted_time=1 的完整 md 时再跳过，避免重复下载。
+        if (await this.hasRecycleBinMarkdownLocally(noteId)) {
+          continue
+        }
+        try {
+          const remoteStat = await WebDAVClient.getInstance().getRemoteStat(noteId)
+          if (!remoteStat.exists) {
+            continue
+          }
+          const raw = await WebDAVClient.getInstance().downloadNote(noteId)
+          const payload = NoteStateCodec.parseNoteFile(raw, noteId,
+            remoteStat.remoteModified > 0 ? remoteStat.remoteModified : Date.now())
+          if (payload.state.deletedTime !== 1) {
+            continue
+          }
+          const existingSync = await DatabaseService.getInstance().getSyncState(noteId)
+          const fallbackSync: NoteSyncState = {
+            noteId,
+            remoteModified: remoteStat.remoteModified > 0 ? remoteStat.remoteModified : payload.modifiedAt,
+            deleted: false,
+            deletedAt: 0,
+            lastOperationAt: remoteStat.remoteModified > 0 ? remoteStat.remoteModified : payload.modifiedAt,
+            syncStatus: 'synced'
+          }
+          const merged = this.createNoteFromPayload(payload, existingSync ?? fallbackSync)
+          map.set(noteId, merged)
+          if (!(await FileService.getInstance().readParsedNote(noteId))) {
+            remoteOnlyIds.push(noteId)
+          }
+        } catch (error) {
+          Logger.warn('NoteRepository', `listRecycleBinNotesMergedWithRemote skip noteId=${noteId}: ${JSON.stringify(error)}`)
+        }
+      }
+    } catch (error) {
+      Logger.warn('NoteRepository', `listRecycleBinNotesMergedWithRemote remote branch failed: ${JSON.stringify(error)}`)
+    }
+    return {
+      notes: NoteSortUtils.sortByLastEditedDesc(Array.from(map.values())),
+      remoteOnlyIds
+    }
+  }
+
+  /** 将远端回收站快照写入本地后再编辑（GET WebDAV）。 */
+  async persistRemoteRecycleBinSnapshot(noteId: string): Promise<Note | null> {
+    await this.init()
+    const holderContext = AppContextHolder.tryGetContext()
+    if (!holderContext) {
+      return null
+    }
+    try {
+      await PreferencesService.getInstance().init(holderContext)
+    } catch (_) {
+      return null
+    }
+    const config = await PreferencesService.getInstance().getWebDAVConfig()
+    if (!config || !config.enabled) {
+      return null
+    }
+    try {
+      const remoteStat = await WebDAVClient.getInstance().getRemoteStat(noteId)
+      if (!remoteStat.exists) {
+        return null
+      }
+      const raw = await WebDAVClient.getInstance().downloadNote(noteId)
+      const payload = NoteStateCodec.parseNoteFile(raw, noteId,
+        remoteStat.remoteModified > 0 ? remoteStat.remoteModified : Date.now())
+      if (payload.state.deletedTime !== 1) {
+        return null
+      }
+      const syncedState: NoteSyncState = {
+        noteId,
+        remoteModified: remoteStat.remoteModified > 0 ? remoteStat.remoteModified : payload.modifiedAt,
+        deleted: false,
+        deletedAt: 0,
+        lastOperationAt: remoteStat.remoteModified > 0 ? remoteStat.remoteModified : payload.modifiedAt,
+        syncStatus: 'synced'
+      }
+      const note = this.createNoteFromPayload(payload, syncedState)
+      await FileService.getInstance().writeNoteFile(note)
+      await DatabaseService.getInstance().upsertSyncState(this.toSyncState(note))
+      this.bumpVersion()
+      return note
+    } catch (error) {
+      Logger.warn('NoteRepository', `persistRemoteRecycleBinSnapshot failed: ${JSON.stringify(error)}`)
+      return null
+    }
+  }
+
+  async saveDraft(id: string, patch: UpdateNoteInput): Promise<Note> {
+    await this.init()
+    const existing = await this.getNote(id)
+    if (!existing) {
+      throw new Error(`Note ${id} does not exist`)
+    }
+    const nextContent = patch.content ?? existing.content
+    const nextTitle = (patch.title ?? existing.title).trim()
+    const nextTags = patch.tags ?? existing.tags
+    const resolvedTitle = nextTitle.length > 0 ? nextTitle : MarkdownUtils.extractTitle(nextContent)
+    const nextSummary = MarkdownUtils.summary(nextContent)
+    const contentChanged = nextContent !== existing.content
+    const titleChanged = resolvedTitle !== existing.title
+    const summaryChanged = nextSummary !== existing.summary
+    const tagsChanged = !this.areTagsEqual(nextTags, existing.tags)
+    if (!contentChanged && !titleChanged && !summaryChanged && !tagsChanged) {
+      return this.cloneNote(existing)
+    }
+
+    const now = Date.now()
+    const updated: Note = this.cloneNote(existing)
+    updated.title = resolvedTitle
+    updated.content = nextContent
+    updated.tags = [...nextTags]
+    updated.summary = nextSummary
+    updated.localModified = now
+    updated.deleted = false
+    updated.deletedAt = 0
+    updated.lastOperationAt = now
+    updated.syncStatus = 'pending'
+    updated.updatedAt = now
+    await FileService.getInstance().writeNoteFile(updated)
+    await DatabaseService.getInstance().upsertSyncState(this.toSyncState(updated))
+    this.bumpVersion()
+    this.scheduleSyncHandler?.(id)
+    return updated
+  }
+
+  /**
+   * 回收站侧滑「删除」：front matter `deleted_time` 设为 2，条目不再出现在回收站列表。
+   * 无本地正文时清除同步库墓碑（等价于彻底移除该项）。
+   */
+  async setRecycleBinNoteDeletedTimePermanent(id: string): Promise<void> {
+    await this.init()
+    const now = Date.now()
+    let note = await this.getNote(id)
+    if (!note) {
+      note = await this.persistRemoteRecycleBinSnapshot(id)
+    }
+    if (!note) {
+      await DatabaseService.getInstance().deleteSyncState(id)
+      this.bumpVersion()
+      this.scheduleSyncHandler?.(id)
+      return
+    }
+    const updated = this.cloneNote(note)
+    updated.deletedTime = 2
+    updated.updatedAt = now
+    updated.lastOperationAt = now
+    updated.syncStatus = 'pending'
+    updated.deleted = true
+    if (updated.deletedAt <= 0) {
+      updated.deletedAt = now
+    }
+    await FileService.getInstance().writeNoteFile(updated)
+    await DatabaseService.getInstance().upsertSyncState(this.toSyncState(updated))
+    this.bumpVersion()
+    this.scheduleSyncHandler?.(id)
+  }
+
+  /**
+   * 回收站侧滑「还原」：`deleted_time` 设为 0，并清除本地删除同步状态。
+   */
+  async restoreRecycleBinNote(id: string): Promise<void> {
+    await this.init()
+    const now = Date.now()
+    let note = await this.getNote(id)
+    if (!note) {
+      note = await this.persistRemoteRecycleBinSnapshot(id)
+    }
+    if (!note) {
+      throw new Error('无法还原：缺少笔记数据')
+    }
+    const updated = this.cloneNote(note)
+    updated.deletedTime = 0
+    updated.deleted = false
+    updated.deletedAt = 0
+    updated.updatedAt = now
+    updated.lastOperationAt = now
+    updated.syncStatus = 'pending'
+    await FileService.getInstance().writeNoteFile(updated)
+    await DatabaseService.getInstance().clearDeleted(id, updated.remoteModified, now, 'pending')
+    this.bumpVersion()
+    this.scheduleSyncHandler?.(id)
+  }
+
+  async deleteNote(id: string, operationTime: number): Promise<void> {
+    await this.init()
+    const existing = await this.getNote(id)
+    if (!existing) {
+      await DatabaseService.getInstance().markDeleted(id, operationTime)
+      this.bumpVersion()
+      this.scheduleSyncHandler?.(id)
+      return
+    }
+    const updated = this.cloneNote(existing)
+    updated.deletedTime = 1
+    updated.updatedAt = operationTime
+    updated.lastOperationAt = operationTime
+    updated.syncStatus = 'pending'
+    updated.deleted = true
+    updated.deletedAt = operationTime
+    await FileService.getInstance().writeNoteFile(updated)
+    await DatabaseService.getInstance().upsertSyncState(this.toSyncState(updated))
+    this.bumpVersion()
+    this.scheduleSyncHandler?.(id)
+  }
+
+  /** 删除本地笔记文件并移除同步库记录（远端 `deleted_time` 为 2 时与远端一并清空）。 */
+  async purgeLocalNoteCompletely(noteId: string): Promise<void> {
+    await this.init()
+    const note = await this.getNote(noteId)
+    if (note !== null) {
+      await this.deleteImagesForNote(note.content)
+    }
+    await FileService.getInstance().deleteNoteFile(noteId)
+    await DatabaseService.getInstance().deleteSyncState(noteId)
+    this.bumpVersion()
+  }
+
+  async restoreNoteFromRemote(note: Note, content: string): Promise<void> {
+    await this.init()
+    await this.overwriteFromRemote(note.id, content, note.remoteModified)
+  }
+
+  async overwriteFromRemote(noteId: string, content: string, remoteModified: number): Promise<Note> {
+    await this.init()
+    const payload = NoteStateCodec.parseNoteFile(content, noteId, remoteModified > 0 ? remoteModified : Date.now())
+    payload.filePath = FileService.getInstance().getNotePath(noteId)
+    payload.modifiedAt = remoteModified > 0 ? remoteModified : payload.modifiedAt
+    const syncedState: NoteSyncState = {
+      noteId,
+      remoteModified,
+      deleted: false,
+      deletedAt: 0,
+      lastOperationAt: remoteModified > 0 ? remoteModified : payload.modifiedAt,
+      syncStatus: 'synced'
+    }
+    const updated = this.createNoteFromPayload(payload, syncedState)
+    await FileService.getInstance().writeNoteFile(updated)
+    await DatabaseService.getInstance().clearDeleted(noteId, remoteModified, syncedState.lastOperationAt, 'synced')
+    this.bumpVersion()
+    return updated
+  }
+
+  async startupRepair(): Promise<void> {
+    await this.init()
+    const noteIds = await FileService.getInstance().listNoteIds()
+    let repaired: boolean = false
+    let checkedNotes: number = 0
+    const syncStateMap = await this.loadSyncStateMap()
+    for (const noteId of noteIds) {
+      const payload = await FileService.getInstance().readParsedNote(noteId)
+      if (!payload) {
+        continue
+      }
+      const note = this.createNoteFromPayload(payload, syncStateMap.get(noteId))
+      if (!payload.hasStateBlock || payload.state.title !== note.title) {
+        await FileService.getInstance().writeNoteFile(note)
+        repaired = true
+      }
+      checkedNotes += 1
+      if (checkedNotes % 10 === 0) {
+        await this.yieldToMainThread()
+      }
+    }
+    if (repaired) {
+      this.bumpVersion()
+    }
+  }
+
+  private async loadAllNotes(): Promise<Note[]> {
+    const noteIds = await FileService.getInstance().listNoteIds()
+    const syncStateMap = await this.loadSyncStateMap()
+    if (noteIds.length === 0) {
+      return []
+    }
+    const slots: Array<Note | null> = this.createNullFilledArray(noteIds.length)
+    const workerCount = Math.min(NoteRepository.LOAD_ALL_NOTES_CONCURRENCY, noteIds.length)
+    let nextIndex: number = 0
+    const workers: Promise<void>[] = []
+    for (let w = 0; w < workerCount; w += 1) {
+      workers.push((async () => {
+        while (nextIndex < noteIds.length) {
+          const currentIndex = nextIndex
+          nextIndex += 1
+          const noteId = noteIds[currentIndex]
+          const payload = await FileService.getInstance().readParsedNote(noteId)
+          if (payload) {
+            slots[currentIndex] = this.createNoteFromPayload(payload, syncStateMap.get(noteId))
+          }
+        }
+      })())
+    }
+    await Promise.all(workers)
+    const notes: Note[] = []
+    for (let i = 0; i < slots.length; i += 1) {
+      const n = slots[i]
+      if (n !== null) {
+        notes.push(n)
+      }
+    }
+    return notes
+  }
+
+  private createNullFilledArray(length: number): Array<Note | null> {
+    const arr: Array<Note | null> = new Array(length)
+    for (let i = 0; i < length; i += 1) {
+      arr[i] = null
+    }
+    return arr
+  }
+
+  /**
+   * 本地已有笔记正文时不必再为回收站列表拉 WebDAV 覆盖：
+   * deleted_time=1 仍在回收站；=2 本地已彻底删除；=0 已还原待同步，远端可能仍为回收站，
+   * 若以本地为准则不可再合并远端回收站快照，否则还原后列表仍会出现该条。
+   */
+  private async hasRecycleBinMarkdownLocally(noteId: string): Promise<boolean> {
+    const payload = await FileService.getInstance().readParsedNote(noteId)
+    if (!payload) {
+      return false
+    }
+    const dt = payload.state.deletedTime
+    return dt === 0 || dt === 1 || dt === 2
+  }
+
+  private async loadSyncStateMap(): Promise<Map<string, NoteSyncState>> {
+    const syncStates = await DatabaseService.getInstance().listAllSyncStates()
+    const syncStateMap: Map<string, NoteSyncState> = new Map()
+    for (const syncState of syncStates) {
+      syncStateMap.set(syncState.noteId, syncState)
+    }
+    return syncStateMap
+  }
+
+  private createDeletedTombstoneNote(state: NoteSyncState): Note {
+    const fallback =
+      state.lastOperationAt > 0 ? state.lastOperationAt : (state.deletedAt > 0 ? state.deletedAt : Date.now())
+    const base = NoteStateCodec.createDefaultState(state.noteId, '', fallback)
+    return {
+      id: state.noteId,
+      title: '',
+      content: '',
+      tags: [],
+      imageRefs: [...base.imageRefs],
+      summary: '',
+      localModified: fallback,
+      remoteModified: state.remoteModified,
+      deleted: true,
+      deletedAt: state.deletedAt,
+      lastOperationAt: state.lastOperationAt,
+      syncStatus: state.syncStatus,
+      filePath: '',
+      createdAt: base.createdAt,
+      updatedAt: fallback,
+      parentId: base.parentId,
+      isConflict: base.isConflict,
+      latitude: base.latitude,
+      longitude: base.longitude,
+      altitude: base.altitude,
+      author: base.author,
+      sourceUrl: base.sourceUrl,
+      isTodo: base.isTodo,
+      todoDue: base.todoDue,
+      todoCompleted: base.todoCompleted,
+      source: base.source,
+      order: base.order,
+      userData: base.userData,
+      deletedTime: 0,
+      type_: base.type_
+    }
+  }
+
+  private createNoteFromPayload(payload: NoteFilePayload, syncState?: NoteSyncState, tags?: string[]): Note {
+    return this.createNoteFromState(payload.state, payload.content, syncState, tags, payload.filePath, payload.modifiedAt)
+  }
+
+  private createNoteFromState(state: NoteStateBlock, content: string, syncState?: NoteSyncState, tags?: string[],
+    filePath?: string, modifiedAt?: number): Note {
+    const resolvedTitle = state.title.trim().length > 0 ? state.title.trim() : MarkdownUtils.extractTitle(content)
+    const resolvedCreatedAt = state.createdAt > 0 ? state.createdAt : (modifiedAt ?? Date.now())
+    const resolvedUpdatedAt = state.updatedAt > 0 ? state.updatedAt : resolvedCreatedAt
+    const resolvedLocalModified = Math.max(resolvedUpdatedAt, modifiedAt ?? 0)
+    const effectiveSyncState = syncState ?? {
+      noteId: state.id,
+      remoteModified: 0,
+      deleted: false,
+      deletedAt: 0,
+      lastOperationAt: resolvedLocalModified,
+      syncStatus: 'pending'
+    }
+    const resolvedTags = tags ?? state.tags
+    const resolvedImageRefs: string[] = state.imageRefs ?? []
+    return {
+      id: state.id,
+      title: resolvedTitle,
+      content,
+      tags: [...resolvedTags],
+      imageRefs: resolvedImageRefs,
+      summary: MarkdownUtils.summary(content),
+      localModified: resolvedLocalModified,
+      remoteModified: effectiveSyncState.remoteModified,
+      deleted: effectiveSyncState.deleted,
+      deletedAt: effectiveSyncState.deletedAt,
+      lastOperationAt: effectiveSyncState.lastOperationAt > 0 ? effectiveSyncState.lastOperationAt : resolvedLocalModified,
+      syncStatus: effectiveSyncState.syncStatus,
+      filePath: filePath ?? FileService.getInstance().getNotePath(state.id),
+      createdAt: resolvedCreatedAt,
+      updatedAt: resolvedUpdatedAt,
+      parentId: state.parentId,
+      isConflict: state.isConflict,
+      latitude: state.latitude,
+      longitude: state.longitude,
+      altitude: state.altitude,
+      author: state.author,
+      sourceUrl: state.sourceUrl,
+      isTodo: state.isTodo,
+      todoDue: state.todoDue,
+      todoCompleted: state.todoCompleted,
+      source: state.source,
+      order: state.order,
+      userData: state.userData,
+      deletedTime: state.deletedTime,
+      type_: state.type_
+    }
+  }
+
+  private toSyncState(note: Note): NoteSyncState {
+    return {
+      noteId: note.id,
+      remoteModified: note.remoteModified,
+      deleted: note.deleted,
+      deletedAt: note.deletedAt,
+      lastOperationAt: note.lastOperationAt,
+      syncStatus: note.syncStatus
+    }
+  }
+
+  private bumpVersion(): void {
+    if (this.notificationSuspendCount > 0) {
+      this.pendingNotesChanged = true
+      return
+    }
+    this.notesVersion += 1
+    this.invalidateListCaches()
+  }
+
+  private invalidateListCaches(): void {
+    this.cachedActiveNotes = undefined
+    this.cachedAllNotes = undefined
+    this.cachedActiveNotesVersion = -1
+    this.cachedAllNotesVersion = -1
+  }
+
+  private cloneNotes(notes: Note[]): Note[] {
+    const clonedNotes: Note[] = []
+    for (const note of notes) {
+      clonedNotes.push(this.cloneNote(note))
+    }
+    return clonedNotes
+  }
+
+  private cloneNote(note: Note): Note {
+    return {
+      id: note.id,
+      title: note.title,
+      content: note.content,
+      tags: [...note.tags],
+      imageRefs: [...note.imageRefs],
+      summary: note.summary,
+      localModified: note.localModified,
+      remoteModified: note.remoteModified,
+      deleted: note.deleted,
+      deletedAt: note.deletedAt,
+      lastOperationAt: note.lastOperationAt,
+      syncStatus: note.syncStatus,
+      filePath: note.filePath,
+      createdAt: note.createdAt,
+      updatedAt: note.updatedAt,
+      parentId: note.parentId,
+      isConflict: note.isConflict,
+      latitude: note.latitude,
+      longitude: note.longitude,
+      altitude: note.altitude,
+      author: note.author,
+      sourceUrl: note.sourceUrl,
+      isTodo: note.isTodo,
+      todoDue: note.todoDue,
+      todoCompleted: note.todoCompleted,
+      source: note.source,
+      order: note.order,
+      userData: note.userData,
+      deletedTime: note.deletedTime,
+      type_: note.type_
+    }
+  }
+
+  private areTagsEqual(left: string[], right: string[]): boolean {
+    if (left.length !== right.length) {
+      return false
+    }
+    for (let index = 0; index < left.length; index += 1) {
+      if (left[index] !== right[index]) {
+        return false
+      }
+    }
+    return true
+  }
+
+  private async yieldToMainThread(): Promise<void> {
+    await new Promise<void>((resolve: () => void) => {
+      setTimeout(() => resolve(), 0)
+    })
+  }
+
+  private async deleteImagesForNote(content: string): Promise<void> {
+    const imageRefs = NoteStateCodec.extractImageRefs(content)
+    if (imageRefs.length === 0) {
+      return
+    }
+    const ctx = this.context
+    if (!ctx) {
+      return
+    }
+    const baseDir = ctx.filesDir
+    for (const ref of imageRefs) {
+      try {
+        const fileName = ref.split('/').pop() ?? ''
+        if (fileName.length === 0) {
+          continue
+        }
+        const localPath = `${baseDir}/qingyu-note-image/${fileName}`
+        if (FileService.fileExists(localPath)) {
+          FileService.deleteFile(localPath)
+        }
+      } catch (error) {
+        Logger.warn('NoteRepository', `deleteImagesForNote failed for ${ref}: ${JSON.stringify(error)}`)
+      }
+    }
+  }
+}

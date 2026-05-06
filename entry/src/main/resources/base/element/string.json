@@ -1,0 +1,88 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "轻羽云笔记主模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "轻羽云笔记入口能力"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "轻羽云笔记"
+    },
+    {
+      "name": "settings",
+      "value": "设置"
+    },
+    {
+      "name": "new_note",
+      "value": "新建笔记"
+    },
+    {
+      "name": "empty_notes",
+      "value": "还没有笔记，开始记录第一条灵感吧"
+    },
+    {
+      "name": "editor_title_placeholder",
+      "value": "输入标题"
+    },
+    {
+      "name": "editor_content_placeholder",
+      "value": "开始写作，支持 Markdown"
+    },
+    {
+      "name": "settings_webdav_title",
+      "value": "WebDAV 配置"
+    },
+    {
+      "name": "settings_sync_title",
+      "value": "同步选项"
+    },
+    {
+      "name": "about_title",
+      "value": "关于"
+    },
+    {
+      "name": "privacy_policy",
+      "value": "隐私政策"
+    },
+    {
+      "name": "feedback_title",
+      "value": "问题反馈"
+    },
+    {
+      "name": "feedback_hint_pc",
+      "value": "扫描二维码联系开发者"
+    },
+    {
+      "name": "feedback_hint_mobile",
+      "value": "长按保存二维码联系开发者"
+    },
+    {
+      "name": "tag_manage",
+      "value": "标签管理"
+    },
+    {
+      "name": "recycle_bin_title",
+      "value": "回收站"
+    },
+    {
+      "name": "recycle_bin_empty",
+      "value": "回收站为空"
+    },
+    {
+      "name": "recycle_bin_loading",
+      "value": "正在加载…"
+    },
+    {
+      "name": "permission_internet_reason",
+      "value": "用于连接用户配置的 WebDAV 服务进行笔记同步"
+    },
+    {
+      "name": "permission_network_info_reason",
+      "value": "用于判断当前网络状态和仅 Wi-Fi 同步策略"
+    }
+  ]
+}

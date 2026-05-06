@@ -1,0 +1,112 @@
+{
+  "float": [
+    {
+      "name": "page_text_font_size",
+      "value": "17fp"
+    },
+    {
+      "name": "page_padding",
+      "value": "20vp"
+    },
+    {
+      "name": "card_radius",
+      "value": "16vp"
+    },
+    {
+      "name": "card_spacing",
+      "value": "14vp"
+    },
+    {
+      "name": "title_font_size",
+      "value": "26fp"
+    },
+    {
+      "name": "body_font_size",
+      "value": "15fp"
+    },
+    {
+      "name": "caption_font_size",
+      "value": "13fp"
+    },
+    {
+      "name": "toolbar_height",
+      "value": "40vp"
+    },
+    {
+      "name": "search_box_toolbar_height",
+      "value": "27vp"
+    },
+    {
+      "name": "edit_note_toolbar_height",
+      "value": "40vp"
+    },
+    {
+      "name": "search_box_height",
+      "value": "36vp"
+    },
+    {
+      "name": "editor_gap",
+      "value": "14vp"
+    },
+    {
+      "name": "fab_size",
+      "value": "56vp"
+    },
+    {
+      "name": "pill_radius",
+      "value": "22vp"
+    },
+    {
+      "name": "mark_size",
+      "value": "35vp"
+    },
+    {
+      "name": "toolbar_spacing_inline",
+      "value": "11vp"
+    },
+    {
+      "name": "toolbar_spacing_stack",
+      "value": "5vp"
+    },
+    {
+      "name": "toolbar_spacing_below",
+      "value": "13vp"
+    },
+    {
+      "name": "toolbar_spacing_section",
+      "value": "16vp"
+    },
+    {
+      "name": "toolbar_spacing_content",
+      "value": "11vp"
+    },
+    {
+      "name": "toolbar_page_padding_top",
+      "value": "10vp"
+    },
+    {
+      "name": "toolbar_editor_page_padding_top",
+      "value": "8vp"
+    },
+    {
+      "name": "toolbar_button_padding_h",
+      "value": "14vp"
+    },
+    {
+      "name": "toolbar_icon_button_padding_h",
+      "value": "10vp"
+    },
+    {
+      "name": "toolbar_back_icon_size",
+      "value": "18vp"
+    },
+    {
+      "name": "note_edit_back_icon_size",
+      "value": "22vp"
+    },
+    {
+      "name": "toolbar_scroll_padding_top",
+      "value": "6vp"
+    }
+  ]
+}

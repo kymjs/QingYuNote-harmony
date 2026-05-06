@@ -1,0 +1,751 @@
+import type { Note, NoteSyncState, SyncResult } from '../common/model/Note'
+import { DatabaseService } from './DatabaseService'
+import { NoteRepository } from './NoteRepository'
+import { PreferencesService } from './PreferencesService'
+import { WebDAVClient } from './WebDAVClient'
+import type { RemoteIndexEntry } from './WebDAVClient'
+import { FileService } from './FileService'
+import { TimeUtils } from '../common/utils/TimeUtils'
+import { NoteStateCodec } from '../common/utils/NoteStateCodec'
+import { Logger } from '../common/utils/Logger'
+import { AppContextHolder } from './AppContextHolder'
+
+const TOMBSTONE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+const FULL_SYNC_CONCURRENCY = 3
+const MEDIUM_SYNC_CONCURRENCY = 2
+const LOW_SYNC_CONCURRENCY = 1
+const MEDIUM_SYNC_NOTE_COUNT = 80
+const LARGE_SYNC_NOTE_COUNT = 200
+const MAX_RETRYABLE_SYNC_ATTEMPTS = 3
+const RETRY_DELAY_MS = 600
+
+interface RemoteStatSnapshot {
+  exists: boolean
+  remoteModified: number
+}
+
+interface ErrorLike {
+  code?: number | string
+  message?: string
+  name?: string
+}
+
+export class SyncService {
+  private static instance: SyncService = new SyncService()
+  private initialized: boolean = false
+  private scheduledTimers: Map<string, number> = new Map()
+  private noteLocks: Set<string> = new Set()
+  private currentSyncPromise?: Promise<SyncResult[]>
+  private syncRunning: boolean = false
+
+  static getInstance(): SyncService {
+    return SyncService.instance
+  }
+
+  async init(): Promise<void> {
+    if (this.initialized) {
+      return
+    }
+    await NoteRepository.getInstance().init()
+    NoteRepository.getInstance().setScheduleSyncHandler((noteId: string) => {
+      this.scheduleSync(noteId)
+    })
+    this.syncRunning = false
+    this.initialized = true
+  }
+
+  scheduleSync(noteId?: string): void {
+    void this.init().then(async () => {
+      const policy = await PreferencesService.getInstance().getSyncPolicy()
+      if (!policy.autoSync) {
+        return
+      }
+      if (noteId) {
+        this.cancelScheduledSync(noteId)
+        const timerId = setTimeout(() => {
+          void this.syncNote(noteId)
+          this.scheduledTimers.delete(noteId)
+        }, policy.debounceSeconds * 1000)
+        this.scheduledTimers.set(noteId, timerId)
+      } else {
+        this.cancelScheduledSync()
+        const timerId = setTimeout(() => {
+          void this.syncNow()
+          this.scheduledTimers.delete('__all__')
+        }, policy.debounceSeconds * 1000)
+        this.scheduledTimers.set('__all__', timerId)
+      }
+    })
+  }
+
+  cancelScheduledSync(noteId?: string): void {
+    if (noteId) {
+      const timerId = this.scheduledTimers.get(noteId)
+      if (timerId !== undefined) {
+        clearTimeout(timerId)
+        this.scheduledTimers.delete(noteId)
+      }
+      return
+    }
+    this.scheduledTimers.forEach((timerId: number) => clearTimeout(timerId))
+    this.scheduledTimers.clear()
+  }
+
+  async syncNow(): Promise<SyncResult[]> {
+    await this.init()
+    this.cancelScheduledSync()
+    if (this.currentSyncPromise) {
+      Logger.info('SyncService', 'syncNow reuse current sync promise')
+      return await this.currentSyncPromise
+    }
+    Logger.info('SyncService', 'syncNow start')
+    this.currentSyncPromise = this.performFullSync()
+    this.syncRunning = true
+    try {
+      const results = await this.currentSyncPromise
+      Logger.info('SyncService',
+        `syncNow success: total=${results.length}, failed=${results.filter((result: SyncResult) => !result.success).length}`)
+      return results
+    } finally {
+      this.currentSyncPromise = undefined
+      this.syncRunning = false
+      Logger.info('SyncService', 'syncNow finish')
+    }
+  }
+
+  async syncNote(noteId: string): Promise<SyncResult> {
+    await this.init()
+    if (this.noteLocks.has(noteId)) {
+      Logger.info('SyncService', `syncNote skipped by lock: noteId=${noteId}`)
+      return {
+        noteId,
+        success: true,
+        action: 'skip',
+        message: '同步中的笔记已复用当前任务',
+        remoteModified: 0
+      }
+    }
+    this.noteLocks.add(noteId)
+    try {
+      Logger.info('SyncService', `syncNote start: noteId=${noteId}`)
+      const syncState = await DatabaseService.getInstance().getSyncState(noteId)
+      const note = await NoteRepository.getInstance().getNote(noteId)
+      if (!note && !syncState) {
+        Logger.warn('SyncService', `syncNote aborted: local state missing, noteId=${noteId}`)
+        return {
+          noteId,
+          success: false,
+          action: 'skip',
+          message: '笔记不存在',
+          remoteModified: 0
+        }
+      }
+      const remoteStat = await this.safeRemoteStat(noteId)
+      if (syncState?.deleted) {
+        Logger.info('SyncService', `syncNote route deleted note: noteId=${noteId}`)
+        return await this.syncDeletedNote(noteId, syncState, remoteStat.remoteModified, remoteStat.exists)
+      }
+      if (!note) {
+        const remoteOnlyResult = await this.syncRemoteOnlyNote(noteId)
+        if (remoteOnlyResult !== null) {
+          return remoteOnlyResult
+        }
+        return {
+          noteId,
+          success: true,
+          action: 'skip',
+          message: '本地与远端都不存在',
+          remoteModified: 0
+        }
+      }
+      Logger.info('SyncService',
+        `syncNote state: noteId=${noteId}, deleted=${note.deleted}, localLastOperationAt=${note.lastOperationAt}, remoteExists=${remoteStat.exists}, remoteModified=${remoteStat.remoteModified}, contentLength=${note.content.length}`)
+      if (this.isLocallyEmptyNote(note)) {
+        Logger.info('SyncService', `syncNote skip upload empty note: noteId=${noteId}`)
+        return {
+          noteId,
+          success: true,
+          action: 'skip',
+          message: '本地笔记无标题且无内容且未入回收站，跳过上传',
+          remoteModified: 0
+        }
+      }
+      const rawContent = await FileService.getInstance().readNoteFile(noteId)
+      if (!remoteStat.exists) {
+        Logger.info('SyncService', `syncNote upload new note: noteId=${noteId}`)
+        const uploaded = await WebDAVClient.getInstance().uploadNote(noteId, rawContent, note.lastOperationAt, {
+          deletedTime: note.deletedTime,
+          contentLength: note.content.length
+        })
+        await this.syncImagesForNote(note, rawContent)
+        if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced',
+          uploaded.remoteModified || note.lastOperationAt, note.lastOperationAt)) {
+          NoteRepository.getInstance().notifyNotesChanged()
+        }
+        return {
+          noteId,
+          success: true,
+          action: 'upload',
+          message: '本地新笔记已上传',
+          remoteModified: uploaded.remoteModified || note.lastOperationAt
+        }
+      }
+      const compareResult = TimeUtils.compareWithTolerance(note.lastOperationAt, remoteStat.remoteModified)
+      Logger.info('SyncService', `syncNote compareResult: noteId=${noteId}, compareResult=${compareResult}`)
+      if (compareResult > 0) {
+        const remotePeek = await WebDAVClient.getInstance().downloadNote(noteId)
+        const purgePeek =
+          await this.applyRemotePermanentDeleteIfNeeded(noteId, remotePeek, remoteStat.remoteModified)
+        if (purgePeek !== null) {
+          return purgePeek
+        }
+        Logger.info('SyncService', `syncNote upload newer local note: noteId=${noteId}`)
+        const uploaded = await WebDAVClient.getInstance().uploadNote(noteId, rawContent, note.lastOperationAt, {
+          deletedTime: note.deletedTime,
+          contentLength: note.content.length
+        })
+        await this.syncImagesForNote(note, rawContent)
+        if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced',
+          uploaded.remoteModified || note.lastOperationAt, note.lastOperationAt)) {
+          NoteRepository.getInstance().notifyNotesChanged()
+        }
+        return {
+          noteId,
+          success: true,
+          action: 'upload',
+          message: '本地更新覆盖了远端',
+          remoteModified: uploaded.remoteModified || note.lastOperationAt
+        }
+      }
+      if (compareResult < 0) {
+        Logger.info('SyncService', `syncNote download newer remote note: noteId=${noteId}`)
+        const remoteContent = await WebDAVClient.getInstance().downloadNote(noteId)
+        const remotePermanent = await this.applyRemotePermanentDeleteIfNeeded(noteId, remoteContent,
+          remoteStat.remoteModified)
+        if (remotePermanent !== null) {
+          return remotePermanent
+        }
+        await NoteRepository.getInstance().overwriteFromRemote(noteId, remoteContent, remoteStat.remoteModified)
+        await this.downloadImagesForNote(noteId, remoteContent)
+        return {
+          noteId,
+          success: true,
+          action: 'download',
+          message: '远端更新已覆盖本地',
+          remoteModified: remoteStat.remoteModified
+        }
+      }
+      const remoteWhenEqual = await WebDAVClient.getInstance().downloadNote(noteId)
+      const purgeWhenEqual =
+        await this.applyRemotePermanentDeleteIfNeeded(noteId, remoteWhenEqual, remoteStat.remoteModified)
+      if (purgeWhenEqual !== null) {
+        return purgeWhenEqual
+      }
+      await this.downloadImagesForNote(noteId, remoteWhenEqual)
+      if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced', remoteStat.remoteModified, note.lastOperationAt)) {
+        NoteRepository.getInstance().notifyNotesChanged()
+      }
+      Logger.info('SyncService', `syncNote skip unchanged note: noteId=${noteId}`)
+      return {
+        noteId,
+        success: true,
+        action: 'skip',
+        message: '本地与远端一致',
+        remoteModified: remoteStat.remoteModified
+      }
+    } catch (error) {
+      const errorMessage = this.describeError(error as Object)
+      Logger.error('SyncService', `syncNote failed: noteId=${noteId}, error=${errorMessage}`)
+      if (errorMessage.includes('authentication')) {
+        await PreferencesService.getInstance().setAuthInvalid(true)
+      }
+      const syncState = await DatabaseService.getInstance().getSyncState(noteId)
+      if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'error', syncState?.remoteModified, syncState?.lastOperationAt)) {
+        NoteRepository.getInstance().notifyNotesChanged()
+      }
+      return {
+        noteId,
+        success: false,
+        action: 'skip',
+        message: errorMessage,
+        remoteModified: 0
+      }
+    } finally {
+      this.noteLocks.delete(noteId)
+      Logger.info('SyncService', `syncNote finish: noteId=${noteId}`)
+    }
+  }
+
+  async retryFailedNotes(): Promise<SyncResult[]> {
+    await this.init()
+    const pendingNoteIds = await DatabaseService.getInstance().listPendingNoteIds()
+    const localNotes = await NoteRepository.getInstance().listAllNotes()
+    return await this.runSyncBatchWithDeferredNotifications(
+      pendingNoteIds,
+      this.buildLocalNoteMap(localNotes),
+      FULL_SYNC_CONCURRENCY
+    )
+  }
+
+  async onNetworkRestored(): Promise<void> {
+    const policy = await PreferencesService.getInstance().getSyncPolicy()
+    if (!policy.autoSync || await PreferencesService.getInstance().isAuthInvalid()) {
+      return
+    }
+    await this.retryFailedNotes()
+  }
+
+  async restorePendingAfterLaunch(): Promise<void> {
+    const pendingNoteIds = await DatabaseService.getInstance().listPendingNoteIds()
+    if (pendingNoteIds.length > 0) {
+      await this.retryFailedNotes()
+    }
+    await DatabaseService.getInstance().purgeDeletedBefore(Date.now() - TOMBSTONE_RETENTION_MS)
+  }
+
+  private async performFullSync(): Promise<SyncResult[]> {
+    Logger.info('SyncService', 'performFullSync start')
+    await WebDAVClient.getInstance().ensureNotesDirectory()
+    const localNotes = await NoteRepository.getInstance().listAllNotes()
+    const tombstones = await DatabaseService.getInstance().listDeletedSyncStates()
+    const remoteIndexEntries = await WebDAVClient.getInstance().getRemoteIndexEntries()
+    const remoteNoteIds = remoteIndexEntries.size > 0
+      ? Array.from(remoteIndexEntries.keys())
+      : await WebDAVClient.getInstance().listRemoteNotes()
+    Logger.info('SyncService',
+      `performFullSync loaded state: localNotes=${localNotes.length}, deletedStates=${tombstones.length}, remoteNotes=${remoteNoteIds.length}, indexEntries=${remoteIndexEntries.size}`)
+    if (localNotes.length === 0 && remoteNoteIds.length === 0 && tombstones.length === 0) {
+      await PreferencesService.getInstance().setLastSyncTime(Date.now())
+      Logger.info('SyncService', 'performFullSync finish: no local or remote notes')
+      return []
+    }
+    const unionIds = new Set<string>()
+    const localNoteMap = this.buildLocalNoteMap(localNotes)
+    localNotes.forEach((note: Note) => unionIds.add(note.id))
+    tombstones.forEach((state: NoteSyncState) => unionIds.add(state.noteId))
+    remoteNoteIds.forEach((noteId: string) => unionIds.add(noteId))
+
+    const unionNoteIds = Array.from(unionIds)
+    const indexedSkippedResults: SyncResult[] = []
+    const noteIdsNeedingSync: string[] = []
+    unionNoteIds.forEach((noteId: string) => {
+      const indexedEntry = remoteIndexEntries.get(noteId)
+      if (this.canSkipByRemoteIndex(noteId, localNoteMap, indexedEntry)) {
+        indexedSkippedResults.push({
+          noteId,
+          success: true,
+          action: 'skip',
+          message: '索引判定未变化，跳过同步',
+          remoteModified: indexedEntry?.remoteModified ?? 0
+        })
+        return
+      }
+      noteIdsNeedingSync.push(noteId)
+    })
+    Logger.info('SyncService',
+      `performFullSync prefilter: total=${unionNoteIds.length}, skippedByIndex=${indexedSkippedResults.length}, needingSync=${noteIdsNeedingSync.length}`)
+    const fullSyncConcurrency = this.resolveFullSyncConcurrency(unionNoteIds.length)
+    const syncResults = await this.runSyncBatchWithDeferredNotifications(noteIdsNeedingSync, localNoteMap,
+      fullSyncConcurrency)
+    const results = [...indexedSkippedResults, ...syncResults]
+    const failedNoteIds = results
+      .filter((result: SyncResult) => !result.success)
+      .map((result: SyncResult) => result.noteId)
+    if (failedNoteIds.length > 0) {
+      Logger.warn('SyncService',
+        `performFullSync retry failed notes: failedCount=${failedNoteIds.length}, retryConcurrency=1`)
+      const retryLocalNotes = await NoteRepository.getInstance().listAllNotes()
+      const retryResults = await this.runSyncBatchWithDeferredNotifications(
+        failedNoteIds,
+        this.buildLocalNoteMap(retryLocalNotes),
+        1
+      )
+      this.mergeRetryResults(results, retryResults)
+      Logger.info('SyncService',
+        `performFullSync retry finish: retried=${retryResults.length}, remainingFailed=${results.filter((result: SyncResult) => !result.success).length}`)
+    }
+    const refreshedLocalNotes = await NoteRepository.getInstance().listAllNotes()
+    await WebDAVClient.getInstance().reconcileRemoteIndex(
+      refreshedLocalNotes.map((note: Note) => note.id),
+      []
+    )
+    await PreferencesService.getInstance().setLastSyncTime(Date.now())
+    Logger.info('SyncService',
+      `performFullSync finish: unionIds=${unionIds.size}, total=${results.length}, failed=${results.filter((result: SyncResult) => !result.success).length}`)
+    return results
+  }
+
+  private mergeRetryResults(results: SyncResult[], retryResults: SyncResult[]): void {
+    if (retryResults.length === 0 || results.length === 0) {
+      return
+    }
+    const retryMap: Map<string, SyncResult> = new Map()
+    retryResults.forEach((result: SyncResult) => retryMap.set(result.noteId, result))
+    for (let index = 0; index < results.length; index += 1) {
+      const current = results[index]
+      if (current.success) {
+        continue
+      }
+      const retried = retryMap.get(current.noteId)
+      if (!retried) {
+        continue
+      }
+      results[index] = retried
+    }
+  }
+
+  private async syncDeletedNote(noteId: string, syncState: NoteSyncState, remoteModified: number,
+    exists: boolean): Promise<SyncResult> {
+    if (!exists) {
+      if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced', 0, syncState.lastOperationAt)) {
+        NoteRepository.getInstance().notifyNotesChanged()
+      }
+      return {
+        noteId,
+        success: true,
+        action: 'skip',
+        message: '远端已不存在，删除状态完成',
+        remoteModified: 0
+      }
+    }
+    const compareResult = TimeUtils.compareWithTolerance(syncState.deletedAt, remoteModified)
+    if (compareResult > 0) {
+      const lastMs = syncState.deletedAt > 0 ? syncState.deletedAt : Date.now()
+      const rawContent = await FileService.getInstance().readNoteFile(noteId)
+      const payload = rawContent.length > 0 ? rawContent : NoteStateCodec.serializeRemoteRecycleBinFile(noteId, lastMs)
+      const uploaded = await WebDAVClient.getInstance().uploadNote(noteId, payload, lastMs, {
+        deletedTime: 1
+      })
+      const nextRemote = uploaded.remoteModified > 0 ? uploaded.remoteModified : lastMs
+      if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced', nextRemote, syncState.lastOperationAt)) {
+        NoteRepository.getInstance().notifyNotesChanged()
+      }
+      return {
+        noteId,
+        success: true,
+        action: 'delete',
+        message: '较新的本地删除已同步为远端回收站',
+        remoteModified: nextRemote
+      }
+    }
+    const remoteContent = await WebDAVClient.getInstance().downloadNote(noteId)
+    const tombstonePurge = await this.applyRemotePermanentDeleteIfNeeded(noteId, remoteContent, remoteModified)
+    if (tombstonePurge !== null) {
+      return tombstonePurge
+    }
+    await NoteRepository.getInstance().overwriteFromRemote(noteId, remoteContent, remoteModified)
+    await this.downloadImagesForNote(noteId, remoteContent)
+    return {
+      noteId,
+      success: true,
+      action: 'restore',
+      message: '远端更新较新，已恢复本地笔记',
+      remoteModified
+    }
+  }
+
+  /**
+   * 正文 trim 后为空，且标题为空或为占位「未命名笔记」（与列表解析一致），且 deleted_time 为 0 时，
+   * 视为空草稿，不应 PUT 到远端。
+   */
+  private isLocallyEmptyNote(note: Note): boolean {
+    if (note.deletedTime !== 0) {
+      return false
+    }
+    const bodyEmpty = note.content.trim().length === 0
+    if (!bodyEmpty) {
+      return false
+    }
+    const t = note.title.trim()
+    return t.length === 0 || t === '未命名笔记'
+  }
+
+  private async safeRemoteStat(noteId: string): Promise<RemoteStatSnapshot> {
+    try {
+      const remoteStat = await WebDAVClient.getInstance().getRemoteStat(noteId)
+      Logger.info('SyncService',
+        `safeRemoteStat success: noteId=${noteId}, exists=${remoteStat.exists}, remoteModified=${remoteStat.remoteModified}`)
+      return {
+        exists: remoteStat.exists,
+        remoteModified: remoteStat.remoteModified
+      }
+    } catch (error) {
+      Logger.warn('SyncService', `safeRemoteStat fallback for ${noteId}: ${JSON.stringify(error)}`)
+      return {
+        exists: false,
+        remoteModified: 0
+      }
+    }
+  }
+
+  private buildLocalNoteMap(notes: Note[]): Map<string, Note> {
+    const noteMap: Map<string, Note> = new Map()
+    notes.forEach((note: Note) => noteMap.set(note.id, note))
+    return noteMap
+  }
+
+  private async runSyncBatch(noteIds: string[], localNoteMap: Map<string, Note>, concurrency: number): Promise<SyncResult[]> {
+    if (noteIds.length === 0) {
+      return []
+    }
+    const results: Array<SyncResult | null> = new Array(noteIds.length).fill(null)
+    let nextIndex: number = 0
+    const workerCount = Math.min(concurrency, noteIds.length)
+    const workers: Promise<void>[] = []
+    for (let workerIndex = 0; workerIndex < workerCount; workerIndex += 1) {
+      workers.push((async () => {
+        while (nextIndex < noteIds.length) {
+          const currentIndex = nextIndex
+          nextIndex += 1
+          results[currentIndex] = await this.syncNoteByIdWithRetry(noteIds[currentIndex], localNoteMap)
+        }
+      })())
+    }
+    await Promise.all(workers)
+    const completedResults: SyncResult[] = []
+    for (const result of results) {
+      if (result !== null) {
+        completedResults.push(result as SyncResult)
+      }
+    }
+    return completedResults
+  }
+
+  private resolveFullSyncConcurrency(totalNoteCount: number): number {
+    if (totalNoteCount >= LARGE_SYNC_NOTE_COUNT) {
+      return LOW_SYNC_CONCURRENCY
+    }
+    if (totalNoteCount >= MEDIUM_SYNC_NOTE_COUNT) {
+      return MEDIUM_SYNC_CONCURRENCY
+    }
+    return FULL_SYNC_CONCURRENCY
+  }
+
+  private canSkipByRemoteIndex(noteId: string, localNoteMap: Map<string, Note>,
+    indexedEntry?: RemoteIndexEntry): boolean {
+    if (!indexedEntry) {
+      return false
+    }
+    const localNote = localNoteMap.get(noteId)
+    if (!localNote) {
+      return false
+    }
+    if (indexedEntry.remoteModified <= 0) {
+      return false
+    }
+    if (indexedEntry.deletedTime !== localNote.deletedTime) {
+      return false
+    }
+    if (indexedEntry.contentLength > 0 && indexedEntry.contentLength !== localNote.content.length) {
+      return false
+    }
+    return TimeUtils.compareWithTolerance(localNote.lastOperationAt, indexedEntry.remoteModified) === 0
+  }
+
+  private async runSyncBatchWithDeferredNotifications(noteIds: string[], localNoteMap: Map<string, Note>,
+    concurrency: number): Promise<SyncResult[]> {
+    NoteRepository.getInstance().beginBulkNotification()
+    try {
+      return await this.runSyncBatch(noteIds, localNoteMap, concurrency)
+    } finally {
+      NoteRepository.getInstance().endBulkNotification()
+    }
+  }
+
+  private async syncNoteById(noteId: string, localNoteMap: Map<string, Note>): Promise<SyncResult | null> {
+    const syncState = await DatabaseService.getInstance().getSyncState(noteId)
+    if (!localNoteMap.has(noteId) && !syncState?.deleted) {
+      return await this.syncRemoteOnlyNote(noteId)
+    }
+    return await this.syncNote(noteId)
+  }
+
+  private async syncNoteByIdWithRetry(noteId: string, localNoteMap: Map<string, Note>): Promise<SyncResult | null> {
+    let latestResult: SyncResult | null = null
+    for (let attempt = 1; attempt <= MAX_RETRYABLE_SYNC_ATTEMPTS; attempt += 1) {
+      try {
+        latestResult = await this.syncNoteById(noteId, localNoteMap)
+        if (!latestResult || latestResult.success || !this.isRetryableSyncMessage(latestResult.message)
+          || attempt >= MAX_RETRYABLE_SYNC_ATTEMPTS) {
+          return latestResult
+        }
+        Logger.warn('SyncService',
+          `syncNoteByIdWithRetry retry by failed result: noteId=${noteId}, attempt=${attempt}, message=${latestResult.message}`)
+      } catch (error) {
+        const errorMessage = this.describeError(error as Object)
+        if (!this.isRetryableSyncMessage(errorMessage) || attempt >= MAX_RETRYABLE_SYNC_ATTEMPTS) {
+          Logger.error('SyncService',
+            `syncNoteByIdWithRetry failed: noteId=${noteId}, attempt=${attempt}, error=${errorMessage}`)
+          return {
+            noteId,
+            success: false,
+            action: 'skip',
+            message: errorMessage,
+            remoteModified: 0
+          }
+        }
+        Logger.warn('SyncService',
+          `syncNoteByIdWithRetry retry by exception: noteId=${noteId}, attempt=${attempt}, error=${errorMessage}`)
+      }
+      await this.delay(RETRY_DELAY_MS * attempt)
+    }
+    return latestResult
+  }
+
+  private async syncRemoteOnlyNote(noteId: string): Promise<SyncResult | null> {
+    const remoteStat = await this.safeRemoteStat(noteId)
+    if (!remoteStat.exists) {
+      return null
+    }
+    const remoteContent = await WebDAVClient.getInstance().downloadNote(noteId)
+    const remotePermanent =
+      await this.applyRemotePermanentDeleteIfNeeded(noteId, remoteContent, remoteStat.remoteModified)
+    if (remotePermanent !== null) {
+      return remotePermanent
+    }
+    await NoteRepository.getInstance().overwriteFromRemote(noteId, remoteContent, remoteStat.remoteModified)
+    await this.downloadImagesForNote(noteId, remoteContent)
+    return {
+      noteId,
+      success: true,
+      action: 'download',
+      message: '远端笔记已回灌到本地',
+      remoteModified: remoteStat.remoteModified
+    }
+  }
+
+  /** 远端文件中 `deleted_time` 为 2 时表示彻底删除：删除 WebDAV 对象并清空本地。 */
+  private async applyRemotePermanentDeleteIfNeeded(noteId: string, remoteContent: string,
+    remoteModified: number): Promise<SyncResult | null> {
+    const fallbackTs = remoteModified > 0 ? remoteModified : Date.now()
+    const payload = NoteStateCodec.parseNoteFile(remoteContent, noteId, fallbackTs)
+    if (payload.state.deletedTime !== 2) {
+      return null
+    }
+    Logger.info('SyncService', `applyRemotePermanentDeleteIfNeeded: remote deleted_time=2, noteId=${noteId}`)
+    await WebDAVClient.getInstance().deleteNote(noteId)
+    await this.deleteImagesForNote(payload.content)
+    await NoteRepository.getInstance().purgeLocalNoteCompletely(noteId)
+    return {
+      noteId,
+      success: true,
+      action: 'delete',
+      message: '远端标记彻底删除，已移除本地与远端副本',
+      remoteModified: 0
+    }
+  }
+
+  private describeError(error: Object): string {
+    const detail = error as ErrorLike
+    const raw = JSON.stringify(error)
+    const fallbackRaw = raw.length > 0 && raw !== '{}' ? raw : `${error}`
+    return `code=${detail.code ?? 'n/a'}, name=${detail.name ?? 'n/a'}, message=${detail.message ?? 'n/a'}, raw=${fallbackRaw}`
+  }
+
+  private isRetryableSyncMessage(message: string): boolean {
+    const normalized = message.toLowerCase()
+    if (normalized.includes('authentication') || normalized.includes('not configured')) {
+      return false
+    }
+    return normalized.includes('timeout')
+      || normalized.includes('timed out')
+      || normalized.includes('network')
+      || normalized.includes('socket')
+      || normalized.includes('connect')
+      || normalized.includes('503')
+      || normalized.includes('502')
+      || normalized.includes('504')
+      || normalized.includes('429')
+      || normalized.includes('econn')
+      || normalized.includes('reset')
+  }
+
+  private async delay(ms: number): Promise<void> {
+    await new Promise<void>((resolve: () => void) => {
+      setTimeout(() => resolve(), ms)
+    })
+  }
+
+  private async syncImagesForNote(note: Note, content: string): Promise<void> {
+    const imageRefs = NoteStateCodec.extractImageRefs(content)
+    if (imageRefs.length === 0) {
+      return
+    }
+    const ctx = AppContextHolder.getContext()
+    if (!ctx) {
+      return
+    }
+    const baseDir = ctx.filesDir
+    for (const ref of imageRefs) {
+      try {
+        const fileName = ref.split('/').pop() ?? ''
+        if (fileName.length === 0) {
+          continue
+        }
+        const localPath = `${baseDir}/qingyu-note-image/${fileName}`
+        if (!FileService.fileExists(localPath)) {
+          continue
+        }
+        const bytes = FileService.readFileAsArrayBuffer(localPath)
+        await WebDAVClient.getInstance().uploadImage(fileName, bytes)
+      } catch (error) {
+        Logger.warn('SyncService', `syncImagesForNote failed for ${ref}: ${this.describeError(error as Object)}`)
+      }
+    }
+  }
+
+  private async downloadImagesForNote(noteId: string, content: string): Promise<void> {
+    const imageRefs = NoteStateCodec.extractImageRefs(content)
+    if (imageRefs.length === 0) {
+      return
+    }
+    const ctx = AppContextHolder.getContext()
+    if (!ctx) {
+      return
+    }
+    const baseDir = ctx.filesDir
+    for (const ref of imageRefs) {
+      try {
+        const fileName = ref.split('/').pop() ?? ''
+        if (fileName.length === 0) {
+          continue
+        }
+        const localPath = `${baseDir}/qingyu-note-image/${fileName}`
+        if (FileService.fileExists(localPath)) {
+          continue
+        }
+        const bytes = await WebDAVClient.getInstance().downloadImage(fileName)
+        FileService.writeFile(localPath, bytes)
+      } catch (error) {
+        Logger.warn('SyncService', `downloadImagesForNote failed for ${ref}: ${this.describeError(error as Object)}`)
+      }
+    }
+  }
+
+  private async deleteImagesForNote(content: string): Promise<void> {
+    const imageRefs = NoteStateCodec.extractImageRefs(content)
+    if (imageRefs.length === 0) {
+      return
+    }
+    const ctx = AppContextHolder.getContext()
+    if (!ctx) {
+      return
+    }
+    const baseDir = ctx.filesDir
+    for (const ref of imageRefs) {
+      try {
+        const fileName = ref.split('/').pop() ?? ''
+        if (fileName.length === 0) {
+          continue
+        }
+        const localPath = `${baseDir}/qingyu-note-image/${fileName}`
+        if (FileService.fileExists(localPath)) {
+          FileService.deleteFile(localPath)
+        }
+        await WebDAVClient.getInstance().deleteImage(fileName)
+      } catch (error) {
+        Logger.warn('SyncService', `deleteImagesForNote failed for ${ref}: ${this.describeError(error as Object)}`)
+      }
+    }
+  }
+}

@@ -1,0 +1,970 @@
+import type { Note, SyncResult, SyncStatus } from '../common/model/Note'
+import { DrawerModel } from '../common/model/DrawerModel'
+import { HomeDrawerLayer } from './HomeDrawerLayer'
+import { IndexNotesDataSource } from './IndexNotesDataSource'
+import { NoteRepository } from '../services/NoteRepository'
+import { SyncService } from '../services/SyncService'
+import { PreferencesService } from '../services/PreferencesService'
+import { AppContextHolder } from '../services/AppContextHolder'
+import { Logger } from '../common/utils/Logger'
+
+const BASE_SYNC_TIMEOUT_MS = 10 * 1000
+const PER_NOTE_SYNC_TIMEOUT_MS = 350
+const MAX_SYNC_TIMEOUT_MS = 3 * 60 * 1000
+/** 与 HomeDrawerLayer 内 DRAWER_SPAN 一致，用于全屏横向拖动手势计算行程。 */
+const DRAWER_OFFSCREEN_PAD = 20
+const DRAWER_SPAN = 248 + DRAWER_OFFSCREEN_PAD
+/** 松手吸附动画时长（抽屉已由手指实时拖动，此处仅收尾过渡）。 */
+const DRAWER_SNAP_MS = 220
+/** 搜索框输入防抖后再筛选列表，降低大库全文扫描频率。 */
+const SEARCH_DEBOUNCE_MS = 280
+const ALL_NOTES_TAG = '__ALL_NOTES__'
+
+@Entry
+@Component
+struct Index {
+  @State notes: Note[] = []
+  @State allNotes: Note[] = []
+  @State tags: string[] = []
+  @State selectedTag: string = ALL_NOTES_TAG
+  @State searchQuery: string = ''
+  @State searchExpanded: boolean = false
+  @State loading: boolean = true
+  @State syncing: boolean = false
+  @State refreshing: boolean = false
+  /** 抽屉开启比例 0～1：`DrawerModel` 为 @Observed，经 @Provide 由 HomeDrawerLayer @Consume（勿使用 `$drawerModel` 初始化子组件）。 */
+  @Provide('drawerModel') drawerModel: DrawerModel = new DrawerModel()
+  /** 菜单「汉堡」每次点击递增，子组件 @Watch 内切换开/关。 */
+  @State drawerToggleNonce: number = 0
+  /** 选标签或跳转前递增，子组件 @Watch 内吸附关闭。 */
+  @State drawerCloseNonce: number = 0
+  @State pageWidth: number = 360
+  private hasShownOnce: boolean = false
+  /** 当前水平拖动开始时抽屉进度，用于计算跟手位移。 */
+  private drawerPanStartProgress: number = 0
+  private searchFilterTimer: number = -1
+  private noteListDataSource: IndexNotesDataSource = new IndexNotesDataSource()
+
+  aboutToAppear(): void {
+    void this.initializeHome()
+  }
+
+  aboutToDisappear(): void {
+    this.clearSearchFilterTimer()
+  }
+
+  onPageShow(): void {
+    if (!this.hasShownOnce) {
+      this.hasShownOnce = true
+      return
+    }
+    void this.loadNotes(false)
+  }
+
+  private async initializeHome(): Promise<void> {
+    await this.loadNotes(this.notes.length === 0)
+    if (await this.shouldRunStartupSync()) {
+      void this.maybeSyncAfterInitialLoad()
+    }
+  }
+
+  private async loadNotes(showLoading: boolean = false): Promise<void> {
+    if (showLoading) {
+      this.loading = true
+    }
+    try {
+      await NoteRepository.getInstance().init()
+      const listedNotes = await NoteRepository.getInstance().listNotes()
+      this.allNotes = listedNotes
+      await this.refreshTagCatalog(listedNotes)
+      this.applyTagFilter()
+    } finally {
+      if (showLoading) {
+        this.loading = false
+      }
+    }
+  }
+
+  private async maybeSyncAfterInitialLoad(): Promise<void> {
+    const notesVersion = NoteRepository.getInstance().getNotesVersion()
+    this.syncing = true
+    try {
+      const results = await this.runSyncWithTimeout()
+      if (results.some((result: SyncResult) => !result.success)) {
+        const summary = this.summarizeSyncResult(results)
+        if (summary) {
+          this.showUserMessage(summary)
+        }
+      }
+    } catch (error) {
+      Logger.error('Index', `maybeSyncAfterInitialLoad failed: ${JSON.stringify(error)}`)
+      console.error(JSON.stringify(error))
+      this.showUserMessage(this.formatActionError('自动同步', error))
+    } finally {
+      try {
+        await this.refreshNotesIfChanged(notesVersion)
+      } finally {
+        this.syncing = false
+      }
+    }
+  }
+
+  private async shouldRunStartupSync(): Promise<boolean> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+    const config = await PreferencesService.getInstance().getWebDAVConfig()
+    if (!config || !config.enabled) {
+      return false
+    }
+    return !(await PreferencesService.getInstance().isAuthInvalid())
+  }
+
+  private async handleSyncNow(): Promise<void> {
+    if (this.syncing) {
+      return
+    }
+    const notesVersion = NoteRepository.getInstance().getNotesVersion()
+    this.syncing = true
+    try {
+      const results = await this.runSyncWithTimeout()
+      await this.refreshNotesIfChanged(notesVersion)
+      const summary = this.summarizeSyncResult(results)
+      if (summary) {
+        this.showUserMessage(summary)
+      }
+    } catch (error) {
+      Logger.error('Index', `handleSyncNow failed: ${JSON.stringify(error)}`)
+      console.error(JSON.stringify(error))
+      this.showUserMessage(this.formatActionError('同步', error))
+    } finally {
+      this.syncing = false
+    }
+  }
+
+  private async handlePullToRefresh(): Promise<void> {
+    if (this.syncing) {
+      this.refreshing = false
+      return
+    }
+    try {
+      await this.loadNotes(false)
+      await this.handleSyncNow()
+    } finally {
+      this.refreshing = false
+    }
+  }
+
+  private calculateSyncTimeoutMs(): number {
+    const noteCount = Math.max(this.notes.length, 1)
+    const computedTimeout = BASE_SYNC_TIMEOUT_MS + noteCount * PER_NOTE_SYNC_TIMEOUT_MS
+    return Math.min(computedTimeout, MAX_SYNC_TIMEOUT_MS)
+  }
+
+  private async runSyncWithTimeout(): Promise<SyncResult[]> {
+    let timerId: number | undefined = undefined
+    const timeoutMs = this.calculateSyncTimeoutMs()
+    const timeoutPromise = new Promise<SyncResult[]>((_, reject) => {
+      timerId = setTimeout(() => {
+        Logger.warn('Index', `runSyncWithTimeout timeout reached: timeoutMs=${timeoutMs}, notesCount=${this.notes.length}`)
+        reject(new Error('sync timeout'))
+      }, timeoutMs)
+    })
+    try {
+      const results = await Promise.race([
+        SyncService.getInstance().syncNow(),
+        timeoutPromise
+      ])
+      return results
+    } finally {
+      if (timerId !== undefined) {
+        clearTimeout(timerId)
+      }
+    }
+  }
+
+  private async handleDelete(noteId: string): Promise<void> {
+    const previousAllNotes = [...this.allNotes]
+    this.allNotes = this.allNotes.filter((note: Note) => note.id !== noteId)
+    this.applyTagFilter()
+    try {
+      await NoteRepository.getInstance().deleteNote(noteId, Date.now())
+      await this.refreshTagCatalog(this.allNotes)
+    } catch (error) {
+      this.allNotes = previousAllNotes
+      this.applyTagFilter()
+      await this.loadNotes(false)
+      console.error(JSON.stringify(error))
+      this.showUserMessage(this.formatActionError('删除', error))
+    }
+  }
+
+  private async openEditor(noteId?: string, openWithPreview: boolean = false): Promise<void> {
+    try {
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/NoteEdit',
+        params: {
+          noteId: noteId ?? '',
+          openWithPreview: openWithPreview
+        }
+      })
+    } catch (error) {
+      console.error(JSON.stringify(error))
+      this.showUserMessage(this.formatActionError('打开编辑页', error))
+    }
+  }
+
+  private async ensurePreferencesInitialized(): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+  }
+
+  private normalizeTags(tags: string[]): string[] {
+    const seen: Set<string> = new Set()
+    const normalized: string[] = []
+    for (const rawTag of tags) {
+      const tag = `${rawTag ?? ''}`.trim()
+      if (tag.length === 0 || seen.has(tag)) {
+        continue
+      }
+      seen.add(tag)
+      normalized.push(tag)
+    }
+    normalized.sort((left: string, right: string) => left.localeCompare(right, 'zh-Hans-CN'))
+    return normalized
+  }
+
+  private extractTagsFromNotes(notes: Note[]): string[] {
+    const collected: string[] = []
+    for (const note of notes) {
+      for (const tag of note.tags) {
+        collected.push(tag)
+      }
+    }
+    return this.normalizeTags(collected)
+  }
+
+  private async refreshTagCatalog(notes: Note[]): Promise<void> {
+    await this.ensurePreferencesInitialized()
+    const storedTags = await PreferencesService.getInstance().getNoteTags()
+    const mergedTags = this.normalizeTags([
+      ...this.extractTagsFromNotes(notes),
+      ...storedTags
+    ])
+    this.tags = mergedTags
+    if (this.selectedTag !== ALL_NOTES_TAG && !mergedTags.includes(this.selectedTag)) {
+      this.selectedTag = ALL_NOTES_TAG
+    }
+  }
+
+  private clearSearchFilterTimer(): void {
+    if (this.searchFilterTimer !== -1) {
+      clearTimeout(this.searchFilterTimer)
+      this.searchFilterTimer = -1
+    }
+  }
+
+  /** 搜索框输入防抖后再执行筛选；其它路径（加载、删笔记等）请直接调用 applyTagFilter。 */
+  private scheduleSearchFilterApply(): void {
+    this.clearSearchFilterTimer()
+    this.searchFilterTimer = setTimeout(() => {
+      this.searchFilterTimer = -1
+      this.applyTagFilter()
+    }, SEARCH_DEBOUNCE_MS)
+  }
+
+  private applyTagFilter(): void {
+    let pool: Note[] = []
+    if (this.selectedTag === ALL_NOTES_TAG) {
+      pool = [...this.allNotes]
+    } else {
+      pool = this.allNotes.filter((note: Note) => note.tags.includes(this.selectedTag))
+    }
+    const raw = this.searchQuery.trim()
+    if (raw.length > 0) {
+      const q = raw.toLowerCase()
+      pool = pool.filter((note: Note) => {
+        const title = `${note.title ?? ''}`.toLowerCase()
+        const summaryText = `${note.summary ?? ''}`.toLowerCase()
+        return title.includes(q) || summaryText.includes(q)
+      })
+    }
+    this.updateNotes(pool)
+  }
+
+  private selectTag(tag: string): void {
+    if (tag === this.selectedTag) {
+      return
+    }
+    this.selectedTag = tag
+    this.applyTagFilter()
+    this.drawerCloseNonce += 1
+  }
+
+  private animateDrawerSnapTo(targetOpen: number): void {
+    const target = targetOpen >= 0.5 ? 1 : 0
+    if (Math.abs(this.drawerModel.progress - target) < 0.001) {
+      return
+    }
+    this.getUIContext().animateTo({
+      duration: DRAWER_SNAP_MS,
+      curve: Curve.EaseOut
+    }, () => {
+      this.drawerModel.progress = target
+    })
+  }
+
+  private onDrawerPanStart(): void {
+    this.drawerPanStartProgress = this.drawerModel.progress
+  }
+
+  /** 手指拖动：进度随累计水平位移连续变化（行程含 OFFSCREEN_PAD，与 translate 一致）。 */
+  private onDrawerPanUpdate(event: GestureEvent): void {
+    const next = this.drawerPanStartProgress + event.offsetX / DRAWER_SPAN
+    if (next <= 0) {
+      this.drawerModel.progress = 0
+    } else if (next >= 1) {
+      this.drawerModel.progress = 1
+    } else {
+      this.drawerModel.progress = next
+    }
+  }
+
+  /** 手指抬起：按当前位置过半吸附到完全开或完全关（ArkTS 不便读取 velocity 时用位置判定）。 */
+  private onDrawerPanEnd(_event: GestureEvent): void {
+    this.animateDrawerSnapTo(this.drawerModel.progress >= 0.5 ? 1 : 0)
+  }
+
+  private async openTagEditor(): Promise<void> {
+    this.drawerCloseNonce += 1
+    try {
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/TagManage'
+      })
+    } catch (error) {
+      console.error(JSON.stringify(error))
+      this.showUserMessage(this.formatActionError('打开标签页', error))
+    }
+  }
+
+  private async openRecycleBin(): Promise<void> {
+    this.drawerCloseNonce += 1
+    try {
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/RecycleBin'
+      })
+    } catch (error) {
+      console.error(JSON.stringify(error))
+      this.showUserMessage(this.formatActionError('打开回收站', error))
+    }
+  }
+
+  private async openAbout(): Promise<void> {
+    this.drawerCloseNonce += 1
+    try {
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/About'
+      })
+    } catch (error) {
+      console.error(JSON.stringify(error))
+      this.showUserMessage(this.formatActionError('打开关于页', error))
+    }
+  }
+
+  private async openWebDAVSettings(): Promise<void> {
+    try {
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/Settings'
+      })
+    } catch (error) {
+      console.error(JSON.stringify(error))
+      this.showUserMessage('打开设置页失败，请稍后重试')
+    }
+  }
+
+  private statusLabel(status: SyncStatus): string {
+    if (status === 'synced') {
+      return '已同步'
+    }
+    if (status === 'error') {
+      return '错误'
+    }
+    return '待同步'
+  }
+
+  private statusColor(status: SyncStatus): ResourceColor {
+    if (status === 'synced') {
+      return $r('app.color.success')
+    }
+    if (status === 'error') {
+      return $r('app.color.danger')
+    }
+    return $r('app.color.warning')
+  }
+
+  private shouldShowUnsyncedBadge(note: Note): boolean {
+    return note.syncStatus !== 'synced'
+  }
+
+  private updateNotes(notes: Note[]): void {
+    if (this.areNotesEqual(this.notes, notes)) {
+      return
+    }
+    this.notes = notes
+    this.noteListDataSource.replaceAll(notes)
+  }
+
+  private areNotesEqual(left: Note[], right: Note[]): boolean {
+    if (left.length !== right.length) {
+      return false
+    }
+    for (let index = 0; index < left.length; index += 1) {
+      if (left[index].id !== right[index].id || left[index].title !== right[index].title
+        || left[index].summary !== right[index].summary || left[index].updatedAt !== right[index].updatedAt
+        || left[index].syncStatus !== right[index].syncStatus) {
+        return false
+      }
+    }
+    return true
+  }
+
+  private noteListItemKey(note: Note): string {
+    return `${note.id}:${note.title}:${note.summary}:${note.syncStatus}:${note.updatedAt}`
+  }
+
+  private showUserMessage(message: string): void {
+    if (message.trim().length === 0) {
+      return
+    }
+    try {
+      this.getUIContext().getPromptAction().showToast({
+        message,
+        duration: 2000
+      })
+    } catch (error) {
+      console.error(`showToast failed: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private formatActionError(actionLabel: string, error: Object | string | undefined): string {
+    let rawMessage = ''
+    if (typeof error === 'string') {
+      rawMessage = error
+    } else {
+      const serialized = JSON.stringify(error)
+      rawMessage = serialized && serialized !== '{}' ? serialized : `${error ?? ''}`
+    }
+    const normalizedMessage = rawMessage.toLowerCase()
+    if (normalizedMessage.includes('authentication')) {
+      return `${actionLabel}失败：账号或密码可能已失效，请检查同步设置`
+    }
+    if (normalizedMessage.includes('not configured')) {
+      return `${actionLabel}失败：请先完成 WebDAV 配置`
+    }
+    if (normalizedMessage.includes('timeout')) {
+      return `${actionLabel}失败：请求超时，请稍后重试`
+    }
+    if (normalizedMessage.includes('100002') || normalizedMessage.includes('uri error')
+      || normalizedMessage.includes('does not exist') || normalizedMessage.includes('not exist')) {
+      return `${actionLabel}失败：目标页面不可用`
+    }
+    return `${actionLabel}失败，请稍后重试`
+  }
+
+  private summarizeSyncResult(results: SyncResult[]): string | null {
+    if (results.length === 0) {
+      return '同步完成'
+    }
+    const failedResults = results.filter((result: SyncResult) => !result.success)
+    if (failedResults.length === 0) {
+      return '同步完成'
+    }
+    if (failedResults.length === 1 && failedResults[0].message.trim().length > 0) {
+      return `同步失败：${failedResults[0].message}`
+    }
+    return `同步完成，但有 ${failedResults.length} 条笔记同步失败`
+  }
+
+  private async refreshNotesIfChanged(previousVersion: number): Promise<void> {
+    if (NoteRepository.getInstance().getNotesVersion() === previousVersion) {
+      return
+    }
+    await this.loadNotes(false)
+  }
+
+  @Builder
+  private buildFab() {
+    Image($r('app.media.startIcon'))
+      .align(Alignment.Center)
+      .width($r('app.float.fab_size'))
+      .height($r('app.float.fab_size'))
+      .backgroundColor($r('app.color.accent'))
+      .borderRadius($r('app.float.fab_size'))
+      .padding(4)
+      .shadow({
+        radius: 20,
+        color: $r('app.color.shadow_color'),
+        offsetX: 0,
+        offsetY: 4
+      })
+      .onClick(() => {
+        if (this.searchExpanded) {
+          this.searchExpanded = false
+          return
+        }
+        void this.openEditor()
+      })
+  }
+
+  @Builder
+  private buildMenuAction() {
+    Row() {
+      Image($r('app.media.ic_menu'))
+        .width(22)
+        .height(22)
+        .objectFit(ImageFit.Contain)
+    }
+    .height( $r('app.float.search_box_height'))
+    .padding({
+      left: $r('app.float.toolbar_icon_button_padding_h'),
+      right: $r('app.float.toolbar_icon_button_padding_h')
+    })
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor($r('app.color.surface_muted'))
+    .borderRadius($r('app.float.pill_radius'))
+    .onClick(() => {
+      this.drawerToggleNonce += 1
+    })
+  }
+
+  @Builder
+  private buildSettingsAction() {
+    Row() {
+      Image($r('app.media.ic_setting'))
+        .width(22)
+        .height(22)
+        .objectFit(ImageFit.Contain)
+    }
+    .height($r('app.float.search_box_height'))
+    .padding({
+      left: $r('app.float.toolbar_icon_button_padding_h'),
+      right: $r('app.float.toolbar_icon_button_padding_h')
+    })
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor($r('app.color.surface_muted'))
+    .borderRadius($r('app.float.pill_radius'))
+    .onClick(() => {
+      void this.openWebDAVSettings()
+    })
+  }
+
+  @Builder
+  private buildEmptyStateCard() {
+    Column({ space: 20 }) {
+      Column() {
+        Text('✦')
+          .fontSize(40)
+          .fontColor($r('app.color.accent'))
+          .opacity(0.85)
+        Text('从这里开始')
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.primary_text'))
+        Text($r('app.string.empty_notes'))
+          .fontSize($r('app.float.body_font_size'))
+          .fontColor($r('app.color.secondary_text'))
+          .textAlign(TextAlign.Center)
+          .lineHeight(24)
+      }
+      .width('100%')
+      .padding({ left: 28, right: 28, top: 36, bottom: 36 })
+      .backgroundColor($r('app.color.card_background'))
+      .borderRadius($r('app.float.card_radius'))
+      .border({ width: 1, color: $r('app.color.card_border') })
+      .shadow({
+        radius: 24,
+        color: $r('app.color.shadow_color'),
+        offsetX: 0,
+        offsetY: 6
+      })
+    }
+    .width('100%')
+    .padding({ top: 72, bottom: 24 })
+  }
+
+  @Builder
+  private buildRefreshableHomeContent() {
+    Column({ space: $r('app.float.toolbar_spacing_below') }) {
+      this.buildHomeHeader()
+
+      Stack() {
+        Refresh({ refreshing: $$this.refreshing }) {
+          this.buildHomeContentList()
+        }
+        .width('100%')
+        .height('100%')
+        .onRefreshing(() => {
+          void this.handlePullToRefresh()
+        })
+        if (this.searchExpanded) {
+          Row() {}
+            .width('100%')
+            .height('100%')
+            .backgroundColor('#01000000')
+            .onClick(() => {
+              this.searchExpanded = false
+            })
+        }
+      }
+      .layoutWeight(1)
+      .width('100%')
+    }
+    .width('100%')
+    .layoutWeight(1)
+  }
+
+  @Builder
+  private buildHomeContent() {
+    if (this.loading) {
+      this.buildLoadingState()
+    } else {
+      this.buildRefreshableHomeContent()
+    }
+  }
+
+  @Builder
+  private buildHomeLayout() {
+    Column() {
+      this.buildHomeContent()
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildUnsyncedBadge(note: Note) {
+    if (this.shouldShowUnsyncedBadge(note)) {
+      Row() {
+        Text(' ')
+          .width(6)
+          .height(6)
+          .borderRadius(3)
+          .backgroundColor(this.statusColor(note.syncStatus))
+      }
+      .padding(5)
+      .backgroundColor($r('app.color.card_background'))
+      .borderRadius(999)
+      .shadow({
+        radius: 6,
+        color: $r('app.color.shadow_color'),
+        offsetX: 0,
+        offsetY: 1
+      })
+      .margin({ top: 10, right: 10 })
+    }
+  }
+
+  @Builder
+  private buildSearchEmptyStateCard() {
+    Column({ space: 16 }) {
+      Text('未找到匹配的笔记')
+        .fontSize($r('app.float.body_font_size'))
+        .fontColor($r('app.color.secondary_text'))
+        .textAlign(TextAlign.Center)
+    }
+    .width('100%')
+    .padding({ top: 72, bottom: 24, left: 28, right: 28 })
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  private buildHomeHeader() {
+    Row({ space: $r('app.float.toolbar_spacing_inline') }) {
+      this.buildMenuAction()
+
+      if (this.searchExpanded) {
+        Row() {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(20)
+            .fontColor([$r('app.color.tertiary_text')])
+            .padding({ left: 10, right: 6 })
+            .focusable(false)
+          TextInput({ text: $$this.searchQuery, placeholder: '搜索标题或摘要' })
+            .layoutWeight(1)
+            .fontSize($r('app.float.body_font_size'))
+            .fontColor($r('app.color.primary_text'))
+            .placeholderColor($r('app.color.tertiary_text'))
+            .backgroundColor(Color.Transparent)
+            .border({ width: 0 })
+            .padding({ left: 0, right: 4, top: 0, bottom: 0 })
+            .onChange((_value: string) => {
+              this.scheduleSearchFilterApply()
+            })
+          if (this.searchQuery.trim().length > 0) {
+            Row() {
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(16)
+                .fontColor([$r('app.color.secondary_text')])
+            }
+            .padding({ left: 6, right: 10, top: 10, bottom: 10 })
+            .onClick(() => {
+              this.clearSearchFilterTimer()
+              this.searchQuery = ''
+              this.searchExpanded = false
+              this.applyTagFilter()
+            })
+          }
+        }
+        .layoutWeight(1)
+        .height($r('app.float.search_box_height'))
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor($r('app.color.card_background'))
+        .borderRadius(12)
+        .border({ width: 1, color: $r('app.color.card_border') })
+      } else {
+        Row({ space: 0 }) {
+          Text('轻羽云笔记')
+            .fontSize($r('app.float.title_font_size'))
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.primary_text'))
+            .letterSpacing(0.3)
+            .layoutWeight(1)
+            .padding({ top: 3})
+            .textAlign(TextAlign.Start)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Row({ space: 6 }) {
+            SymbolGlyph($r('sys.symbol.magnifyingglass'))
+              .fontSize(18)
+              .fontColor([$r('app.color.tertiary_text')])
+            Text('搜索')
+              .fontSize(14)
+              .fontColor($r('app.color.tertiary_text'))
+          }
+          .padding({ left: 18, right: 18, top: 8, bottom: 8 })
+          .offset({ y: 0 })
+          .backgroundColor($r('app.color.card_background'))
+          .borderRadius(12)
+          .border({ width: 1, color: $r('app.color.card_border') })
+          .onClick(() => {
+            this.searchExpanded = true
+          })
+        }
+        .layoutWeight(1)
+        .height($r('app.float.search_box_height'))
+        .alignItems(VerticalAlign.Center)
+      }
+
+      this.buildSettingsAction()
+    }
+    .width('100%')
+    .height($r('app.float.search_box_toolbar_height'))
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  private buildNoteCard(note: Note) {
+    Column({ space: 0 }) {
+      Row() {
+        Column({ space: 8 }) {
+          Row({ space: 6 }) {
+            Text(' ')
+              .width(6)
+              .height(6)
+              .borderRadius(3)
+              .backgroundColor(this.statusColor(note.syncStatus))
+
+            Text(note.title.length > 0 ? note.title : '无标题')
+              .fontSize(15)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.primary_text'))
+              .lineHeight(20)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          Text(note.summary.length > 0 ? note.summary : '暂无内容')
+            .fontSize(13)
+            .fontColor(note.summary.length > 0 ? $r('app.color.secondary_text') : $r('app.color.tertiary_text'))
+            .lineHeight(18)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+      .padding({ left: 2, right: 2, top: 4, bottom: 10 })
+      .alignItems(VerticalAlign.Center)
+
+      Text('')
+        .width('100%')
+        .height(1)
+        .backgroundColor($r('app.color.divider'))
+    }
+    .padding({ left: 6, right: 6 })
+    .onClick(() => {
+      const hasBody = note.content.trim().length > 0
+      void this.openEditor(note.id, hasBody)
+    })
+    .width('100%')
+  }
+
+  @Builder
+  private buildNoteDeleteAction(note: Note) {
+    Row() {
+      Text('删除')
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(Color.White)
+    }
+    .width(88)
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor($r('app.color.danger'))
+    .onClick(() => {
+      void this.handleDelete(note.id)
+    })
+  }
+
+  @Builder
+  private buildHomeContentList() {
+    List({ space: 4 }) {
+      if (this.notes.length === 0) {
+        ListItem() {
+          Column() {
+            if (this.searchQuery.trim().length > 0) {
+              this.buildSearchEmptyStateCard()
+            } else {
+              this.buildEmptyStateCard()
+            }
+          }
+          .width('100%')
+        }
+        .width('100%')
+      } else {
+        LazyForEach(this.noteListDataSource, (item: Object) => {
+          ListItem() {
+            this.buildNoteCard(item as Note)
+          }
+          .width('100%')
+          .swipeAction({
+            end: {
+              builder: () => {
+                this.buildNoteDeleteAction(item as Note)
+              },
+              actionAreaDistance: 88
+            },
+            edgeEffect: SwipeEdgeEffect.Spring
+          })
+        }, (item: Object) => this.noteListItemKey(item as Note))
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ top: 4, bottom: 0 })
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
+  }
+
+  @Builder
+  private buildLoadingState() {
+    Column({ space: 18 }) {
+      Column({ space: 16 }) {
+        LoadingProgress()
+          .width(36)
+          .height(36)
+          .color($r('app.color.accent'))
+        Text('正在加载笔记…')
+          .fontSize($r('app.float.body_font_size'))
+          .fontColor($r('app.color.secondary_text'))
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
+    }
+    .width('100%')
+    .layoutWeight(1)
+  }
+
+  build() {
+    Stack() {
+      Column() {
+        this.buildHomeLayout()
+      }
+      .padding({top:$r('app.float.toolbar_page_padding_top'),
+        left:$r('app.float.toolbar_page_padding_top'),
+        right:$r('app.float.toolbar_page_padding_top')})
+      .width('100%')
+      .height('100%')
+      .backgroundColor($r('app.color.app_background'))
+
+      HomeDrawerLayer({
+        tags: this.tags,
+        selectedTag: this.selectedTag,
+        allNotesTag: ALL_NOTES_TAG,
+        drawerToggleNonce: this.drawerToggleNonce,
+        drawerCloseNonce: this.drawerCloseNonce,
+        onTagSelected: (tag: string): void => {
+          this.selectTag(tag)
+        },
+        onOpenTagManage: (): void => {
+          void this.openTagEditor()
+        },
+        onOpenRecycleBin: (): void => {
+          void this.openRecycleBin()
+        },
+        onOpenAbout: (): void => {
+          void this.openAbout()
+        }
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .overlay(
+      this.buildFab(),
+      {
+        align: Alignment.BottomEnd,
+        offset: { x: -18, y: -40 }
+      }
+    )
+    .parallelGesture(
+      PanGesture({ direction: PanDirection.Horizontal, distance: 8 })
+        .onActionStart((_event: GestureEvent) => {
+          this.onDrawerPanStart()
+        })
+        .onActionUpdate((event: GestureEvent) => {
+          this.onDrawerPanUpdate(event)
+        })
+        .onActionEnd((event: GestureEvent) => {
+          this.onDrawerPanEnd(event)
+        })
+        .onActionCancel(() => {
+          this.animateDrawerSnapTo(this.drawerModel.progress >= 0.5 ? 1 : 0)
+        }),
+      GestureMask.Normal
+    )
+    .padding({
+      bottom: 0,
+      left: this.pageWidth >= 600 ? 28 : 0,
+      right: this.pageWidth >= 600 ? 28 : 0
+    })
+    .backgroundColor($r('app.color.app_background'))
+    .onAreaChange((_, value) => {
+      const nextWidth = Number.parseFloat(`${value.width}`) || 360
+      if (Math.abs(this.pageWidth - nextWidth) >= 1) {
+        this.pageWidth = nextWidth
+      }
+    })
+    .alignContent(Alignment.TopStart)
+  }
+}
