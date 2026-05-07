@@ -9,6 +9,7 @@ import { TimeUtils } from '../common/utils/TimeUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { Logger } from '../common/utils/Logger'
 import { AppContextHolder } from './AppContextHolder'
+import { SyncConstants } from '../common/constants/SyncConstants'
 
 const TOMBSTONE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const FULL_SYNC_CONCURRENCY = 3
@@ -30,6 +31,10 @@ interface ErrorLike {
   name?: string
 }
 
+/** eventHub 第二参需为显式类型，不可使用无类型对象字面量 `{}` */
+class QingyuSyncBlockedEventPayload {
+}
+
 export class SyncService {
   private static instance: SyncService = new SyncService()
   private initialized: boolean = false
@@ -37,6 +42,7 @@ export class SyncService {
   private noteLocks: Set<string> = new Set()
   private currentSyncPromise?: Promise<SyncResult[]>
   private syncRunning: boolean = false
+  private lastQingyuBlockNotifyMs: number = 0
 
   static getInstance(): SyncService {
     return SyncService.instance
@@ -115,6 +121,16 @@ export class SyncService {
 
   async syncNote(noteId: string): Promise<SyncResult> {
     await this.init()
+    if (!(await this.isQingyuSubscriptionSyncAllowed())) {
+      this.notifyQingyuSyncBlockedThrottled()
+      return {
+        noteId,
+        success: false,
+        action: 'skip',
+        message: '请开通轻羽云服务',
+        remoteModified: 0
+      }
+    }
     if (this.noteLocks.has(noteId)) {
       Logger.info('SyncService', `syncNote skipped by lock: noteId=${noteId}`)
       return {
@@ -305,7 +321,16 @@ export class SyncService {
 
   private async performFullSync(): Promise<SyncResult[]> {
     Logger.info('SyncService', 'performFullSync start')
-    await WebDAVClient.getInstance().ensureNotesDirectory()
+    if (!(await this.isQingyuSubscriptionSyncAllowed())) {
+      this.notifyQingyuSyncBlockedThrottled()
+      return []
+    }
+    try {
+      await WebDAVClient.getInstance().ensureNotesDirectory()
+    } catch (error) {
+      Logger.warn('SyncService',
+        `performFullSync ensureNotesDirectory failed (check WebDAVClient qingyu path + HEAD/PROPFIND diagnostics): ${this.describeError(error as Object)}`)
+    }
     const localNotes = await NoteRepository.getInstance().listAllNotes()
     const tombstones = await DatabaseService.getInstance().listDeletedSyncStates()
     const remoteIndexEntries = await WebDAVClient.getInstance().getRemoteIndexEntries()
@@ -373,6 +398,32 @@ export class SyncService {
     Logger.info('SyncService',
       `performFullSync finish: unionIds=${unionIds.size}, total=${results.length}, failed=${results.filter((result: SyncResult) => !result.success).length}`)
     return results
+  }
+
+  private async isQingyuSubscriptionSyncAllowed(): Promise<boolean> {
+    const cfg = await PreferencesService.getInstance().getWebDAVConfig()
+    if (cfg === null || cfg.provider !== 'qingyu_cloud' || !cfg.enabled) {
+      return true
+    }
+    const st = await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus()
+    if (st.kind === 'lifetime' || st.kind === 'active') {
+      return true
+    }
+    return false
+  }
+
+  private notifyQingyuSyncBlockedThrottled(): void {
+    const now = Date.now()
+    if (now - this.lastQingyuBlockNotifyMs < 2500) {
+      return
+    }
+    this.lastQingyuBlockNotifyMs = now
+    try {
+      AppContextHolder.tryGetContext()?.eventHub.emit(
+        SyncConstants.QINGYU_SYNC_BLOCKED_EVENT, new QingyuSyncBlockedEventPayload())
+    } catch (_) {
+      Logger.warn('SyncService', 'emit qingyu_sync_blocked failed')
+    }
   }
 
   private mergeRetryResults(results: SyncResult[], retryResults: SyncResult[]): void {

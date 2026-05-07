@@ -5,13 +5,13 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "storeFile": "/Users/kymjs/code/flutter/note/harmony/keys/qingyu.p12",
-          "storePassword": "0000001C2498ABE9D086BD597B3E3C5DC11BD208ED006AECAB7DDF6413B0C17962E5D2BDB29E1F02BBC1C50F",
+          "certpath": "/Users/kymjs/code/flutter/note/harmony/keys/qingyu.cer",
           "keyAlias": "qingyunote",
-          "keyPassword": "0000001CBDC84BF0BE55D6980F8FEF345A9683BF3091F7CF31A7B5D288C45032645C626F0DA0138AF704BC58",
-          "signAlg": "SHA256withECDSA",
+          "keyPassword": "0000001CD36337899FB75C8241CC09199E4721888A0356757879515BFC77169D50099E2E2B8BFA122F58CE48",
           "profile": "/Users/kymjs/code/flutter/note/harmony/keys/Release.p7b",
-          "certpath": "/Users/kymjs/code/flutter/note/harmony/keys/qingyu.cer"
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/kymjs/code/flutter/note/harmony/keys/qingyu.p12",
+          "storePassword": "0000001C9EB2B39CCF53502FF2124261D5AA9068F46498C3B2727474770751A9A2DA6F3E5BCF94AFE76AAD44"
         }
       },
       {
@@ -20,11 +20,11 @@
         "material": {
           "certpath": "/Users/kymjs/.ohos/config/debug_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001B317FEBD3D67C1EEF3CAED21A814DFC419E5911344C425E5F8664C397BE7F4D3E449D4D89F2E16F",
+          "keyPassword": "0000001B71959D29C8954C977B40D2CA1F287074638268A23CC8F531E9D4B1FC49DA411FA488384D6A131A",
           "profile": "/Users/kymjs/.ohos/config/debug_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.p7b",
           "signAlg": "SHA256withECDSA",
           "storeFile": "/Users/kymjs/.ohos/config/debug_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.p12",
-          "storePassword": "0000001BB3C045444BEFA7CBC4B1AFE277AE2B33B69AFA199A9D1BD269BFDEE4A832D8186F71A1DFF4FEDC"
+          "storePassword": "0000001B9F0E45094FCFF8C2BA69269AAF140015B85F621C376C649B028CC1DE41771CC9937D1258199A31"
         }
       }
     ],

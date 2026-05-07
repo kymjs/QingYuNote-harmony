@@ -30,7 +30,7 @@ struct Feedback {
     if (this.isWideLayout) {
       return
     }
-    const context = getContext(this) as common.UIAbilityContext
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext
     try {
       const rm = context.resourceManager
       const buf = await rm.getRawFileContent('wexin_kymjs.jpg')

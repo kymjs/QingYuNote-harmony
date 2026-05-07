@@ -1,167 +1,90 @@
-import { CryptoService } from '../services/CryptoService'
-import { PreferencesService } from '../services/PreferencesService'
-import { WebDAVClient } from '../services/WebDAVClient'
-import type { SyncPolicy, WebDAVConfig } from '../common/model/Note'
+import { Want } from '@kit.AbilityKit'
 import { AppContextHolder } from '../services/AppContextHolder'
-import { Logger } from '../common/utils/Logger'
+import { PreferencesService } from '../services/PreferencesService'
+import { runAppUpdateCheckManually } from '../services/AppUpdateUi'
 
-interface SettingsPayload {
-  config: WebDAVConfig
-  policy: SyncPolicy
-  reusedStoredPassword: boolean
-  effectivePasswordPresent: boolean
-}
-
-interface ErrorLike {
-  code?: number | string
-  message?: string
-  name?: string
+/** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展，用于退出登录后避免返回敏感页。 */
+interface RouterWithOptionalClear {
+  clear?: () => void
 }
 
 @Entry
 @Component
 struct Settings {
-  @State serverUrl: string = ''
-  @State username: string = ''
-  @State password: string = ''
-  @State notesDir: string = '/qingyu-notes/'
-  @State autoSync: boolean = true
-  @State syncIntervalMinutes: string = '60'
-  @State wifiOnly: boolean = false
-  @State testing: boolean = false
-  private storedEncryptedPassword: string = ''
-  private passwordTouched: boolean = false
+  @State accountTitle: string = ''
+  @State accountSubId: string = ''
+  /** 是否展示第二行用户唯一标识；默认隐藏，点击首项区域切换。 */
+  @State showUserIdentifier: boolean = false
 
   aboutToAppear(): void {
-    void this.loadSettings()
+    void this.loadAccountBanner()
   }
 
-  private async loadSettings(): Promise<void> {
+  onPageShow(): void {
+    void this.loadAccountBanner()
+  }
+
+  private async loadAccountBanner(): Promise<void> {
     const context = AppContextHolder.tryGetContext()
     if (context) {
       await PreferencesService.getInstance().init(context)
     }
-    const config = await PreferencesService.getInstance().getWebDAVConfig()
-    const policy = await PreferencesService.getInstance().getSyncPolicy()
-    if (config) {
-      this.serverUrl = config.baseUrl
-      this.username = config.username
-      this.notesDir = config.notesDir
-      this.storedEncryptedPassword = config.encryptedPassword
-      this.password = ''
-      this.passwordTouched = false
-    }
-    this.autoSync = policy.autoSync
-    this.syncIntervalMinutes = `${policy.syncIntervalMinutes}`
-    this.wifiOnly = policy.wifiOnly
-  }
-
-  private async buildConfigPayload(): Promise<SettingsPayload> {
-    const baseUrl = this.serverUrl.trim()
-    const username = this.username.trim()
-    const notesDir = this.notesDir.trim()
-    const hasTypedPassword = this.password.trim().length > 0
-    const shouldReuseStoredPassword = !this.passwordTouched && this.storedEncryptedPassword.length > 0
-    let encryptedPassword = ''
-    if (shouldReuseStoredPassword) {
-      encryptedPassword = this.storedEncryptedPassword
-    } else if (hasTypedPassword) {
-      encryptedPassword = await CryptoService.getInstance().encryptText(this.password)
-    }
-    const effectivePasswordPresent = encryptedPassword.length > 0
-    return {
-      config: {
-        baseUrl,
-        username,
-        encryptedPassword,
-        notesDir,
-        enabled: baseUrl.length > 0 && username.length > 0 && effectivePasswordPresent
-      },
-      policy: {
-        autoSync: this.autoSync,
-        syncIntervalMinutes: Number.parseInt(this.syncIntervalMinutes, 10) || 60,
-        wifiOnly: this.wifiOnly,
-        debounceSeconds: 5
-      },
-      reusedStoredPassword: shouldReuseStoredPassword,
-      effectivePasswordPresent
+    const wechatOn = await PreferencesService.getInstance().isWeChatLoggedIn()
+    const huaweiOn = await PreferencesService.getInstance().isHuaweiLoggedIn()
+    const wxId = (await PreferencesService.getInstance().getWeChatThirdPartyUserId()).trim()
+    const hwId = (await PreferencesService.getInstance().getHuaweiThirdPartyUserId()).trim()
+    const hwDisplayId = (await PreferencesService.getInstance().getHuaweiSettingsDisplayId()).trim()
+    if (wechatOn) {
+      this.accountTitle = '微信用户'
+      this.accountSubId = wxId
+    } else if (huaweiOn) {
+      this.accountTitle = '华为用户'
+      this.accountSubId = hwId.length > 0 ? hwId : hwDisplayId
+    } else {
+      this.accountTitle = '未登录'
+      this.accountSubId = ''
     }
   }
 
-  private async handleSave(): Promise<SettingsPayload> {
-    Logger.info('Settings',
-      `handleSave start: serverUrlEmpty=${this.serverUrl.trim().length === 0}, usernameEmpty=${this.username.trim().length === 0}, passwordEmpty=${this.password.trim().length === 0}, passwordTouched=${this.passwordTouched}, storedPasswordPresent=${this.storedEncryptedPassword.length > 0}, notesDir=${this.notesDir.trim()}`)
+  private async handleLogout(): Promise<void> {
     try {
-      const payload = await this.buildConfigPayload()
-      await PreferencesService.getInstance().saveWebDAVConfig(payload.config)
-      await PreferencesService.getInstance().saveSyncPolicy(payload.policy)
-      await PreferencesService.getInstance().setAuthInvalid(false)
-      this.storedEncryptedPassword = payload.config.encryptedPassword
-      this.passwordTouched = false
-      Logger.info('Settings',
-        `handleSave success: enabled=${payload.config.enabled}, notesDir=${payload.config.notesDir}, syncIntervalMinutes=${payload.policy.syncIntervalMinutes}, reusedStoredPassword=${payload.reusedStoredPassword}, effectivePasswordPresent=${payload.effectivePasswordPresent}`)
-      return payload
+      const context = AppContextHolder.tryGetContext()
+      if (context) {
+        await PreferencesService.getInstance().init(context)
+      }
+      await PreferencesService.getInstance().clearLoginSession()
+      const router = this.getUIContext().getRouter()
+      const routerWithClear = router as RouterWithOptionalClear
+      if (routerWithClear.clear !== undefined) {
+        routerWithClear.clear()
+      }
+      await router.replaceUrl({ url: 'pages/Login' })
     } catch (error) {
-      Logger.warn('Settings', `handleSave failed: ${this.describeError(error)}`)
-      throw this.toRuntimeError(error)
+      console.error(`handleLogout: ${JSON.stringify(error)}`)
+      try {
+        this.getUIContext().getPromptAction().showToast({
+          message: '退出登录失败，请稍后重试',
+          duration: 2000
+        })
+      } catch (_) {
+        console.error('handleLogout showToast failed')
+      }
     }
   }
 
-  private async handleSaveAndClose(): Promise<void> {
-    await this.handleSave()
-    this.getUIContext().getRouter().back()
-  }
-
-  private showUserMessage(message: string): void {
-    if (message.trim().length === 0) {
+  private openPrivacyPolicy(): void {
+    const context = AppContextHolder.tryGetContext()
+    if (context === undefined) {
       return
     }
-    try {
-      this.getUIContext().getPromptAction().showToast({
-        message,
-        duration: 2000
-      })
-    } catch (error) {
-      Logger.warn('Settings', `showToast failed: ${this.describeError(error as Object)}`)
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      entities: ['entity.system.browsable'],
+      uri: 'https://note.kymjs.com/private/harmony.html'
     }
-  }
-
-  private async handleTestConnection(): Promise<void> {
-    this.testing = true
-    Logger.info('Settings', 'handleTestConnection start')
-    try {
-      const payload = await this.handleSave()
-      if (!payload.config.enabled) {
-        this.showUserMessage('请先输入完整的 WebDAV 信息后再测试连接')
-        Logger.warn('Settings',
-          `handleTestConnection aborted: incomplete config, effectivePasswordPresent=${payload.effectivePasswordPresent}, reusedStoredPassword=${payload.reusedStoredPassword}`)
-        return
-      }
-      Logger.info('Settings', 'handleTestConnection save completed, invoking WebDAVClient.testConnection')
-      const success = await WebDAVClient.getInstance().testConnection()
-      Logger.info('Settings', `handleTestConnection result: success=${success}`)
-      this.showUserMessage(success ? '连接测试成功' : '连接测试失败')
-    } catch (error) {
-      Logger.warn('Settings', `handleTestConnection failed: ${this.describeError(error)}`)
-      if (this.isCredentialDecryptFailure(error)) {
-        this.showUserMessage('本地保存的 WebDAV 密码无效，请重新输入后重试')
-      } else {
-        this.showUserMessage('连接测试失败')
-      }
-    } finally {
-      this.testing = false
-      Logger.info('Settings', `handleTestConnection finish: testing=${this.testing}`)
-    }
-  }
-
-  @Builder
-  private buildSectionTitle(label: Resource) {
-    Text(label)
-      .fontSize(12)
-      .fontWeight(FontWeight.Medium)
-      .fontColor($r('app.color.tertiary_text'))
-      .letterSpacing(1.2)
-      .margin({ bottom: 4, left: 4 })
+    context.startAbility(want).catch((err: Error) => {
+      console.error(`openPrivacyPolicy: ${JSON.stringify(err)}`)
+    })
   }
 
   build() {
@@ -203,87 +126,177 @@ struct Settings {
       .alignItems(VerticalAlign.Center)
 
       Scroll() {
-        Column() {
-          Column({ space: 14 }) {
-            this.buildSectionTitle($r('app.string.settings_webdav_title'))
+        Column({ space: 12 }) {
+          Column({ space: 6 }) {
+            Text(this.accountTitle.length > 0 ? this.accountTitle : ' ')
+              .fontSize($r('app.float.body_font_size'))
+              .fontColor($r('app.color.primary_text'))
+              .width('100%')
+            if (this.accountSubId.length > 0 && this.showUserIdentifier) {
+              Text(this.accountSubId)
+                .fontSize(12)
+                .fontColor($r('app.color.tertiary_text'))
+                .width('100%')
+                .lineHeight(18)
+            }
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .padding({
+            left: 20,
+            right: 20,
+            top: 16,
+            bottom: 16
+          })
+          .backgroundColor($r('app.color.card_background'))
+          .borderRadius($r('app.float.card_radius'))
+          .border({ width: 1, color: $r('app.color.card_border') })
+          .shadow({
+            radius: 20,
+            color: $r('app.color.shadow_color'),
+            offsetX: 0,
+            offsetY: 4
+          })
+          .onClick(() => {
+            if (this.accountSubId.length > 0) {
+              this.showUserIdentifier = !this.showUserIdentifier
+            }
+          })
 
-            TextInput({ text: this.serverUrl, placeholder: 'https://dav.example.com/remote.php/dav/files/user' })
-              .fontSize($r('app.float.body_font_size'))
-              .fontColor($r('app.color.primary_text'))
-              .placeholderColor($r('app.color.tertiary_text'))
-              .backgroundColor($r('app.color.editor_background'))
-              .borderRadius(12)
-              .border({ width: 1, color: $r('app.color.card_border') })
-              .padding({ left: 14, right: 14 })
-              .onChange((value: string) => {
-                this.serverUrl = value
-              })
-            TextInput({ text: this.username, placeholder: '账号' })
-              .fontSize($r('app.float.body_font_size'))
-              .fontColor($r('app.color.primary_text'))
-              .placeholderColor($r('app.color.tertiary_text'))
-              .backgroundColor($r('app.color.editor_background'))
-              .borderRadius(12)
-              .border({ width: 1, color: $r('app.color.card_border') })
-              .padding({ left: 14, right: 14 })
-              .onChange((value: string) => {
-                this.username = value
-              })
-            TextInput({ text: this.password, placeholder: '密码' })
-              .type(InputType.Password)
-              .fontSize($r('app.float.body_font_size'))
-              .fontColor($r('app.color.primary_text'))
-              .placeholderColor($r('app.color.tertiary_text'))
-              .backgroundColor($r('app.color.editor_background'))
-              .borderRadius(12)
-              .border({ width: 1, color: $r('app.color.card_border') })
-              .padding({ left: 14, right: 14 })
-              .onChange((value: string) => {
-                this.password = value
-                this.passwordTouched = true
-              })
-            TextInput({ text: this.notesDir, placeholder: '/qingyu-notes/' })
-              .fontSize($r('app.float.body_font_size'))
-              .fontColor($r('app.color.primary_text'))
-              .placeholderColor($r('app.color.tertiary_text'))
-              .backgroundColor($r('app.color.editor_background'))
-              .borderRadius(12)
-              .border({ width: 1, color: $r('app.color.card_border') })
-              .padding({ left: 14, right: 14 })
-              .onChange((value: string) => {
-                this.notesDir = value
-              })
-
-            Row({ space: 10 }) {
-              Button(this.testing ? '测试中…' : '测试连接')
-                .layoutWeight(1)
-                .fontSize($r('app.float.caption_font_size'))
-                .fontWeight(FontWeight.Medium)
+          Column({ space: 0 }) {
+            Row() {
+              Text($r('app.string.settings_cloud_sync'))
+                .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.primary_text'))
-                .backgroundColor($r('app.color.surface_muted'))
-                .borderRadius($r('app.float.pill_radius'))
-                .padding({ top: 12, bottom: 12 })
-                .enabled(!this.testing)
-                .onClick(() => {
-                  void this.handleTestConnection()
-                })
-              Button('保存')
                 .layoutWeight(1)
-                .fontSize($r('app.float.caption_font_size'))
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.on_accent'))
-                .backgroundColor($r('app.color.accent'))
-                .borderRadius($r('app.float.pill_radius'))
-                .padding({ top: 12, bottom: 12 })
-                .onClick(() => {
-                  void this.handleSaveAndClose()
-                })
+              Text('›')
+                .fontSize(22)
+                .fontColor($r('app.color.tertiary_text'))
             }
             .width('100%')
-            .margin({ top: 4 })
+            .padding({
+              left: 20,
+              right: 16,
+              top: 14,
+              bottom: 14
+            })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              this.getUIContext().getRouter().pushUrl({ url: 'pages/CloudSyncSettings' }).catch((err: Error) => {
+                console.error(`openCloudSyncSettings: ${JSON.stringify(err)}`)
+              })
+            })
+
+            Divider()
+              .color($r('app.color.divider'))
+              .strokeWidth(1)
+
+            Row() {
+              Text($r('app.string.feedback_title'))
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor($r('app.color.primary_text'))
+                .layoutWeight(1)
+              Text('›')
+                .fontSize(22)
+                .fontColor($r('app.color.tertiary_text'))
+            }
+            .width('100%')
+            .padding({
+              left: 20,
+              right: 16,
+              top: 14,
+              bottom: 14
+            })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              this.getUIContext().getRouter().pushUrl({ url: 'pages/Feedback' }).catch((err: Error) => {
+                console.error(`openFeedback: ${JSON.stringify(err)}`)
+              })
+            })
+
+            Divider()
+              .color($r('app.color.divider'))
+              .strokeWidth(1)
+
+            Row() {
+              Text($r('app.string.privacy_policy'))
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor($r('app.color.primary_text'))
+                .layoutWeight(1)
+              Text('›')
+                .fontSize(22)
+                .fontColor($r('app.color.tertiary_text'))
+            }
+            .width('100%')
+            .padding({
+              left: 20,
+              right: 16,
+              top: 14,
+              bottom: 14
+            })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              this.openPrivacyPolicy()
+            })
+
+            Divider()
+              .color($r('app.color.divider'))
+              .strokeWidth(1)
+
+            Row() {
+              Text($r('app.string.about_title'))
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor($r('app.color.primary_text'))
+                .layoutWeight(1)
+              Text('›')
+                .fontSize(22)
+                .fontColor($r('app.color.tertiary_text'))
+            }
+            .width('100%')
+            .padding({
+              left: 20,
+              right: 16,
+              top: 14,
+              bottom: 14
+            })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              this.getUIContext().getRouter().pushUrl({ url: 'pages/About' }).catch((err: Error) => {
+                console.error(`openAbout: ${JSON.stringify(err)}`)
+              })
+            })
+
+            Divider()
+              .color($r('app.color.divider'))
+              .strokeWidth(1)
+
+            Row() {
+              Text($r('app.string.check_update'))
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor($r('app.color.primary_text'))
+                .layoutWeight(1)
+              Text('›')
+                .fontSize(22)
+                .fontColor($r('app.color.tertiary_text'))
+            }
+            .width('100%')
+            .padding({
+              left: 20,
+              right: 16,
+              top: 14,
+              bottom: 14
+            })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              void runAppUpdateCheckManually(this.getUIContext())
+            })
           }
-          .padding(20)
-          .margin({bottom: 10})
+          .width('100%')
           .backgroundColor($r('app.color.card_background'))
           .borderRadius($r('app.float.card_radius'))
           .border({ width: 1, color: $r('app.color.card_border') })
@@ -294,101 +307,38 @@ struct Settings {
             offsetY: 4
           })
 
-          Column({ space: 16 }) {
-            this.buildSectionTitle($r('app.string.settings_sync_title'))
-
-            Row() {
-              Text('自动同步')
-                .fontSize($r('app.float.body_font_size'))
-                .fontColor($r('app.color.primary_text'))
-                .layoutWeight(1)
-              Toggle({ type: ToggleType.Switch, isOn: this.autoSync })
-                .selectedColor($r('app.color.accent'))
-                .onChange((value: boolean) => {
-                  this.autoSync = value
-                })
-            }
-            .width('100%')
-
-            Divider().color($r('app.color.divider')).strokeWidth(1)
-
-            Row() {
-              Text('仅 Wi-Fi 同步')
-                .fontSize($r('app.float.body_font_size'))
-                .fontColor($r('app.color.primary_text'))
-                .layoutWeight(1)
-              Toggle({ type: ToggleType.Switch, isOn: this.wifiOnly })
-                .selectedColor($r('app.color.accent'))
-                .onChange((value: boolean) => {
-                  this.wifiOnly = value
-                })
-            }
-            .width('100%')
-
-            Text('同步间隔（分钟）')
-              .fontSize(12)
-              .fontColor($r('app.color.tertiary_text'))
-              .margin({ top: 4, left: 4 })
-            TextInput({ text: this.syncIntervalMinutes, placeholder: '例如 60' })
-              .type(InputType.Number)
+          Button() {
+            Text($r('app.string.logout'))
+              .fontColor(Color.White)
               .fontSize($r('app.float.body_font_size'))
-              .fontColor($r('app.color.primary_text'))
-              .placeholderColor($r('app.color.tertiary_text'))
-              .backgroundColor($r('app.color.editor_background'))
-              .borderRadius(12)
-              .border({ width: 1, color: $r('app.color.card_border') })
-              .padding({ left: 14, right: 14 })
-              .onChange((value: string) => {
-                this.syncIntervalMinutes = value
-              })
+              .fontWeight(FontWeight.Medium)
           }
-          .padding(20)
-          .backgroundColor($r('app.color.card_background'))
-          .borderRadius($r('app.float.card_radius'))
-          .border({ width: 1, color: $r('app.color.card_border') })
-          .shadow({
-            radius: 20,
-            color: $r('app.color.shadow_color'),
-            offsetX: 0,
-            offsetY: 4
-          })
+            .type(ButtonType.Normal)
+            .width('100%')
+            .height(48)
+            .backgroundColor($r('app.color.danger'))
+            .borderRadius($r('app.float.pill_radius'))
+            .margin({ top: 8 })
+            .onClick((): void => {
+              void this.handleLogout()
+            })
         }
         .width('100%')
-        .alignItems(HorizontalAlign.Start)
-        .justifyContent(FlexAlign.Start)
-        .padding({
-          left: 16,
-          right: 16,
-          top: $r('app.float.toolbar_scroll_padding_top'),
-          bottom: 32
-        })
+        .alignItems(HorizontalAlign.Center)
       }
       .scrollBar(BarState.Off)
       .width('100%')
-      .height('100%')
+      .layoutWeight(1)
+      .padding({ bottom: 15, top: 5 })
       .align(Alignment.TopStart)
-      .backgroundColor($r('app.color.app_background'))
     }
     .width('100%')
     .height('100%')
     .alignItems(HorizontalAlign.Start)
-    .justifyContent(FlexAlign.Start)
+    .padding({
+      left: 16,
+      right: 16
+    })
     .backgroundColor($r('app.color.app_background'))
-  }
-
-  private describeError(error: Object): string {
-    const detail = error as ErrorLike
-    const raw = JSON.stringify(error)
-    const fallbackRaw = raw.length > 0 ? raw : `${error}`
-    return `code=${detail.code ?? 'n/a'}, name=${detail.name ?? 'n/a'}, message=${detail.message ?? 'n/a'}, raw=${fallbackRaw}`
-  }
-
-  private isCredentialDecryptFailure(error: Object): boolean {
-    const detail = error as ErrorLike
-    return (detail.message ?? `${error}`).includes('WebDAV credential decrypt failed')
-  }
-
-  private toRuntimeError(error: Object): Error {
-    return new Error(this.describeError(error))
   }
 }

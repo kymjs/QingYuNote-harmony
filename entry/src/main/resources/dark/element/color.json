@@ -83,6 +83,14 @@
     {
       "name": "shadow_color",
       "value": "#66000000"
+    },
+    {
+      "name": "wechat_brand",
+      "value": "#FF07C160"
+    },
+    {
+      "name": "huawei_login_brand",
+      "value": "#FFFF5C6B"
     }
   ]
 }

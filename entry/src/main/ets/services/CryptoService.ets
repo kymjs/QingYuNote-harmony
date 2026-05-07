@@ -66,6 +66,27 @@ export class CryptoService {
     }
   }
 
+  /** 返回小写十六进制 MD5，用于轻羽云目录名派生。 */
+  async md5Hex(plain: string): Promise<string> {
+    try {
+      const md = cryptoFramework.createMd('MD5')
+      await md.update({
+        data: this.toBytes(plain)
+      })
+      const digest = await md.digest()
+      const bytes = digest.data
+      let hex = ''
+      for (let i = 0; i < bytes.length; i++) {
+        const h = bytes[i].toString(16)
+        hex += h.length === 1 ? `0${h}` : h
+      }
+      return hex
+    } catch (error) {
+      Logger.warn('CryptoService', `md5Hex failed: ${this.describeError(error)}`)
+      throw this.toRuntimeError(error)
+    }
+  }
+
   async decryptText(cipherText: string): Promise<string> {
     Logger.info('CryptoService', `decryptText start: cipherLength=${cipherText.length}`)
     if (cipherText.length === 0) {

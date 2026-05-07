@@ -1,8 +1,10 @@
 {
   "src": [
+    "pages/Login",
     "pages/Index",
     "pages/NoteEdit",
     "pages/Settings",
+    "pages/CloudSyncSettings",
     "pages/RecycleBin",
     "pages/About",
     "pages/Feedback",

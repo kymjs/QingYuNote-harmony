@@ -220,14 +220,22 @@ export class FileService {
   }
 
   static readFileAsArrayBuffer(path: string): ArrayBuffer {
-    const file = fs.openSync(path, fs.OpenMode.READ_ONLY)
+    let opened: fs.File | undefined = undefined
     try {
+      opened = fs.openSync(path, fs.OpenMode.READ_ONLY)
       const stat = fs.statSync(path)
       const buffer = new ArrayBuffer(stat.size)
-      fs.readSync(file.fd, buffer)
+      fs.readSync(opened.fd, buffer)
       return buffer
+    } catch (error) {
+      throw error instanceof Error ? error : new Error(`${error}`)
     } finally {
-      fs.closeSync(file.fd)
+      if (opened !== undefined) {
+        try {
+          fs.closeSync(opened)
+        } catch (_) {
+        }
+      }
     }
   }
 
@@ -237,12 +245,17 @@ export class FileService {
       if (!fs.accessSync(dir)) {
         fs.mkdirSync(dir, true)
       }
-    } catch (_) {}
-    const file = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
-    try {
-      fs.writeSync(file.fd, data)
-    } finally {
-      fs.closeSync(file.fd)
+      const file = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
+      try {
+        fs.writeSync(file.fd, data)
+      } finally {
+        try {
+          fs.closeSync(file)
+        } catch (_) {
+        }
+      }
+    } catch (error) {
+      throw error instanceof Error ? error : new Error(`${error}`)
     }
   }
 

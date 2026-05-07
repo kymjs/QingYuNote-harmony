@@ -58,7 +58,11 @@ function showForceUpdateDialog(uiContext: UIContext, manifest: ReleaseManifest):
       // 不调用 dismissDialogAction.dismiss()，禁止通过返回、点蒙层、侧滑、ESC 关闭
     }
   }
-  void uiContext.getPromptAction().openCustomDialog(content, dialogOpts)
+  try {
+    void uiContext.getPromptAction().openCustomDialog(content, dialogOpts)
+  } catch (err) {
+    console.error(`openCustomDialog failed: ${JSON.stringify(err)}`)
+  }
 }
 
 function buildOptionalMessage(manifest: ReleaseManifest): string {
@@ -130,7 +134,11 @@ export async function runAppUpdateCheckManually(uiContext: UIContext): Promise<v
       message: '无法获取更新信息，请检查网络后重试',
       duration: 2200
     }
-    prompt.showToast(toastOpts)
+    try {
+      prompt.showToast(toastOpts)
+    } catch (err) {
+      console.error(`showToast failed: ${JSON.stringify(err)}`)
+    }
     return
   }
   const current = await getAppVersionName()
@@ -141,7 +149,11 @@ export async function runAppUpdateCheckManually(uiContext: UIContext): Promise<v
       message: `当前已是最新版本`,
       duration: 2000
     }
-    prompt.showToast(toastOpts)
+    try {
+      prompt.showToast(toastOpts)
+    } catch (err) {
+      console.error(`showToast failed: ${JSON.stringify(err)}`)
+    }
     return
   }
   if (needForce) {

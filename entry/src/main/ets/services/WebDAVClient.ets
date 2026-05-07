@@ -1,11 +1,23 @@
 import http from '@ohos.net.http'
 import { util } from '@kit.ArkTS'
-import type { RemoteNoteStat, WebDAVConfig } from '../common/model/Note'
+import type { RemoteNoteStat, WebDAVConfig, WebDAVProvider } from '../common/model/Note'
+import type {
+  QingyuCloudStatusActive,
+  QingyuCloudStatusExpired,
+  QingyuCloudStatusFetchFailed,
+  QingyuCloudStatusLifetime,
+  QingyuCloudStatusMalformed,
+  QingyuCloudStatusNotConfigured,
+  QingyuCloudStatusNotPurchased,
+  QingyuCloudStatusNotQingyu,
+  QingyuCloudSubscriptionStatus
+} from '../common/model/QingyuCloudSubscription'
 import { PreferencesService } from './PreferencesService'
 import { CryptoService } from './CryptoService'
 import { PathUtils } from '../common/utils/PathUtils'
 import { TimeUtils } from '../common/utils/TimeUtils'
 import { Logger } from '../common/utils/Logger'
+import { SyncConstants } from '../common/constants/SyncConstants'
 
 interface HeaderOverrides {
   contentType?: string
@@ -29,6 +41,13 @@ interface ErrorLike {
   name?: string
 }
 
+/** parseExpiryEndParts 的归一化结果。 */
+interface QingyuExpiryParseResult {
+  year: number
+  endOfDayMillis: number
+  displayYmd: string
+}
+
 export interface RemoteIndexEntry {
   remoteModified: number
   deletedTime: number
@@ -44,6 +63,7 @@ interface RemoteIndexPayloadV2 {
 export class WebDAVClient {
   private static instance: WebDAVClient = new WebDAVClient()
   private static readonly REMOTE_INDEX_FILE_NAME: string = '.qingyu-index.json'
+  private static readonly QINGYU_LIFETIME_MIN_YEAR: number = 2099
   static readonly IMAGE_DIR_NAME: string = 'qingyu-note-image'
   private static readonly REMOTE_INDEX_VERSION: number = 2
   private static readonly PROPFIND_REQUEST_BODY: string =
@@ -64,6 +84,9 @@ export class WebDAVClient {
       Logger.warn('WebDAVClient', 'testConnection aborted: config is null')
       return false
     }
+    if (this.isQingyuProvider(config.provider)) {
+      this.logResolvedDirectoryPaths(config, 'testConnection')
+    }
     const targetUrl = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
     Logger.info('WebDAVClient',
       `testConnection config loaded: enabled=${config.enabled}, url=${this.sanitizeUrl(targetUrl)}, usernameLength=${config.username.length}, notesDir=${PathUtils.normalizeNotesDir(config.notesDir)}`)
@@ -75,8 +98,13 @@ export class WebDAVClient {
     try {
       phase = 'send-head-request'
       const response = await this.sendRequest(targetUrl, http.RequestMethod.HEAD)
-      Logger.info('WebDAVClient', `testConnection response received: responseCode=${response.responseCode}`)
-      return this.isReachableDirectoryResponse(response.responseCode)
+      const ok = this.isReachableDirectoryResponse(response.responseCode)
+      Logger.info('WebDAVClient',
+        `testConnection HEAD result: responseCode=${response.responseCode}, reachable=${ok}`)
+      if (!ok && this.isQingyuProvider(config.provider)) {
+        await this.logDirectoryHeadFailureDiagnostics(targetUrl, response.responseCode, 'testConnection-notes-root')
+      }
+      return ok
     } catch (error) {
       if (this.isCredentialDecryptFailure(error)) {
         Logger.warn('WebDAVClient', `testConnection failed before request dispatch: phase=${phase}, ${this.describeError(error)}`)
@@ -87,8 +115,61 @@ export class WebDAVClient {
     }
   }
 
+  /**
+   * 拉取同步目录根下的 `.qingyu-cloud.json`（仅内存解析），用于设置页展示有效期。
+   */
+  /**
+   * @param configOverride 若传入（如云同步设置页预览），则不再按已保存的 sync_provider 解析配置；
+   *   不传时行为与原先一致，供 SyncService 等使用当前生效同步方式。
+   */
+  async fetchQingyuCloudSubscriptionStatus(configOverride?: WebDAVConfig | null): Promise<QingyuCloudSubscriptionStatus> {
+    const config =
+      configOverride !== undefined && configOverride !== null ? configOverride : await this.loadConfig()
+    if (!config || !config.enabled) {
+      const s: QingyuCloudStatusNotConfigured = { kind: 'not_configured' }
+      return s
+    }
+    if (!this.isQingyuProvider(config.provider)) {
+      const s: QingyuCloudStatusNotQingyu = { kind: 'not_qingyu' }
+      return s
+    }
+    const url =
+      PathUtils.joinRemotePathFileUrl(config.baseUrl, config.notesDir, SyncConstants.QINGYU_CLOUD_META_FILE)
+    Logger.info('WebDAVClient', `fetchQingyuCloudSubscriptionStatus GET url=${this.sanitizeUrl(url)}`)
+    try {
+      const response = await this.sendRequest(url, http.RequestMethod.GET)
+      if (response.responseCode === 404) {
+        const s: QingyuCloudStatusNotPurchased = { kind: 'not_purchased' }
+        return s
+      }
+      if (response.responseCode >= 400) {
+        const s: QingyuCloudStatusFetchFailed = { kind: 'fetch_failed' }
+        return s
+      }
+      const rawBody = this.responseBodyToText(response.result).trim()
+      if (rawBody.length === 0) {
+        const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
+        return s
+      }
+      return WebDAVClient.parseQingyuCloudJsonBody(rawBody)
+    } catch (error) {
+      if (this.isCredentialDecryptFailure(error)) {
+        throw this.toRuntimeError(error)
+      }
+      Logger.warn('WebDAVClient',
+        `fetchQingyuCloudSubscriptionStatus failed: ${this.describeError(error as Object)}`)
+      const s: QingyuCloudStatusFetchFailed = { kind: 'fetch_failed' }
+      return s
+    }
+  }
+
   async ensureNotesDirectory(): Promise<void> {
     const config = await this.requireConfig()
+    if (this.isQingyuProvider(config.provider)) {
+      Logger.info('WebDAVClient', 'ensureNotesDirectory: qingyu_cloud (create tree + metadata merge)')
+      await this.ensureQingyuNotesTreeAndMetadata(config)
+      return
+    }
     const targetUrl = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
     Logger.info('WebDAVClient', `ensureNotesDirectory start: url=${this.sanitizeUrl(targetUrl)}`)
     try {
@@ -103,6 +184,92 @@ export class WebDAVClient {
       await this.createDirectoryPath(config.baseUrl, config.notesDir)
     }
     await this.ensureImageDirectory(config)
+  }
+
+  private async ensureQingyuNotesTreeAndMetadata(config: WebDAVConfig): Promise<void> {
+    this.logResolvedDirectoryPaths(config, 'ensureQingyuNotesTreeAndMetadata')
+    const targetUrl = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
+    try {
+      const response = await this.sendRequest(targetUrl, http.RequestMethod.HEAD)
+      if (this.isReachableDirectoryResponse(response.responseCode)) {
+        await this.ensureImageDirectory(config)
+        await this.upsertQingyuCloudMetadata(config)
+        return
+      }
+    } catch (error) {
+      Logger.warn('WebDAVClient',
+        `ensureQingyuNotesTreeAndMetadata HEAD failed: ${this.describeError(error as Object)}`)
+    }
+    await this.createDirectoryPath(config.baseUrl, config.notesDir)
+    await this.ensureImageDirectory(config)
+    await this.upsertQingyuCloudMetadata(config)
+  }
+
+  /** 合并远端 `.qingyu-cloud.json`：保留服务端 `expiresAt`，写入本地三方标识字段（不落本地磁盘）。 */
+  private async upsertQingyuCloudMetadata(config: WebDAVConfig): Promise<void> {
+    const url =
+      PathUtils.joinRemotePathFileUrl(config.baseUrl, config.notesDir, SyncConstants.QINGYU_CLOUD_META_FILE)
+    const huawei = await PreferencesService.getInstance().getHuaweiThirdPartyUserId()
+    const wechat = await PreferencesService.getInstance().getWeChatThirdPartyUserId()
+    const merged: Record<string, Object | string | number | boolean | null | undefined> = {}
+    try {
+      const response = await this.sendRequest(url, http.RequestMethod.GET)
+      if (response.responseCode >= 200 && response.responseCode < 300) {
+        const raw = this.responseBodyToText(response.result).trim()
+        if (raw.length > 0) {
+          const parsed =
+            JSON.parse(raw) as Record<string, Object | string | number | boolean | null | undefined>
+          Object.keys(parsed).forEach((key: string) => {
+            merged[key] = parsed[key]
+          })
+        }
+      }
+    } catch (error) {
+      Logger.warn('WebDAVClient',
+        `upsertQingyuCloudMetadata GET skipped: ${this.describeError(error as Object)}`)
+    }
+    merged[SyncConstants.QINGYU_CLOUD_FIELD_HUAWEI_USER] = huawei
+    merged[SyncConstants.QINGYU_CLOUD_FIELD_WECHAT_USER] = wechat
+    try {
+      await this.sendRequest(url, http.RequestMethod.PUT, JSON.stringify(merged), {
+        contentType: 'application/json; charset=utf-8'
+      })
+    } catch (error) {
+      Logger.warn('WebDAVClient',
+        `upsertQingyuCloudMetadata PUT failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  private isQingyuProvider(provider: WebDAVProvider): boolean {
+    return provider === 'qingyu_cloud'
+  }
+
+  /** 轻羽云排查：打印规范化路径与最终请求的目录 URL（应与浏览器/WebDAV 根下文件夹一致）。 */
+  private logResolvedDirectoryPaths(config: WebDAVConfig, label: string): void {
+    const normBase = PathUtils.normalizeBaseUrl(config.baseUrl)
+    const normNotes = PathUtils.normalizeNotesDir(config.notesDir)
+    const joined = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
+    Logger.info('WebDAVClient',
+      `${label}: provider=${config.provider}, baseUrl(raw)=${config.baseUrl}, baseUrl(norm)=${normBase}, notesDir(raw)=${config.notesDir}, notesDir(norm)=${normNotes}, directoryUrl=${this.sanitizeUrl(joined)}`)
+  }
+
+  /**
+   * HEAD 对集合目录常返回 404/501，但 PROPFIND 仍成功；失败时记录 PROPFIND 以便区分「路径错误」与「HEAD 不支持」。
+   */
+  private async logDirectoryHeadFailureDiagnostics(url: string, headCode: number, label: string): Promise<void> {
+    Logger.warn('WebDAVClient',
+      `qingyu ${label}: HEAD not treated as reachable (code=${headCode}); acceptableReachabilityCodes=200-399 or 405. Diagnostic PROPFIND depth=0 same URL.`)
+    try {
+      const response = await this.sendRequest(url, 'PROPFIND', WebDAVClient.PROPFIND_REQUEST_BODY, {
+        contentType: 'application/xml; charset=utf-8',
+        depth: '0'
+      })
+      Logger.warn('WebDAVClient',
+        `qingyu ${label}: diagnostic PROPFIND depth=0 responseCode=${response.responseCode} (if 2xx/405 here but HEAD failed, server may not support HEAD on collections)`)
+    } catch (error) {
+      Logger.warn('WebDAVClient',
+        `qingyu ${label}: diagnostic PROPFIND failed: ${this.describeError(error as Object)}`)
+    }
   }
 
   private async ensureImageDirectory(config: WebDAVConfig): Promise<void> {
@@ -616,6 +783,102 @@ export class WebDAVClient {
       Logger.warn('WebDAVClient', `resolveAuthorizationHeader failed: ${wrappedError.message}`)
       throw wrappedError
     }
+  }
+
+  private static parseQingyuCloudJsonBody(rawBody: string): QingyuCloudSubscriptionStatus {
+    let decoded: Record<string, Object | string | number | boolean | null | undefined>
+    try {
+      decoded = JSON.parse(rawBody) as Record<string, Object | string | number | boolean | null | undefined>
+    } catch {
+      const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
+      return s
+    }
+    if (typeof decoded !== 'object' || decoded === null) {
+      const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
+      return s
+    }
+    const raw = WebDAVClient.pickQingyuExpiresRaw(decoded)
+    if (raw.length === 0) {
+      const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
+      return s
+    }
+    const parsed = WebDAVClient.parseExpiryEndParts(raw)
+    if (parsed === null) {
+      const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
+      return s
+    }
+    if (parsed.year >= WebDAVClient.QINGYU_LIFETIME_MIN_YEAR) {
+      const s: QingyuCloudStatusLifetime = { kind: 'lifetime' }
+      return s
+    }
+    const now = Date.now()
+    if (now > parsed.endOfDayMillis) {
+      const s: QingyuCloudStatusExpired = { kind: 'expired', expiresDisplayYmd: parsed.displayYmd }
+      return s
+    }
+    const active: QingyuCloudStatusActive = { kind: 'active', expiresDisplayYmd: parsed.displayYmd }
+    return active
+  }
+
+  private static pickQingyuExpiresRaw(record: Record<string, Object | string | number | boolean | null | undefined>): string {
+    const direct: (Object | string | number | boolean | null | undefined)[] = [
+      record[SyncConstants.QINGYU_CLOUD_FIELD_EXPIRES_AT],
+      record['expires_at'],
+      record['失效日期'],
+    ]
+    for (let i = 0; i < direct.length; i++) {
+      const v = direct[i]
+      if (typeof v === 'string' && v.trim().length > 0) {
+        return v.trim()
+      }
+    }
+    const keys = Object.keys(record)
+    if (keys.length === 1) {
+      const onlyKey = keys[0]
+      if (onlyKey === SyncConstants.QINGYU_CLOUD_FIELD_HUAWEI_USER ||
+        onlyKey === SyncConstants.QINGYU_CLOUD_FIELD_WECHAT_USER) {
+        return ''
+      }
+      const values = Object.values(record)
+      if (values.length === 1) {
+        const only = values[0]
+        if (typeof only === 'string' && only.trim().length > 0) {
+          return only.trim()
+        }
+      }
+    }
+    return ''
+  }
+
+  private static parseExpiryEndParts(raw: string): QingyuExpiryParseResult | null {
+    const trimmed = raw.trim()
+    if (trimmed.length === 0) {
+      return null
+    }
+    if (trimmed.length === 10 && trimmed.charAt(4) === '-' && trimmed.charAt(7) === '-') {
+      const y = Number(trimmed.substring(0, 4))
+      const m = Number(trimmed.substring(5, 7))
+      const d = Number(trimmed.substring(8, 10))
+      if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) {
+        return null
+      }
+      const end = new Date(y, m - 1, d, 23, 59, 59, 999).getTime()
+      const r: QingyuExpiryParseResult = { year: y, endOfDayMillis: end, displayYmd: trimmed }
+      return r
+    }
+    const t = Date.parse(trimmed)
+    if (Number.isNaN(t)) {
+      return null
+    }
+    const date = new Date(t)
+    const y = date.getFullYear()
+    const m = date.getMonth() + 1
+    const d = date.getDate()
+    const end = new Date(y, m - 1, d, 23, 59, 59, 999).getTime()
+    const pad = (n: number): string => (n < 10 ? `0${n}` : `${n}`)
+    const displayYmd = `${y}-${pad(m)}-${pad(d)}`
+    const r: QingyuExpiryParseResult = { year: y, endOfDayMillis: end, displayYmd: displayYmd }
+    return r
   }
 
   private sanitizeUrl(url: string): string {

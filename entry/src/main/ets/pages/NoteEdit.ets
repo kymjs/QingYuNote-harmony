@@ -11,7 +11,6 @@ import { image } from '@kit.ImageKit'
 import { fileIo, fileUri } from '@kit.CoreFileKit'
 import { common } from '@kit.AbilityKit'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
-import picker from '@ohos.file.picker'
 import { NoteEditEditorPane } from './NoteEditEditorPane'
 import { NoteEditPreviewPane } from './NoteEditPreviewPane'
 import { NoteEditMarkdownBlocksView } from './NoteEditMarkdownBlocksView'
@@ -63,16 +62,27 @@ struct NoteEdit {
   private previewDirty: boolean = true
   private preferPreviewOnOpen: boolean = false
   private shareCardHeight: number = 0
-  /** 缓存 ability `filesDir`，避免预览中多张图片重复 `getContext`。 */
+  /** 缓存 ability `filesDir`，避免预览中多张图片重复解析上下文。 */
   private filesDirCache: string = ''
   private static readonly SHARE_CARD_ID: string = 'note_share_export_card'
   private static readonly SHARE_SLOGAN: string = '记录本身，就是意义。   ——轻羽云笔记'
   private static readonly SHARE_INTRO: string =
     '轻羽云笔记是一款云笔记应用，同时支持手机与电脑全平台，无论你正在使用哪台设备，笔记都在手边。'
 
+  /** 使用 UIContext.getHostContext，替代已废弃的全局 getContext。 */
+  private obtainUiAbilityContext(): common.UIAbilityContext | undefined {
+    const host = this.getUIContext().getHostContext()
+    if (host !== undefined && host !== null) {
+      return host as common.UIAbilityContext
+    }
+    return AppContextHolder.tryGetContext()
+  }
+
   aboutToAppear(): void {
-    const ctx = getContext(this) as common.UIAbilityContext
-    this.filesDirCache = ctx.filesDir
+    const ctx = this.obtainUiAbilityContext()
+    if (ctx !== undefined) {
+      this.filesDirCache = ctx.filesDir
+    }
     const params = this.getUIContext().getRouter().getParams() as NoteEditParams
     this.noteId = params?.noteId ?? ''
     this.preferPreviewOnOpen = params?.openWithPreview === true
@@ -353,24 +363,24 @@ struct NoteEdit {
       return fileUri.getUriFromPath(src)
     }
     const base =
-      this.filesDirCache.length > 0 ? this.filesDirCache : (getContext(this) as common.UIAbilityContext).filesDir
+      this.filesDirCache.length > 0 ? this.filesDirCache : (this.obtainUiAbilityContext()?.filesDir ?? '')
     const absPath = `${base}/${src}`
     return fileUri.getUriFromPath(absPath)
   }
 
   private async insertImage(): Promise<void> {
     try {
-      const photoSelectOptions: picker.PhotoSelectOptions = new picker.PhotoSelectOptions()
-      photoSelectOptions.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE
+      const photoSelectOptions: photoAccessHelper.PhotoSelectOptions = new photoAccessHelper.PhotoSelectOptions()
+      photoSelectOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE
       photoSelectOptions.maxSelectNumber = 1
-      const photoPicker: picker.PhotoViewPicker = new picker.PhotoViewPicker()
-      const result: picker.PhotoSelectResult = await photoPicker.select(photoSelectOptions)
+      const photoPicker: photoAccessHelper.PhotoViewPicker = new photoAccessHelper.PhotoViewPicker()
+      const result: photoAccessHelper.PhotoSelectResult = await photoPicker.select(photoSelectOptions)
       const uri: string = result.photoUris[0] ?? ''
       if (uri.length === 0) {
         return
       }
       const base =
-        this.filesDirCache.length > 0 ? this.filesDirCache : (getContext(this) as common.UIAbilityContext).filesDir
+        this.filesDirCache.length > 0 ? this.filesDirCache : (this.obtainUiAbilityContext()?.filesDir ?? '')
       const imagesDir = `${base}/qingyu-note-image`
       if (!fileIo.accessSync(imagesDir)) {
         fileIo.mkdirSync(imagesDir, true)
@@ -407,7 +417,10 @@ struct NoteEdit {
   }
 
   private async saveCachePngToGallery(cachePath: string): Promise<boolean> {
-    const context = getContext(this) as common.UIAbilityContext
+    const context = this.obtainUiAbilityContext()
+    if (context === undefined) {
+      return false
+    }
     try {
       const helper = photoAccessHelper.getPhotoAccessHelper(context)
       const srcFileUris: Array<string> = [fileUri.getUriFromPath(cachePath)]
@@ -447,7 +460,10 @@ struct NoteEdit {
   }
 
   private async offlineSnapshotCapture(): Promise<string | null> {
-    const context = getContext(this) as common.UIAbilityContext
+    const context = this.obtainUiAbilityContext()
+    if (context === undefined) {
+      return null
+    }
     this.refreshPreviewBlocks(this.content)
     await new Promise<void>((resolve) => setTimeout(() => resolve(), 100))
     try {
@@ -484,7 +500,7 @@ struct NoteEdit {
       } catch (_) {
         // 部分 RS 截图 convert 失败仍可走 packing
       }
-      const pngBuf = await packer.packing(pm, {
+      const pngBuf = await packer.packToData(pm, {
         format: 'image/png',
         quality: 100,
         desiredDynamicRange: image.PackingDynamicRange.SDR
@@ -539,7 +555,7 @@ struct NoteEdit {
       } catch (_) {
         // 部分 PixelMap 与 convert 不兼容时仍可 packing
       }
-      const buf = await packer.packing(pm, {
+      const buf = await packer.packToData(pm, {
         format: 'image/png',
         quality: 100,
         desiredDynamicRange: image.PackingDynamicRange.SDR
@@ -570,16 +586,16 @@ struct NoteEdit {
         `mergePixelMapsVertical: bad args slices=${slices.length} totalH=${totalHeightPx} skipLen=${sliceSkipTopPx.length}`)
       return null
     }
-    const headInfo = slices[0].getImageInfoSync()
-    const headAlpha = headInfo.alphaType
-    const mergeAlphaType =
-      headAlpha === image.AlphaType.UNKNOWN ? image.AlphaType.PREMUL : headAlpha
-    const mergeBufferPixelFormat = image.PixelMapFormat.RGBA_8888
-    const rowBytes = widthPx * 4
-    const dstBuf = new ArrayBuffer(rowBytes * totalHeightPx)
-    const dstView = new Uint8Array(dstBuf)
-    let dstRowTop = 0
     try {
+      const headInfo = slices[0].getImageInfoSync()
+      const headAlpha = headInfo.alphaType
+      const mergeAlphaType =
+        headAlpha === image.AlphaType.UNKNOWN ? image.AlphaType.PREMUL : headAlpha
+      const mergeBufferPixelFormat = image.PixelMapFormat.RGBA_8888
+      const rowBytes = widthPx * 4
+      const dstBuf = new ArrayBuffer(rowBytes * totalHeightPx)
+      const dstView = new Uint8Array(dstBuf)
+      let dstRowTop = 0
       for (let s = 0; s < slices.length && dstRowTop < totalHeightPx; s++) {
         const pm = slices[s]
         const info = pm.getImageInfoSync()
@@ -680,7 +696,14 @@ struct NoteEdit {
       return null
     }
 
-    const firstInfo = firstPm.getImageInfoSync()
+    let firstInfo: image.ImageInfo
+    try {
+      firstInfo = firstPm.getImageInfoSync()
+    } catch (err) {
+      Logger.error('NoteEdit', `getImageInfoSync failed: ${JSON.stringify(err)}`)
+      await firstPm.release()
+      return null
+    }
     const widthPx = firstInfo.size.width
     const viewportPx = firstInfo.size.height
     // 视口高度（vp）：优先布局高度，与 Scroll 实际可滚区域一致；用于总长与每屏裁切像素 rowStepPx。

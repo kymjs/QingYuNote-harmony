@@ -17,6 +17,14 @@
       "value": "设置"
     },
     {
+      "name": "settings_cloud_sync",
+      "value": "云同步设置"
+    },
+    {
+      "name": "logout",
+      "value": "退出登录"
+    },
+    {
       "name": "new_note",
       "value": "新建笔记"
     },
@@ -31,6 +39,22 @@
     {
       "name": "editor_content_placeholder",
       "value": "开始写作，支持 Markdown"
+    },
+    {
+      "name": "settings_sync_provider_title",
+      "value": "云服务提供方"
+    },
+    {
+      "name": "settings_sync_provider_webdav",
+      "value": "WebDAV 配置"
+    },
+    {
+      "name": "settings_qingyu_title",
+      "value": "轻羽云服务"
+    },
+    {
+      "name": "qingyu_renew_toast_placeholder",
+      "value": "续费功能开发中"
     },
     {
       "name": "settings_webdav_title",
@@ -87,6 +111,22 @@
     {
       "name": "permission_network_info_reason",
       "value": "用于判断当前网络状态和仅 Wi-Fi 同步策略"
+    },
+    {
+      "name": "login_title",
+      "value": "登录"
+    },
+    {
+      "name": "login_options_hint",
+      "value": "使用华为账号或微信登录"
+    },
+    {
+      "name": "login_with_huawei",
+      "value": "华为账号登录"
+    },
+    {
+      "name": "login_with_wechat",
+      "value": "微信登录"
     }
   ]
 }

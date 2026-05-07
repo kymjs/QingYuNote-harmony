@@ -8,10 +8,18 @@
       "phone"
     ],
     "querySchemes": [
-      "weixin"
+      "weixin",
+      "wxopensdk",
+      "weixing"
     ],
     "deliveryWithInstall": true,
     "installationFree": false,
+    "metadata": [
+      {
+        "name": "client_id",
+        "value": "6917604436122895003"
+      }
+    ],
     "pages": "$profile:main_pages",
     "requestPermissions": [
       {
@@ -52,6 +60,12 @@
             ],
             "actions": [
               "ohos.want.action.home"
+            ]
+          },
+          {
+            "entities": [],
+            "actions": [
+              "wxentity.action.open"
             ]
           }
         ]

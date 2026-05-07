@@ -31,7 +31,7 @@ export struct HomeDrawerLayer {
   }
   onOpenRecycleBin: () => void = () => {
   }
-  onOpenAbout: () => void = () => {
+  onOpenSettings: () => void = () => {
   }
 
   private handleToggleNonceChanged(): void {
@@ -150,7 +150,7 @@ export struct HomeDrawerLayer {
         .color($r('app.color.divider'))
 
       Row() {
-        Text($r('app.string.about_title'))
+        Text($r('app.string.settings'))
           .fontSize($r('app.float.body_font_size'))
           .fontColor($r('app.color.primary_text'))
           .layoutWeight(1)
@@ -161,7 +161,7 @@ export struct HomeDrawerLayer {
       .width('100%')
       .padding({ left: 18, right: 14, top: 8, bottom: 8 })
       .onClick(() => {
-        this.onOpenAbout()
+        this.onOpenSettings()
       })
     }
     .width('100%')

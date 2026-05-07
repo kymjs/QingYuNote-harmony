@@ -8,6 +8,7 @@ import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { runAppUpdateCheckOnLaunch } from '../services/AppUpdateUi'
 import { Logger } from '../common/utils/Logger'
+import { SyncConstants } from '../common/constants/SyncConstants'
 
 const BASE_SYNC_TIMEOUT_MS = 10 * 1000
 const PER_NOTE_SYNC_TIMEOUT_MS = 350
@@ -40,21 +41,54 @@ struct Index {
   /** 选标签或跳转前递增，子组件 @Watch 内吸附关闭。 */
   @State drawerCloseNonce: number = 0
   @State pageWidth: number = 360
+  /** 云同步已保存有效配置时为 true，此时右上角不展示「去配置」图标。 */
+  @State cloudSyncConfigured: boolean = false
   private hasShownOnce: boolean = false
   /** 当前水平拖动开始时抽屉进度，用于计算跟手位移。 */
   private drawerPanStartProgress: number = 0
   private searchFilterTimer: number = -1
   private noteListDataSource: IndexNotesDataSource = new IndexNotesDataSource()
+  private qingyuBlockedHandler = (): void => {
+    void this.showQingyuSubscriptionBlockedDialog()
+  }
 
   aboutToAppear(): void {
+    try {
+      AppContextHolder.getContext().eventHub.on(SyncConstants.QINGYU_SYNC_BLOCKED_EVENT, this.qingyuBlockedHandler)
+    } catch (_) {
+      console.error('Index: eventHub.on qingyu_sync_blocked failed')
+    }
     void this.initializeHome()
   }
 
   aboutToDisappear(): void {
+    try {
+      AppContextHolder.getContext().eventHub.off(SyncConstants.QINGYU_SYNC_BLOCKED_EVENT, this.qingyuBlockedHandler)
+    } catch (_) {
+      console.error('Index: eventHub.off qingyu_sync_blocked failed')
+    }
     this.clearSearchFilterTimer()
   }
 
+  private async showQingyuSubscriptionBlockedDialog(): Promise<void> {
+    try {
+      await this.getUIContext().getPromptAction().showDialog({
+        title: '提示',
+        message: '请开通轻羽云服务',
+        buttons: [{ text: '确定', color: '#0DAA4A' }]
+      })
+    } catch (_) {
+      console.error('showQingyuSubscriptionBlockedDialog failed')
+    }
+  }
+
   onPageShow(): void {
+    void this.handleIndexPageShow()
+  }
+
+  private async handleIndexPageShow(): Promise<void> {
+    await this.ensureLoggedInOrRedirectToLogin()
+    void this.refreshCloudSyncConfiguredState()
     if (!this.hasShownOnce) {
       this.hasShownOnce = true
       return
@@ -62,7 +96,22 @@ struct Index {
     void this.loadNotes(false)
   }
 
+  /** 退出登录后若仍停留在首页栈，则拉回登录页 */
+  private async ensureLoggedInOrRedirectToLogin(): Promise<void> {
+    try {
+      const context = AppContextHolder.tryGetContext()
+      if (context) {
+        await PreferencesService.getInstance().init(context)
+      }
+      if (!(await PreferencesService.getInstance().isUserLoggedIn())) {
+        await this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' })
+      }
+    } catch (_) {
+    }
+  }
+
   private async initializeHome(): Promise<void> {
+    await this.refreshCloudSyncConfiguredState()
     await this.loadNotes(this.notes.length === 0)
     await runAppUpdateCheckOnLaunch(this.getUIContext())
     if (await this.shouldRunStartupSync()) {
@@ -108,6 +157,19 @@ struct Index {
       } finally {
         this.syncing = false
       }
+    }
+  }
+
+  private async refreshCloudSyncConfiguredState(): Promise<void> {
+    try {
+      const context = AppContextHolder.tryGetContext()
+      if (context) {
+        await PreferencesService.getInstance().init(context)
+      }
+      const config = await PreferencesService.getInstance().getWebDAVConfig()
+      this.cloudSyncConfigured = config !== null && config.enabled
+    } catch (_) {
+      this.cloudSyncConfigured = false
     }
   }
 
@@ -364,26 +426,26 @@ struct Index {
     }
   }
 
-  private async openAbout(): Promise<void> {
+  private async openSettingsFromDrawer(): Promise<void> {
     this.drawerCloseNonce += 1
-    try {
-      await this.getUIContext().getRouter().pushUrl({
-        url: 'pages/About'
-      })
-    } catch (error) {
-      console.error(JSON.stringify(error))
-      this.showUserMessage(this.formatActionError('打开关于页', error))
-    }
-  }
-
-  private async openWebDAVSettings(): Promise<void> {
     try {
       await this.getUIContext().getRouter().pushUrl({
         url: 'pages/Settings'
       })
     } catch (error) {
       console.error(JSON.stringify(error))
-      this.showUserMessage('打开设置页失败，请稍后重试')
+      this.showUserMessage(this.formatActionError('打开设置页', error))
+    }
+  }
+
+  private async openWebDAVSettings(): Promise<void> {
+    try {
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/CloudSyncSettings'
+      })
+    } catch (error) {
+      console.error(JSON.stringify(error))
+      this.showUserMessage('打开云同步设置失败，请稍后重试')
     }
   }
 
@@ -762,7 +824,9 @@ struct Index {
         .alignItems(VerticalAlign.Center)
       }
 
-      this.buildSettingsAction()
+      if (!this.cloudSyncConfigured) {
+        this.buildSettingsAction()
+      }
     }
     .width('100%')
     .height($r('app.float.search_box_toolbar_height'))
@@ -925,8 +989,8 @@ struct Index {
         onOpenRecycleBin: (): void => {
           void this.openRecycleBin()
         },
-        onOpenAbout: (): void => {
-          void this.openAbout()
+        onOpenSettings: (): void => {
+          void this.openSettingsFromDrawer()
         }
       })
     }

@@ -75,12 +75,15 @@ export interface NoteFilePayload {
   modifiedAt: number
 }
 
+export type WebDAVProvider = 'webdav' | 'qingyu_cloud'
+
 export interface WebDAVConfig {
   baseUrl: string
   username: string
   encryptedPassword: string
   notesDir: string
   enabled: boolean
+  provider: WebDAVProvider
 }
 
 export interface SyncPolicy {

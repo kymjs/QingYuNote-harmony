@@ -1,7 +1,6 @@
 import { Want } from '@kit.AbilityKit'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { getAppVersionName } from '../services/AppUpdateService'
-import { runAppUpdateCheckManually } from '../services/AppUpdateUi'
 
 @Entry
 @Component
@@ -26,21 +25,6 @@ struct About {
     }
     context.startAbility(want).catch((err: Error) => {
       console.error(`openOfficialSite: ${JSON.stringify(err)}`)
-    })
-  }
-
-  private openPrivacyPolicy(): void {
-    const context = AppContextHolder.tryGetContext()
-    if (context === undefined) {
-      return
-    }
-    const want: Want = {
-      action: 'ohos.want.action.viewData',
-      entities: ['entity.system.browsable'],
-      uri: 'https://note.kymjs.com/private/harmony.html'
-    }
-    context.startAbility(want).catch((err: Error) => {
-      console.error(`openPrivacyPolicy: ${JSON.stringify(err)}`)
     })
   }
 
@@ -149,95 +133,6 @@ struct About {
           .width('100%')
           .padding({ left: 20, right: 20, bottom: 20 })
           .alignItems(HorizontalAlign.Center)
-          .backgroundColor($r('app.color.card_background'))
-          .borderRadius($r('app.float.card_radius'))
-          .border({ width: 1, color: $r('app.color.card_border') })
-          .shadow({
-            radius: 20,
-            color: $r('app.color.shadow_color'),
-            offsetX: 0,
-            offsetY: 4
-          })
-
-          Column({ space: 0 }) {
-            Row() {
-              Text($r('app.string.feedback_title'))
-                .fontSize($r('app.float.body_font_size'))
-                .fontColor($r('app.color.primary_text'))
-                .layoutWeight(1)
-              Text('›')
-                .fontSize(22)
-                .fontColor($r('app.color.tertiary_text'))
-            }
-            .width('100%')
-            .padding({
-              left: 20,
-              right: 16,
-              top: 14,
-              bottom: 14
-            })
-            .justifyContent(FlexAlign.SpaceBetween)
-            .alignItems(VerticalAlign.Center)
-            .onClick(() => {
-              this.getUIContext().getRouter().pushUrl({ url: 'pages/Feedback' }).catch((err: Error) => {
-                console.error(`openFeedback: ${JSON.stringify(err)}`)
-              })
-            })
-
-            Divider()
-              .color($r('app.color.divider'))
-              .strokeWidth(1)
-
-            Row() {
-              Text($r('app.string.privacy_policy'))
-                .fontSize($r('app.float.body_font_size'))
-                .fontColor($r('app.color.primary_text'))
-                .layoutWeight(1)
-              Text('›')
-                .fontSize(22)
-                .fontColor($r('app.color.tertiary_text'))
-            }
-            .width('100%')
-            .padding({
-              left: 20,
-              right: 16,
-              top: 14,
-              bottom: 14
-            })
-            .justifyContent(FlexAlign.SpaceBetween)
-            .alignItems(VerticalAlign.Center)
-            .onClick(() => {
-              this.openPrivacyPolicy()
-            })
-
-            Divider()
-              .color($r('app.color.divider'))
-              .strokeWidth(1)
-
-            Row() {
-              Text($r('app.string.check_update'))
-                .fontSize($r('app.float.body_font_size'))
-                .fontColor($r('app.color.primary_text'))
-                .layoutWeight(1)
-              Text('›')
-                .fontSize(22)
-                .fontColor($r('app.color.tertiary_text'))
-            }
-            .width('100%')
-            .padding({
-              left: 20,
-              right: 16,
-              top: 14,
-              bottom: 14
-            })
-            .justifyContent(FlexAlign.SpaceBetween)
-            .alignItems(VerticalAlign.Center)
-            .onClick(() => {
-              void runAppUpdateCheckManually(this.getUIContext())
-            })
-          }
-          .width('100%')
-          .margin({ top: 12 })
           .backgroundColor($r('app.color.card_background'))
           .borderRadius($r('app.float.card_radius'))
           .border({ width: 1, color: $r('app.color.card_border') })
