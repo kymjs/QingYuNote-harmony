@@ -1,9 +1,19 @@
 import { Want } from '@kit.AbilityKit'
 import { AppContextHolder } from '../services/AppContextHolder'
+import { getAppVersionName } from '../services/AppUpdateService'
+import { runAppUpdateCheckManually } from '../services/AppUpdateUi'
 
 @Entry
 @Component
 struct About {
+  @State appVersionLine: string = '轻羽云笔记 v1.0.0'
+
+  aboutToAppear(): void {
+    void getAppVersionName().then((v: string) => {
+      this.appVersionLine = `轻羽云笔记 v${v}`
+    })
+  }
+
   private openOfficialSite(): void {
     const context = AppContextHolder.tryGetContext()
     if (context === undefined) {
@@ -82,7 +92,7 @@ struct About {
               .margin({ top: 20, bottom: 20 })
 
             Column({ space: 16 }) {
-              Text('轻羽云笔记 v1.0.0')
+              Text(this.appVersionLine)
                 .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.secondary_text'))
                 .lineHeight(22)
@@ -149,79 +159,93 @@ struct About {
             offsetY: 4
           })
 
-          Row() {
-            Text($r('app.string.feedback_title'))
-              .fontSize($r('app.float.body_font_size'))
-              .fontColor($r('app.color.primary_text'))
-              .layoutWeight(1)
-            Text('›')
-              .fontSize(22)
-              .fontColor($r('app.color.tertiary_text'))
-          }
-          .width('100%')
-          .padding({
-            left: 20,
-            right: 16,
-            top: 14,
-            bottom: 14
-          })
-          .margin({ top: 12 })
-          .justifyContent(FlexAlign.SpaceBetween)
-          .alignItems(VerticalAlign.Center)
-          .backgroundColor($r('app.color.card_background'))
-          .borderRadius({
-            topLeft: $r('app.float.card_radius'),
-            topRight: $r('app.float.card_radius'),
-            bottomLeft: 0,
-            bottomRight: 0
-          })
-          .border({ width: 1, color: $r('app.color.card_border') })
-          .shadow({
-            radius: 20,
-            color: $r('app.color.shadow_color'),
-            offsetX: 0,
-            offsetY: 4
-          })
-          .onClick(() => {
-            this.getUIContext().getRouter().pushUrl({ url: 'pages/Feedback' }).catch((err: Error) => {
-              console.error(`openFeedback: ${JSON.stringify(err)}`)
+          Column({ space: 0 }) {
+            Row() {
+              Text($r('app.string.feedback_title'))
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor($r('app.color.primary_text'))
+                .layoutWeight(1)
+              Text('›')
+                .fontSize(22)
+                .fontColor($r('app.color.tertiary_text'))
+            }
+            .width('100%')
+            .padding({
+              left: 20,
+              right: 16,
+              top: 14,
+              bottom: 14
             })
-          })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              this.getUIContext().getRouter().pushUrl({ url: 'pages/Feedback' }).catch((err: Error) => {
+                console.error(`openFeedback: ${JSON.stringify(err)}`)
+              })
+            })
 
-          Row() {
-            Text($r('app.string.privacy_policy'))
-              .fontSize($r('app.float.body_font_size'))
-              .fontColor($r('app.color.primary_text'))
-              .layoutWeight(1)
-            Text('›')
-              .fontSize(22)
-              .fontColor($r('app.color.tertiary_text'))
+            Divider()
+              .color($r('app.color.divider'))
+              .strokeWidth(1)
+
+            Row() {
+              Text($r('app.string.privacy_policy'))
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor($r('app.color.primary_text'))
+                .layoutWeight(1)
+              Text('›')
+                .fontSize(22)
+                .fontColor($r('app.color.tertiary_text'))
+            }
+            .width('100%')
+            .padding({
+              left: 20,
+              right: 16,
+              top: 14,
+              bottom: 14
+            })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              this.openPrivacyPolicy()
+            })
+
+            Divider()
+              .color($r('app.color.divider'))
+              .strokeWidth(1)
+
+            Row() {
+              Text($r('app.string.check_update'))
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor($r('app.color.primary_text'))
+                .layoutWeight(1)
+              Text('›')
+                .fontSize(22)
+                .fontColor($r('app.color.tertiary_text'))
+            }
+            .width('100%')
+            .padding({
+              left: 20,
+              right: 16,
+              top: 14,
+              bottom: 14
+            })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              void runAppUpdateCheckManually(this.getUIContext())
+            })
           }
           .width('100%')
-          .padding({
-            left: 20,
-            right: 16,
-            top: 14,
-            bottom: 14
-          })
-          .justifyContent(FlexAlign.SpaceBetween)
-          .alignItems(VerticalAlign.Center)
+          .margin({ top: 12 })
           .backgroundColor($r('app.color.card_background'))
-          .borderRadius({
-            topLeft: 0,
-            topRight: 0,
-            bottomLeft: $r('app.float.card_radius'),
-            bottomRight: $r('app.float.card_radius')
-          })
+          .borderRadius($r('app.float.card_radius'))
           .border({ width: 1, color: $r('app.color.card_border') })
           .shadow({
             radius: 20,
             color: $r('app.color.shadow_color'),
             offsetX: 0,
             offsetY: 4
-          })
-          .onClick(() => {
-            this.openPrivacyPolicy()
           })
         }
         .width('100%')

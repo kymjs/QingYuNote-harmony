@@ -6,6 +6,7 @@ import { NoteRepository } from '../services/NoteRepository'
 import { SyncService } from '../services/SyncService'
 import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
+import { runAppUpdateCheckOnLaunch } from '../services/AppUpdateUi'
 import { Logger } from '../common/utils/Logger'
 
 const BASE_SYNC_TIMEOUT_MS = 10 * 1000
@@ -63,6 +64,7 @@ struct Index {
 
   private async initializeHome(): Promise<void> {
     await this.loadNotes(this.notes.length === 0)
+    await runAppUpdateCheckOnLaunch(this.getUIContext())
     if (await this.shouldRunStartupSync()) {
       void this.maybeSyncAfterInitialLoad()
     }

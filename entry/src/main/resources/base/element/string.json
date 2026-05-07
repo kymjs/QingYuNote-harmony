@@ -53,6 +53,10 @@
       "value": "问题反馈"
     },
     {
+      "name": "check_update",
+      "value": "检查更新"
+    },
+    {
       "name": "feedback_hint_pc",
       "value": "扫描二维码联系开发者"
     },
