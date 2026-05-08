@@ -54,7 +54,7 @@
     },
     {
       "name": "on_accent",
-      "value": "#FF0B0F14"
+      "value": "#FFFFFFFF"
     },
     {
       "name": "success",
@@ -91,6 +91,26 @@
     {
       "name": "huawei_login_brand",
       "value": "#FFCE0E2D"
+    },
+    {
+      "name": "qingyu_member_plan_bg",
+      "value": "#FF3D4A5C"
+    },
+    {
+      "name": "qingyu_member_plan_bg_pressed",
+      "value": "#FF4B5C72"
+    },
+    {
+      "name": "qingyu_member_plan_text",
+      "value": "#FFF9FAFB"
+    },
+    {
+      "name": "qingyu_member_plan_subtext",
+      "value": "#B3F3F4F6"
+    },
+    {
+      "name": "link_text",
+      "value": "#FF2563EB"
     }
   ]
 }

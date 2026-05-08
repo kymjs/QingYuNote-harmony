@@ -328,6 +328,7 @@ export class NoteRepository {
     if (!note) {
       await DatabaseService.getInstance().deleteSyncState(id)
       this.bumpVersion()
+      await WebDAVClient.getInstance().appendPermanentlyDeletedNoteId(id)
       this.scheduleSyncHandler?.(id)
       return
     }
@@ -343,6 +344,7 @@ export class NoteRepository {
     await FileService.getInstance().writeNoteFile(updated)
     await DatabaseService.getInstance().upsertSyncState(this.toSyncState(updated))
     this.bumpVersion()
+    await WebDAVClient.getInstance().appendPermanentlyDeletedNoteId(id)
     this.scheduleSyncHandler?.(id)
   }
 

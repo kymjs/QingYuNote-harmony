@@ -144,37 +144,42 @@ struct Login {
 
       Blank().layoutWeight(1)
 
-      Button() {
-        Text($r('app.string.login_with_huawei'))
-          .fontColor('#FFFFFFFF')
-          .fontSize(17)
-          .fontWeight(FontWeight.Medium)
-      }
-        .type(ButtonType.Normal)
-        .width('100%')
-        .height(48)
-        .backgroundColor($r('app.color.huawei_login_brand'))
-        .borderRadius($r('app.float.pill_radius'))
-        .margin({ left: 28, right: 28, bottom: 12 })
-        .onClick((): void => {
-          void this.onHuaweiTap()
-        })
+      // 与 Flutter `login_page.dart` 一致：`Padding(symmetric(horizontal: 28))` 包裹全宽按钮，避免 width 100% 与 margin 叠加导致左右贴边。
+      Column({ space: 0 }) {
+        Button() {
+          Text($r('app.string.login_with_huawei'))
+            .fontColor('#FFFFFFFF')
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+        }
+          .type(ButtonType.Normal)
+          .width('100%')
+          .height(48)
+          .backgroundColor($r('app.color.huawei_login_brand'))
+          .borderRadius($r('app.float.pill_radius'))
+          .margin({ bottom: 12 })
+          .onClick((): void => {
+            void this.onHuaweiTap()
+          })
 
-      Button() {
-        Text($r('app.string.login_with_wechat'))
-          .fontColor('#FFFFFFFF')
-          .fontSize(17)
-          .fontWeight(FontWeight.Medium)
+        Button() {
+          Text($r('app.string.login_with_wechat'))
+            .fontColor('#FFFFFFFF')
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+        }
+          .type(ButtonType.Normal)
+          .width('100%')
+          .height(48)
+          .backgroundColor($r('app.color.wechat_brand'))
+          .borderRadius($r('app.float.pill_radius'))
+          .margin({ bottom: 12 })
+          .onClick((): void => {
+            void this.onWeChatTap()
+          })
       }
-        .type(ButtonType.Normal)
         .width('100%')
-        .height(48)
-        .backgroundColor($r('app.color.wechat_brand'))
-        .borderRadius($r('app.float.pill_radius'))
-        .margin({ left: 28, right: 28, bottom: 12 })
-        .onClick((): void => {
-          void this.onWeChatTap()
-        })
+        .padding({ left: 28, right: 28 })
 
       if (this.buildAppIdHint().length > 0) {
         Text(this.buildAppIdHint())

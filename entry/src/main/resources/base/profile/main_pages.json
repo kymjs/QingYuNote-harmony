@@ -5,6 +5,7 @@
     "pages/NoteEdit",
     "pages/Settings",
     "pages/CloudSyncSettings",
+    "pages/QingyuCloudRecharge",
     "pages/RecycleBin",
     "pages/About",
     "pages/Feedback",

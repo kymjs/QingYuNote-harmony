@@ -84,10 +84,10 @@ struct CloudSyncSettings {
       this.applyQingyuSubscriptionStatus(status)
     } catch (error) {
       Logger.warn('CloudSyncSettings', `refreshQingyuSubscriptionCard failed: ${this.describeError(error as Object)}`)
-      this.qingyuSubHint = '暂时无法获取云服务状态'
+      this.qingyuSubHint = '暂未开通轻羽云服务'
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
-      this.qingyuSubButtonLabel = '立即续费'
+      this.qingyuSubButtonLabel = '前往开通'
     } finally {
       this.qingyuSubLoading = false
     }
@@ -128,17 +128,17 @@ struct CloudSyncSettings {
       return
     }
     if (status.kind === 'fetch_failed') {
-      this.qingyuSubHint = '暂时无法获取云服务状态'
+      this.qingyuSubHint = '暂未开通轻羽云服务'
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
-      this.qingyuSubButtonLabel = '立即续费'
+      this.qingyuSubButtonLabel = '前往开通'
       return
     }
     if (status.kind === 'malformed') {
-      this.qingyuSubHint = '云服务状态数据无效'
+      this.qingyuSubHint = '暂未开通轻羽云服务'
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
-      this.qingyuSubButtonLabel = '立即续费'
+      this.qingyuSubButtonLabel = '前往开通'
       return
     }
     this.qingyuSubHint = ''
@@ -192,7 +192,7 @@ struct CloudSyncSettings {
 
   private async buildQingyuPayload(): Promise<SettingsPayload> {
     const encryptedServerPassword =
-      await CryptoService.getInstance().encryptText(SyncConstants.QINGYU_WEBDAV_PASSWORD)
+      await CryptoService.getInstance().encryptText(SyncConstants.qingyuWebDavPassword)
     const folderKey = await PreferencesService.getInstance().resolveActiveQingyuFolderIdentityKey()
     let notesDir = '/'
     if (folderKey !== null && folderKey.length > 0) {
@@ -203,8 +203,8 @@ struct CloudSyncSettings {
     Logger.info('CloudSyncSettings', `buildQingyuPayload: enabled=${enabled}, notesDir=${notesDir}`)
     return {
       config: {
-        baseUrl: SyncConstants.QINGYU_WEBDAV_BASE_URL,
-        username: SyncConstants.QINGYU_WEBDAV_USERNAME,
+        baseUrl: SyncConstants.qingyuWebDavBaseUrl,
+        username: SyncConstants.qingyuWebDavUsername,
         encryptedPassword: encryptedServerPassword,
         notesDir,
         enabled,
@@ -280,6 +280,20 @@ struct CloudSyncSettings {
       })
     } catch (error) {
       Logger.warn('CloudSyncSettings', `showToast failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  private async showQingyuOpenNotAvailableDialog(): Promise<void> {
+    try {
+      await this.getUIContext().getPromptAction().showDialog({
+        title: '提示',
+        message: '暂不支持，请等候。',
+        buttons: [
+          { text: '确定', color: '#0DAA4A' }
+        ]
+      })
+    } catch (error) {
+      Logger.warn('CloudSyncSettings', `showQingyuOpenNotAvailableDialog failed: ${this.describeError(error as Object)}`)
     }
   }
 
@@ -538,7 +552,13 @@ struct CloudSyncSettings {
                       .borderRadius($r('app.float.pill_radius'))
                       .padding({ top: 12, bottom: 12 })
                       .onClick(() => {
-                        this.showUserMessage('续费功能开发中')
+                        if (this.qingyuSubButtonLabel === '前往开通') {
+                          void this.showQingyuOpenNotAvailableDialog()
+                          return
+                        }
+                        this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
+                          console.error(`openQingyuCloudRecharge: ${JSON.stringify(err)}`)
+                        })
                       })
                   }
                   if (this.qingyuSubShowConfirm) {

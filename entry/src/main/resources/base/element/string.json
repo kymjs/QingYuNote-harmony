@@ -53,6 +53,54 @@
       "value": "轻羽云服务"
     },
     {
+      "name": "qingyu_recharge_tagline",
+      "value": "开通云服务，多端笔记安心同步"
+    },
+    {
+      "name": "qingyu_privilege_section_title",
+      "value": "会员特权"
+    },
+    {
+      "name": "qingyu_recharge_footer_note",
+      "value": "注：会员服务开通后不支持退款。购买即表示您同意相关服务条款。"
+    },
+    {
+      "name": "qingyu_recharge_agreement_link",
+      "value": "《轻羽云服务协议》"
+    },
+    {
+      "name": "qingyu_privilege_sync_title",
+      "value": "云端同步"
+    },
+    {
+      "name": "qingyu_privilege_sync_desc",
+      "value": "笔记实时同步至轻羽云，换机不丢稿。"
+    },
+    {
+      "name": "qingyu_privilege_multi_title",
+      "value": "多端访问"
+    },
+    {
+      "name": "qingyu_privilege_multi_desc",
+      "value": "手机、平板，多设备随时查看与编辑。"
+    },
+    {
+      "name": "qingyu_privilege_media_title",
+      "value": "图片与附件"
+    },
+    {
+      "name": "qingyu_privilege_media_desc",
+      "value": "正文内图片与附件随笔记一并云端保存。"
+    },
+    {
+      "name": "qingyu_privilege_safe_title",
+      "value": "永久无广告"
+    },
+    {
+      "name": "qingyu_privilege_safe_desc",
+      "value": "无开屏与信息流推广打扰，专注写作与笔记。"
+    },
+    {
       "name": "qingyu_renew_toast_placeholder",
       "value": "续费功能开发中"
     },
@@ -71,6 +119,10 @@
     {
       "name": "privacy_policy",
       "value": "隐私政策"
+    },
+    {
+      "name": "terms_of_service",
+      "value": "服务协议"
     },
     {
       "name": "feedback_title",

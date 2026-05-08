@@ -18,6 +18,8 @@ import { PathUtils } from '../common/utils/PathUtils'
 import { TimeUtils } from '../common/utils/TimeUtils'
 import { Logger } from '../common/utils/Logger'
 import { SyncConstants } from '../common/constants/SyncConstants'
+import type { QingyuRechargePlanId } from '../common/constants/QingyuRechargePlans'
+import { QingyuRechargePlans } from '../common/constants/QingyuRechargePlans'
 
 interface HeaderOverrides {
   contentType?: string
@@ -57,16 +59,32 @@ export interface RemoteIndexEntry {
 interface RemoteIndexPayloadV2 {
   version: number
   updatedAt: number
-  notes: Record<string, RemoteIndexEntry>
+  /** 写入时为 id → 索引条目；解析时另支持对方写入的 `noteIds` 字符串数组。 */
+  noteIds: Record<string, RemoteIndexEntry>
+}
+
+/** 上传 `.qingyu-index.json` 时的 JSON 结构（满足 arkts-no-untyped-obj-literals）。 */
+interface RemoteIndexWritePayload {
+  version: number
+  updatedAt: number
+  noteIds: Record<string, RemoteIndexEntry>
+  permanentlyDeletedNoteIds: string[]
+}
+
+/** 单次 GET `.qingyu-index.json` 解析结果（笔记条目 + 彻底删除 id 列表）。 */
+export interface RemoteIndexSnapshot {
+  noteEntries: Map<string, RemoteIndexEntry>
+  permanentlyDeletedNoteIds: Set<string>
 }
 
 export class WebDAVClient {
   private static instance: WebDAVClient = new WebDAVClient()
-  private static readonly REMOTE_INDEX_FILE_NAME: string = '.qingyu-index.json'
-  private static readonly QINGYU_LIFETIME_MIN_YEAR: number = 2099
-  static readonly IMAGE_DIR_NAME: string = 'qingyu-note-image'
-  private static readonly REMOTE_INDEX_VERSION: number = 2
-  private static readonly PROPFIND_REQUEST_BODY: string =
+  /** 与 Flutter `WebDavClient._remoteIndexFileName` 一致。 */
+  private static readonly _remoteIndexFileName: string = '.qingyu-index.json'
+  /** 与 Flutter `WebDavClient.imageDirName` 一致。 */
+  static readonly imageDirName: string = 'qingyu-note-image'
+  /** 与 Flutter `WebDavClient._propfindRequestBody` 一致。 */
+  private static readonly _propfindRequestBody: string =
     '<?xml version="1.0" encoding="utf-8"?>' +
     '<d:propfind xmlns:d="DAV:"><d:allprop/></d:propfind>'
   private readonly base64: util.Base64Helper = new util.Base64Helper()
@@ -134,10 +152,10 @@ export class WebDAVClient {
       return s
     }
     const url =
-      PathUtils.joinRemotePathFileUrl(config.baseUrl, config.notesDir, SyncConstants.QINGYU_CLOUD_META_FILE)
+      PathUtils.joinRemotePathFileUrl(config.baseUrl, config.notesDir, SyncConstants.qingyuCloudMetaFile)
     Logger.info('WebDAVClient', `fetchQingyuCloudSubscriptionStatus GET url=${this.sanitizeUrl(url)}`)
     try {
-      const response = await this.sendRequest(url, http.RequestMethod.GET)
+      const response = await this.sendRequest(url, http.RequestMethod.GET, undefined, undefined, config)
       if (response.responseCode === 404) {
         const s: QingyuCloudStatusNotPurchased = { kind: 'not_purchased' }
         return s
@@ -151,7 +169,14 @@ export class WebDAVClient {
         const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
         return s
       }
-      return WebDAVClient.parseQingyuCloudJsonBody(rawBody)
+      const dateHeader = this.pickHeader(response.header, 'Date')
+      let referenceNowMillis = TimeUtils.fromHttpDate(dateHeader)
+      if (referenceNowMillis <= 0) {
+        referenceNowMillis = Date.now()
+        Logger.warn('WebDAVClient',
+          'fetchQingyuCloudSubscriptionStatus: missing/invalid HTTP Date header; subscription gate falls back to local clock')
+      }
+      return WebDAVClient.parseQingyuCloudJsonBody(rawBody, referenceNowMillis)
     } catch (error) {
       if (this.isCredentialDecryptFailure(error)) {
         throw this.toRuntimeError(error)
@@ -208,12 +233,12 @@ export class WebDAVClient {
   /** 合并远端 `.qingyu-cloud.json`：保留服务端 `expiresAt`，写入本地三方标识字段（不落本地磁盘）。 */
   private async upsertQingyuCloudMetadata(config: WebDAVConfig): Promise<void> {
     const url =
-      PathUtils.joinRemotePathFileUrl(config.baseUrl, config.notesDir, SyncConstants.QINGYU_CLOUD_META_FILE)
+      PathUtils.joinRemotePathFileUrl(config.baseUrl, config.notesDir, SyncConstants.qingyuCloudMetaFile)
     const huawei = await PreferencesService.getInstance().getHuaweiThirdPartyUserId()
     const wechat = await PreferencesService.getInstance().getWeChatThirdPartyUserId()
     const merged: Record<string, Object | string | number | boolean | null | undefined> = {}
     try {
-      const response = await this.sendRequest(url, http.RequestMethod.GET)
+      const response = await this.sendRequest(url, http.RequestMethod.GET, undefined, undefined, config)
       if (response.responseCode >= 200 && response.responseCode < 300) {
         const raw = this.responseBodyToText(response.result).trim()
         if (raw.length > 0) {
@@ -228,12 +253,12 @@ export class WebDAVClient {
       Logger.warn('WebDAVClient',
         `upsertQingyuCloudMetadata GET skipped: ${this.describeError(error as Object)}`)
     }
-    merged[SyncConstants.QINGYU_CLOUD_FIELD_HUAWEI_USER] = huawei
-    merged[SyncConstants.QINGYU_CLOUD_FIELD_WECHAT_USER] = wechat
+    merged[SyncConstants.qingyuCloudFieldHuaweiUser] = huawei
+    merged[SyncConstants.qingyuCloudFieldWechatUser] = wechat
     try {
       await this.sendRequest(url, http.RequestMethod.PUT, JSON.stringify(merged), {
         contentType: 'application/json; charset=utf-8'
-      })
+      }, config)
     } catch (error) {
       Logger.warn('WebDAVClient',
         `upsertQingyuCloudMetadata PUT failed: ${this.describeError(error as Object)}`)
@@ -260,7 +285,7 @@ export class WebDAVClient {
     Logger.warn('WebDAVClient',
       `qingyu ${label}: HEAD not treated as reachable (code=${headCode}); acceptableReachabilityCodes=200-399 or 405. Diagnostic PROPFIND depth=0 same URL.`)
     try {
-      const response = await this.sendRequest(url, 'PROPFIND', WebDAVClient.PROPFIND_REQUEST_BODY, {
+      const response = await this.sendRequest(url, 'PROPFIND', WebDAVClient._propfindRequestBody, {
         contentType: 'application/xml; charset=utf-8',
         depth: '0'
       })
@@ -274,7 +299,7 @@ export class WebDAVClient {
 
   private async ensureImageDirectory(config: WebDAVConfig): Promise<void> {
     const directoryUrl = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
-    const imageUrl = `${directoryUrl}${WebDAVClient.IMAGE_DIR_NAME}/`
+    const imageUrl = `${directoryUrl}${WebDAVClient.imageDirName}/`
     Logger.info('WebDAVClient', `ensureImageDirectory start: url=${this.sanitizeUrl(imageUrl)}`)
     try {
       const response = await this.sendRequest(imageUrl, http.RequestMethod.HEAD)
@@ -403,7 +428,7 @@ export class WebDAVClient {
   async uploadImage(fileName: string, bytes: ArrayBuffer): Promise<void> {
     const config = await this.requireConfig()
     const directoryUrl = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
-    const imageUrl = `${directoryUrl}${WebDAVClient.IMAGE_DIR_NAME}/${encodeURIComponent(fileName)}`
+    const imageUrl = `${directoryUrl}${WebDAVClient.imageDirName}/${encodeURIComponent(fileName)}`
     Logger.info('WebDAVClient', `uploadImage start: fileName=${fileName}, url=${this.sanitizeUrl(imageUrl)}, byteLength=${bytes.byteLength}`)
     const response = await this.sendRequest(imageUrl, http.RequestMethod.PUT, '', {
       contentType: 'application/octet-stream',
@@ -418,7 +443,7 @@ export class WebDAVClient {
   async downloadImage(fileName: string): Promise<ArrayBuffer> {
     const config = await this.requireConfig()
     const directoryUrl = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
-    const imageUrl = `${directoryUrl}${WebDAVClient.IMAGE_DIR_NAME}/${encodeURIComponent(fileName)}`
+    const imageUrl = `${directoryUrl}${WebDAVClient.imageDirName}/${encodeURIComponent(fileName)}`
     Logger.info('WebDAVClient', `downloadImage start: fileName=${fileName}, url=${this.sanitizeUrl(imageUrl)}`)
     const response = await this.sendRequest(imageUrl, http.RequestMethod.GET, undefined, {
       expectArrayBuffer: true
@@ -436,7 +461,7 @@ export class WebDAVClient {
   async deleteImage(fileName: string): Promise<void> {
     const config = await this.requireConfig()
     const directoryUrl = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
-    const imageUrl = `${directoryUrl}${WebDAVClient.IMAGE_DIR_NAME}/${encodeURIComponent(fileName)}`
+    const imageUrl = `${directoryUrl}${WebDAVClient.imageDirName}/${encodeURIComponent(fileName)}`
     Logger.info('WebDAVClient', `deleteImage start: fileName=${fileName}, url=${this.sanitizeUrl(imageUrl)}`)
     const response = await this.sendRequest(imageUrl, http.RequestMethod.DELETE)
     Logger.info('WebDAVClient', `deleteImage response: fileName=${fileName}, responseCode=${response.responseCode}`)
@@ -451,7 +476,7 @@ export class WebDAVClient {
     Logger.info('WebDAVClient', `listRemoteNotes start: url=${this.sanitizeUrl(targetUrl)}`)
     const results = new Set<string>()
     try {
-      const response = await this.sendRequest(targetUrl, 'PROPFIND', WebDAVClient.PROPFIND_REQUEST_BODY, {
+      const response = await this.sendRequest(targetUrl, 'PROPFIND', WebDAVClient._propfindRequestBody, {
         contentType: 'application/xml; charset=utf-8',
         depth: '1'
       })
@@ -474,8 +499,8 @@ export class WebDAVClient {
       Logger.warn('WebDAVClient', `listRemoteNotes GET fallback exception: ${this.describeError(error as Object)}`)
     }
     try {
-      const indexEntries = await this.readRemoteIndexEntries()
-      indexEntries.forEach((_: RemoteIndexEntry, noteId: string) => results.add(noteId))
+      const indexSnapshot = await this.fetchRemoteIndexSnapshot()
+      indexSnapshot.noteEntries.forEach((_: RemoteIndexEntry, noteId: string) => results.add(noteId))
     } catch (error) {
       Logger.warn('WebDAVClient', `listRemoteNotes index fallback exception: ${this.describeError(error as Object)}`)
     }
@@ -484,7 +509,8 @@ export class WebDAVClient {
   }
 
   async reconcileRemoteIndex(noteIds: string[], deletedNoteIds: string[]): Promise<void> {
-    const mergedEntries = await this.readRemoteIndexEntries()
+    const snapshot = await this.fetchRemoteIndexSnapshot()
+    const mergedEntries = snapshot.noteEntries
     noteIds.forEach((noteId: string) => {
       if (noteId.length > 0) {
         if (!mergedEntries.has(noteId)) {
@@ -497,11 +523,35 @@ export class WebDAVClient {
         mergedEntries.delete(noteId)
       }
     })
-    await this.writeRemoteIndexEntries(mergedEntries)
+    await this.writeRemoteIndexEntries(mergedEntries, snapshot.permanentlyDeletedNoteIds)
   }
 
   async getRemoteIndexEntries(): Promise<Map<string, RemoteIndexEntry>> {
-    return await this.readRemoteIndexEntries()
+    const snapshot = await this.fetchRemoteIndexSnapshot()
+    return snapshot.noteEntries
+  }
+
+  /** 供同步逻辑一次性读取索引（避免重复 GET）。 */
+  async getRemoteIndexSnapshot(): Promise<RemoteIndexSnapshot> {
+    return await this.fetchRemoteIndexSnapshot()
+  }
+
+  /**
+   * 回收站彻底删除后写入：将 id 记入 `.qingyu-index.json` 的彻底删除数组，并从索引笔记条目中移除。
+   */
+  async appendPermanentlyDeletedNoteId(noteId: string): Promise<void> {
+    if (noteId.length === 0) {
+      return
+    }
+    try {
+      const snapshot = await this.fetchRemoteIndexSnapshot()
+      snapshot.noteEntries.delete(noteId)
+      snapshot.permanentlyDeletedNoteIds.add(noteId)
+      await this.writeRemoteIndexEntries(snapshot.noteEntries, snapshot.permanentlyDeletedNoteIds)
+    } catch (error) {
+      Logger.warn('WebDAVClient',
+        `appendPermanentlyDeletedNoteId failed: noteId=${noteId}, ${this.describeError(error as Object)}`)
+    }
   }
 
   private async noteUrl(noteId: string): Promise<string> {
@@ -521,8 +571,16 @@ export class WebDAVClient {
     return await PreferencesService.getInstance().getWebDAVConfig()
   }
 
-  private async buildHeaders(extraHeaders?: HeaderOverrides): Promise<RequestHeaders> {
-    const config = await this.requireConfig()
+  private async buildHeaders(extraHeaders?: HeaderOverrides, authConfig?: WebDAVConfig): Promise<RequestHeaders> {
+    let config: WebDAVConfig
+    if (authConfig !== undefined) {
+      if (!authConfig.enabled) {
+        throw new Error('WebDAV is not configured')
+      }
+      config = authConfig
+    } else {
+      config = await this.requireConfig()
+    }
     const authorization = await this.resolveAuthorizationHeader(config)
     const headers: RequestHeaders = {
       Authorization: authorization,
@@ -541,14 +599,14 @@ export class WebDAVClient {
   }
 
   private async sendRequest(url: string, method: http.RequestMethod | string, extraData?: string,
-    extraHeaders?: HeaderOverrides): Promise<http.HttpResponse> {
+    extraHeaders?: HeaderOverrides, authConfig?: WebDAVConfig): Promise<http.HttpResponse> {
     const request = http.createHttp()
     const safeUrl = this.sanitizeUrl(url)
     const methodLabel = this.requestMethodLabel(method)
     Logger.info('WebDAVClient',
       `sendRequest start: method=${methodLabel}, url=${safeUrl}, hasExtraData=${extraData !== undefined}, readTimeout=15000, connectTimeout=10000`)
     try {
-      const headers = await this.buildHeaders(extraHeaders)
+      const headers = await this.buildHeaders(extraHeaders, authConfig)
       Logger.info('WebDAVClient',
         `sendRequest headers ready: method=${methodLabel}, url=${safeUrl}, headerKeys=${this.describeHeaderKeys(headers)}`)
       const requestOptions: http.HttpRequestOptions = {
@@ -632,40 +690,53 @@ export class WebDAVClient {
   private async remoteIndexUrl(): Promise<string> {
     const config = await this.requireConfig()
     const directoryUrl = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
-    return `${directoryUrl}${encodeURIComponent(WebDAVClient.REMOTE_INDEX_FILE_NAME)}`
+    return `${directoryUrl}${encodeURIComponent(WebDAVClient._remoteIndexFileName)}`
   }
 
-  private async readRemoteIndexEntries(): Promise<Map<string, RemoteIndexEntry>> {
+  private async fetchRemoteIndexSnapshot(): Promise<RemoteIndexSnapshot> {
+    const permanentDeletes = new Set<string>()
     try {
       const response = await this.sendRequest(await this.remoteIndexUrl(), http.RequestMethod.GET)
       if (response.responseCode === 404) {
-        return new Map<string, RemoteIndexEntry>()
+        return { noteEntries: new Map<string, RemoteIndexEntry>(), permanentlyDeletedNoteIds: permanentDeletes }
       }
       if (response.responseCode >= 400) {
         throw new Error(`Index download failed with status ${response.responseCode}`)
       }
       const rawBody = this.responseBodyToText(response.result).trim()
       if (rawBody.length === 0) {
-        return new Map<string, RemoteIndexEntry>()
+        return { noteEntries: new Map<string, RemoteIndexEntry>(), permanentlyDeletedNoteIds: permanentDeletes }
       }
       const decoded = JSON.parse(rawBody) as Object
       const results: Map<string, RemoteIndexEntry> = new Map()
-      if (Array.isArray(decoded)) {
-        decoded.forEach((item: Object) => {
-          if (typeof item === 'string' && item.length > 0) {
-            results.set(item, this.defaultRemoteIndexEntry())
-          }
-        })
-        return results
+      if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
+        return { noteEntries: results, permanentlyDeletedNoteIds: permanentDeletes }
       }
       const payload = decoded as Record<string, Object | undefined>
-      const notes = payload.notes as Record<string, Object | undefined> | undefined
-      if (notes && typeof notes === 'object') {
-        Object.keys(notes).forEach((noteId: string) => {
+      const permRaw = payload[SyncConstants.remoteIndexFieldPermanentlyDeletedNoteIds]
+      if (Array.isArray(permRaw)) {
+        permRaw.forEach((item: Object) => {
+          if (typeof item === 'string' && item.length > 0) {
+            permanentDeletes.add(item)
+          }
+        })
+      }
+      const rawNoteIds = payload.noteIds
+      if (Array.isArray(rawNoteIds)) {
+        rawNoteIds.forEach((item: Object) => {
+          if (typeof item === 'string' && item.length > 0) {
+            if (!results.has(item)) {
+              results.set(item, this.defaultRemoteIndexEntry())
+            }
+          }
+        })
+      } else if (rawNoteIds !== undefined && rawNoteIds !== null && typeof rawNoteIds === 'object') {
+        const noteIdRecord = rawNoteIds as Record<string, Object | undefined>
+        Object.keys(noteIdRecord).forEach((noteId: string) => {
           if (noteId.length === 0) {
             return
           }
-          const rawEntry = notes[noteId]
+          const rawEntry = noteIdRecord[noteId]
           const entryRecord = (rawEntry ?? {}) as Record<string, Object | undefined>
           results.set(noteId, {
             remoteModified: this.normalizeIndexNumber(entryRecord.remoteModified),
@@ -674,41 +745,34 @@ export class WebDAVClient {
           })
         })
       }
-      const noteIds = payload.noteIds
-      if (Array.isArray(noteIds)) {
-        noteIds.forEach((item: Object) => {
-          if (typeof item === 'string' && item.length > 0) {
-            if (!results.has(item)) {
-              results.set(item, this.defaultRemoteIndexEntry())
-            }
-          }
-        })
-      }
-      return results
+      return { noteEntries: results, permanentlyDeletedNoteIds: permanentDeletes }
     } catch (error) {
       if ((error as ErrorLike).message?.includes('Index download failed')) {
         throw error as Error
       }
-      Logger.warn('WebDAVClient', `readRemoteIndexEntries parse fallback: ${this.describeError(error as Object)}`)
-      return new Map<string, RemoteIndexEntry>()
+      Logger.warn('WebDAVClient', `fetchRemoteIndexSnapshot parse fallback: ${this.describeError(error as Object)}`)
+      return { noteEntries: new Map<string, RemoteIndexEntry>(), permanentlyDeletedNoteIds: permanentDeletes }
     }
   }
 
-  private async writeRemoteIndexEntries(noteEntries: Map<string, RemoteIndexEntry>): Promise<void> {
+  private async writeRemoteIndexEntries(noteEntries: Map<string, RemoteIndexEntry>,
+    permanentlyDeletedNoteIds: Set<string>): Promise<void> {
     const sortedNoteIds = Array.from(noteEntries.keys()).sort()
-    const notes: Record<string, RemoteIndexEntry> = {}
+    const noteIds: Record<string, RemoteIndexEntry> = {}
     sortedNoteIds.forEach((noteId: string) => {
       const entry = noteEntries.get(noteId) ?? this.defaultRemoteIndexEntry()
-      notes[noteId] = {
+      noteIds[noteId] = {
         remoteModified: this.normalizeIndexNumber(entry.remoteModified),
         deletedTime: this.normalizeIndexNumber(entry.deletedTime),
         contentLength: this.normalizeIndexNumber(entry.contentLength)
       }
     })
-    const payload: RemoteIndexPayloadV2 = {
-      version: WebDAVClient.REMOTE_INDEX_VERSION,
+    const sortedPermanent = Array.from(permanentlyDeletedNoteIds).filter((id: string) => id.length > 0).sort()
+    const payload: RemoteIndexWritePayload = {
+      version: 2,
       updatedAt: Date.now(),
-      notes
+      noteIds,
+      permanentlyDeletedNoteIds: sortedPermanent
     }
     const response = await this.sendRequest(
       await this.remoteIndexUrl(),
@@ -724,22 +788,24 @@ export class WebDAVClient {
   }
 
   private async addNoteToRemoteIndex(noteId: string, entry?: Partial<RemoteIndexEntry>): Promise<void> {
-    const noteEntries = await this.readRemoteIndexEntries()
+    const snapshot = await this.fetchRemoteIndexSnapshot()
+    const noteEntries = snapshot.noteEntries
     const previous = noteEntries.get(noteId) ?? this.defaultRemoteIndexEntry()
     noteEntries.set(noteId, {
       remoteModified: this.normalizeIndexNumber(entry?.remoteModified ?? previous.remoteModified),
       deletedTime: this.normalizeIndexNumber(entry?.deletedTime ?? previous.deletedTime),
       contentLength: this.normalizeIndexNumber(entry?.contentLength ?? previous.contentLength)
     })
-    await this.writeRemoteIndexEntries(noteEntries)
+    await this.writeRemoteIndexEntries(noteEntries, snapshot.permanentlyDeletedNoteIds)
   }
 
   private async removeNoteFromRemoteIndex(noteId: string): Promise<void> {
-    const noteEntries = await this.readRemoteIndexEntries()
+    const snapshot = await this.fetchRemoteIndexSnapshot()
+    const noteEntries = snapshot.noteEntries
     if (!noteEntries.delete(noteId)) {
       return
     }
-    await this.writeRemoteIndexEntries(noteEntries)
+    await this.writeRemoteIndexEntries(noteEntries, snapshot.permanentlyDeletedNoteIds)
   }
 
   private defaultRemoteIndexEntry(): RemoteIndexEntry {
@@ -785,7 +851,10 @@ export class WebDAVClient {
     }
   }
 
-  private static parseQingyuCloudJsonBody(rawBody: string): QingyuCloudSubscriptionStatus {
+  /**
+   * @param referenceNowMillis 须与 WebDAV 响应头 `Date`（服务端时间）对齐；不要用本地 Date.now() 作为唯一依据，以免用户改系统时间绕过订阅门禁。
+   */
+  private static parseQingyuCloudJsonBody(rawBody: string, referenceNowMillis: number): QingyuCloudSubscriptionStatus {
     let decoded: Record<string, Object | string | number | boolean | null | undefined>
     try {
       decoded = JSON.parse(rawBody) as Record<string, Object | string | number | boolean | null | undefined>
@@ -807,11 +876,11 @@ export class WebDAVClient {
       const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
       return s
     }
-    if (parsed.year >= WebDAVClient.QINGYU_LIFETIME_MIN_YEAR) {
+    if (parsed.year >= SyncConstants.qingyuLifetimeMinYear) {
       const s: QingyuCloudStatusLifetime = { kind: 'lifetime' }
       return s
     }
-    const now = Date.now()
+    const now = referenceNowMillis
     if (now > parsed.endOfDayMillis) {
       const s: QingyuCloudStatusExpired = { kind: 'expired', expiresDisplayYmd: parsed.displayYmd }
       return s
@@ -822,7 +891,7 @@ export class WebDAVClient {
 
   private static pickQingyuExpiresRaw(record: Record<string, Object | string | number | boolean | null | undefined>): string {
     const direct: (Object | string | number | boolean | null | undefined)[] = [
-      record[SyncConstants.QINGYU_CLOUD_FIELD_EXPIRES_AT],
+      record[SyncConstants.qingyuCloudFieldExpiresAt],
       record['expires_at'],
       record['失效日期'],
     ]
@@ -835,8 +904,8 @@ export class WebDAVClient {
     const keys = Object.keys(record)
     if (keys.length === 1) {
       const onlyKey = keys[0]
-      if (onlyKey === SyncConstants.QINGYU_CLOUD_FIELD_HUAWEI_USER ||
-        onlyKey === SyncConstants.QINGYU_CLOUD_FIELD_WECHAT_USER) {
+      if (onlyKey === SyncConstants.qingyuCloudFieldHuaweiUser ||
+        onlyKey === SyncConstants.qingyuCloudFieldWechatUser) {
         return ''
       }
       const values = Object.values(record)
@@ -879,6 +948,80 @@ export class WebDAVClient {
     const displayYmd = `${y}-${pad(m)}-${pad(d)}`
     const r: QingyuExpiryParseResult = { year: y, endOfDayMillis: end, displayYmd: displayYmd }
     return r
+  }
+
+  /**
+   * 支付成功后按档位延长远端 `.qingyu-cloud.json` 的 `expiresAt`：
+   * 若会员仍未过期则从原截止日期顺延；已过期则从服务端当前日期起算。
+   */
+  async applyQingyuRechargePlan(config: WebDAVConfig, planId: QingyuRechargePlanId): Promise<string> {
+    if (!config.enabled || !this.isQingyuProvider(config.provider)) {
+      throw new Error('请使用轻羽云同步配置后再充值')
+    }
+    const url =
+      PathUtils.joinRemotePathFileUrl(config.baseUrl, config.notesDir, SyncConstants.qingyuCloudMetaFile)
+    const getResp = await this.sendRequest(url, http.RequestMethod.GET, undefined, undefined, config)
+    const dateHeader = this.pickHeader(getResp.header, 'Date')
+    let serverNowMillis = TimeUtils.fromHttpDate(dateHeader)
+    if (serverNowMillis <= 0) {
+      serverNowMillis = Date.now()
+      Logger.warn('WebDAVClient',
+        'applyQingyuRechargePlan: missing/invalid HTTP Date header; anchor uses local clock')
+    }
+
+    const merged: Record<string, Object | string | number | boolean | null | undefined> = {}
+    if (getResp.responseCode >= 200 && getResp.responseCode < 300) {
+      const rawGet = this.responseBodyToText(getResp.result).trim()
+      if (rawGet.length > 0) {
+        try {
+          const parsed =
+            JSON.parse(rawGet) as Record<string, Object | string | number | boolean | null | undefined>
+          Object.keys(parsed).forEach((key: string) => {
+            merged[key] = parsed[key]
+          })
+        } catch (_) {
+          Logger.warn('WebDAVClient', 'applyQingyuRechargePlan: failed to parse existing metadata JSON')
+        }
+      }
+    }
+
+    const rawExpires = WebDAVClient.pickQingyuExpiresRaw(merged)
+    if (rawExpires.length > 0) {
+      const parsedEx = WebDAVClient.parseExpiryEndParts(rawExpires)
+      if (parsedEx !== null && parsedEx.year >= SyncConstants.qingyuLifetimeMinYear) {
+        throw new Error('当前为终身权益，无需续费')
+      }
+    }
+
+    let anchorYmd: string
+    if (rawExpires.length > 0) {
+      const parsedEx = WebDAVClient.parseExpiryEndParts(rawExpires)
+      if (parsedEx !== null && parsedEx.endOfDayMillis >= serverNowMillis) {
+        anchorYmd = parsedEx.displayYmd
+      } else {
+        anchorYmd = TimeUtils.formatUtcYmdFromMillis(serverNowMillis)
+      }
+    } else {
+      anchorYmd = TimeUtils.formatUtcYmdFromMillis(serverNowMillis)
+    }
+
+    const addMonths = QingyuRechargePlans.months(planId)
+    const newYmd = TimeUtils.addCalendarMonthsToYmd(anchorYmd, addMonths)
+    merged[SyncConstants.qingyuCloudFieldExpiresAt] = newYmd
+
+    const huawei = await PreferencesService.getInstance().getHuaweiThirdPartyUserId()
+    const wechat = await PreferencesService.getInstance().getWeChatThirdPartyUserId()
+    merged[SyncConstants.qingyuCloudFieldHuaweiUser] = huawei
+    merged[SyncConstants.qingyuCloudFieldWechatUser] = wechat
+
+    const putResp = await this.sendRequest(url, http.RequestMethod.PUT, JSON.stringify(merged), {
+      contentType: 'application/json; charset=utf-8'
+    }, config)
+    if (putResp.responseCode < 200 || putResp.responseCode >= 300) {
+      throw new Error(`写入云服务开通信息失败（HTTP ${putResp.responseCode}）`)
+    }
+    Logger.info('WebDAVClient', `applyQingyuRechargePlan success: plan=${planId}, newExpiresAt=${newYmd}`)
+    return newYmd
   }
 
   private sanitizeUrl(url: string): string {

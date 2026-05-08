@@ -144,6 +144,10 @@ export class SyncService {
     this.noteLocks.add(noteId)
     try {
       Logger.info('SyncService', `syncNote start: noteId=${noteId}`)
+      const indexEarly = await WebDAVClient.getInstance().getRemoteIndexSnapshot()
+      if (indexEarly.permanentlyDeletedNoteIds.has(noteId)) {
+        return await this.applyPermanentDeleteListedInIndex(noteId)
+      }
       const syncState = await DatabaseService.getInstance().getSyncState(noteId)
       const note = await NoteRepository.getInstance().getNote(noteId)
       if (!note && !syncState) {
@@ -296,10 +300,12 @@ export class SyncService {
     await this.init()
     const pendingNoteIds = await DatabaseService.getInstance().listPendingNoteIds()
     const localNotes = await NoteRepository.getInstance().listAllNotes()
+    const permanentSnapshot = await WebDAVClient.getInstance().getRemoteIndexSnapshot()
     return await this.runSyncBatchWithDeferredNotifications(
       pendingNoteIds,
       this.buildLocalNoteMap(localNotes),
-      FULL_SYNC_CONCURRENCY
+      FULL_SYNC_CONCURRENCY,
+      permanentSnapshot.permanentlyDeletedNoteIds
     )
   }
 
@@ -331,29 +337,45 @@ export class SyncService {
       Logger.warn('SyncService',
         `performFullSync ensureNotesDirectory failed (check WebDAVClient qingyu path + HEAD/PROPFIND diagnostics): ${this.describeError(error as Object)}`)
     }
-    const localNotes = await NoteRepository.getInstance().listAllNotes()
-    const tombstones = await DatabaseService.getInstance().listDeletedSyncStates()
-    const remoteIndexEntries = await WebDAVClient.getInstance().getRemoteIndexEntries()
+    const localNotesInitial = await NoteRepository.getInstance().listAllNotes()
+    const tombstonesInitial = await DatabaseService.getInstance().listDeletedSyncStates()
+    const remoteIndexSnapshot = await WebDAVClient.getInstance().getRemoteIndexSnapshot()
+    const remoteIndexEntries = remoteIndexSnapshot.noteEntries
+    const permanentDeletedIds = remoteIndexSnapshot.permanentlyDeletedNoteIds
     const remoteNoteIds = remoteIndexEntries.size > 0
       ? Array.from(remoteIndexEntries.keys())
       : await WebDAVClient.getInstance().listRemoteNotes()
     Logger.info('SyncService',
-      `performFullSync loaded state: localNotes=${localNotes.length}, deletedStates=${tombstones.length}, remoteNotes=${remoteNoteIds.length}, indexEntries=${remoteIndexEntries.size}`)
-    if (localNotes.length === 0 && remoteNoteIds.length === 0 && tombstones.length === 0) {
+      `performFullSync loaded state: localNotes=${localNotesInitial.length}, deletedStates=${tombstonesInitial.length}, remoteNotes=${remoteNoteIds.length}, indexEntries=${remoteIndexEntries.size}, permanentIndex=${permanentDeletedIds.size}`)
+    if (localNotesInitial.length === 0 && remoteNoteIds.length === 0 && tombstonesInitial.length === 0) {
       await PreferencesService.getInstance().setLastSyncTime(Date.now())
       Logger.info('SyncService', 'performFullSync finish: no local or remote notes')
       return []
     }
     const unionIds = new Set<string>()
-    const localNoteMap = this.buildLocalNoteMap(localNotes)
-    localNotes.forEach((note: Note) => unionIds.add(note.id))
-    tombstones.forEach((state: NoteSyncState) => unionIds.add(state.noteId))
+    localNotesInitial.forEach((note: Note) => unionIds.add(note.id))
+    tombstonesInitial.forEach((state: NoteSyncState) => unionIds.add(state.noteId))
     remoteNoteIds.forEach((noteId: string) => unionIds.add(noteId))
 
     const unionNoteIds = Array.from(unionIds)
+    const indexPurgeResults: SyncResult[] = []
+    for (const pid of unionNoteIds) {
+      if (!permanentDeletedIds.has(pid)) {
+        continue
+      }
+      indexPurgeResults.push(await this.applyPermanentDeleteListedInIndex(pid))
+    }
+    const localNotes = await NoteRepository.getInstance().listAllNotes()
+    const tombstones = await DatabaseService.getInstance().listDeletedSyncStates()
+    const localNoteMap = this.buildLocalNoteMap(localNotes)
+    const unionIdsRefreshed = new Set<string>()
+    localNotes.forEach((note: Note) => unionIdsRefreshed.add(note.id))
+    tombstones.forEach((state: NoteSyncState) => unionIdsRefreshed.add(state.noteId))
+    remoteNoteIds.forEach((noteId: string) => unionIdsRefreshed.add(noteId))
+    const unionNoteIdsRefreshed = Array.from(unionIdsRefreshed)
     const indexedSkippedResults: SyncResult[] = []
     const noteIdsNeedingSync: string[] = []
-    unionNoteIds.forEach((noteId: string) => {
+    unionNoteIdsRefreshed.forEach((noteId: string) => {
       const indexedEntry = remoteIndexEntries.get(noteId)
       if (this.canSkipByRemoteIndex(noteId, localNoteMap, indexedEntry)) {
         indexedSkippedResults.push({
@@ -368,11 +390,11 @@ export class SyncService {
       noteIdsNeedingSync.push(noteId)
     })
     Logger.info('SyncService',
-      `performFullSync prefilter: total=${unionNoteIds.length}, skippedByIndex=${indexedSkippedResults.length}, needingSync=${noteIdsNeedingSync.length}`)
-    const fullSyncConcurrency = this.resolveFullSyncConcurrency(unionNoteIds.length)
+      `performFullSync prefilter: total=${unionNoteIdsRefreshed.length}, skippedByIndex=${indexedSkippedResults.length}, needingSync=${noteIdsNeedingSync.length}`)
+    const fullSyncConcurrency = this.resolveFullSyncConcurrency(unionNoteIdsRefreshed.length)
     const syncResults = await this.runSyncBatchWithDeferredNotifications(noteIdsNeedingSync, localNoteMap,
-      fullSyncConcurrency)
-    const results = [...indexedSkippedResults, ...syncResults]
+      fullSyncConcurrency, permanentDeletedIds)
+    const results = [...indexPurgeResults, ...indexedSkippedResults, ...syncResults]
     const failedNoteIds = results
       .filter((result: SyncResult) => !result.success)
       .map((result: SyncResult) => result.noteId)
@@ -383,7 +405,8 @@ export class SyncService {
       const retryResults = await this.runSyncBatchWithDeferredNotifications(
         failedNoteIds,
         this.buildLocalNoteMap(retryLocalNotes),
-        1
+        1,
+        permanentDeletedIds
       )
       this.mergeRetryResults(results, retryResults)
       Logger.info('SyncService',
@@ -396,7 +419,7 @@ export class SyncService {
     )
     await PreferencesService.getInstance().setLastSyncTime(Date.now())
     Logger.info('SyncService',
-      `performFullSync finish: unionIds=${unionIds.size}, total=${results.length}, failed=${results.filter((result: SyncResult) => !result.success).length}`)
+      `performFullSync finish: unionIds=${unionIdsRefreshed.size}, total=${results.length}, failed=${results.filter((result: SyncResult) => !result.success).length}`)
     return results
   }
 
@@ -420,7 +443,7 @@ export class SyncService {
     this.lastQingyuBlockNotifyMs = now
     try {
       AppContextHolder.tryGetContext()?.eventHub.emit(
-        SyncConstants.QINGYU_SYNC_BLOCKED_EVENT, new QingyuSyncBlockedEventPayload())
+        SyncConstants.qingyuSyncBlockedEvent, new QingyuSyncBlockedEventPayload())
     } catch (_) {
       Logger.warn('SyncService', 'emit qingyu_sync_blocked failed')
     }
@@ -535,7 +558,8 @@ export class SyncService {
     return noteMap
   }
 
-  private async runSyncBatch(noteIds: string[], localNoteMap: Map<string, Note>, concurrency: number): Promise<SyncResult[]> {
+  private async runSyncBatch(noteIds: string[], localNoteMap: Map<string, Note>, concurrency: number,
+    permanentDeletedIds: Set<string>): Promise<SyncResult[]> {
     if (noteIds.length === 0) {
       return []
     }
@@ -548,7 +572,8 @@ export class SyncService {
         while (nextIndex < noteIds.length) {
           const currentIndex = nextIndex
           nextIndex += 1
-          results[currentIndex] = await this.syncNoteByIdWithRetry(noteIds[currentIndex], localNoteMap)
+          results[currentIndex] =
+            await this.syncNoteByIdWithRetry(noteIds[currentIndex], localNoteMap, permanentDeletedIds)
         }
       })())
     }
@@ -594,16 +619,20 @@ export class SyncService {
   }
 
   private async runSyncBatchWithDeferredNotifications(noteIds: string[], localNoteMap: Map<string, Note>,
-    concurrency: number): Promise<SyncResult[]> {
+    concurrency: number, permanentDeletedIds: Set<string>): Promise<SyncResult[]> {
     NoteRepository.getInstance().beginBulkNotification()
     try {
-      return await this.runSyncBatch(noteIds, localNoteMap, concurrency)
+      return await this.runSyncBatch(noteIds, localNoteMap, concurrency, permanentDeletedIds)
     } finally {
       NoteRepository.getInstance().endBulkNotification()
     }
   }
 
-  private async syncNoteById(noteId: string, localNoteMap: Map<string, Note>): Promise<SyncResult | null> {
+  private async syncNoteById(noteId: string, localNoteMap: Map<string, Note>,
+    permanentDeletedIds: Set<string>): Promise<SyncResult | null> {
+    if (permanentDeletedIds.has(noteId)) {
+      return await this.applyPermanentDeleteListedInIndex(noteId)
+    }
     const syncState = await DatabaseService.getInstance().getSyncState(noteId)
     if (!localNoteMap.has(noteId) && !syncState?.deleted) {
       return await this.syncRemoteOnlyNote(noteId)
@@ -611,11 +640,12 @@ export class SyncService {
     return await this.syncNote(noteId)
   }
 
-  private async syncNoteByIdWithRetry(noteId: string, localNoteMap: Map<string, Note>): Promise<SyncResult | null> {
+  private async syncNoteByIdWithRetry(noteId: string, localNoteMap: Map<string, Note>,
+    permanentDeletedIds: Set<string>): Promise<SyncResult | null> {
     let latestResult: SyncResult | null = null
     for (let attempt = 1; attempt <= MAX_RETRYABLE_SYNC_ATTEMPTS; attempt += 1) {
       try {
-        latestResult = await this.syncNoteById(noteId, localNoteMap)
+        latestResult = await this.syncNoteById(noteId, localNoteMap, permanentDeletedIds)
         if (!latestResult || latestResult.success || !this.isRetryableSyncMessage(latestResult.message)
           || attempt >= MAX_RETRYABLE_SYNC_ATTEMPTS) {
           return latestResult
@@ -662,6 +692,43 @@ export class SyncService {
       action: 'download',
       message: '远端笔记已回灌到本地',
       remoteModified: remoteStat.remoteModified
+    }
+  }
+
+  /**
+   * `.qingyu-index.json` 中 `permanentlyDeletedNoteIds` 包含该 id 时：删除远端对象并清空本地（与正文 deleted_time 无关）。
+   */
+  private async applyPermanentDeleteListedInIndex(noteId: string): Promise<SyncResult> {
+    let content = ''
+    try {
+      content = await FileService.getInstance().readNoteFile(noteId)
+    } catch (_) {
+      content = ''
+    }
+    if (content.length === 0) {
+      try {
+        const remoteStat = await this.safeRemoteStat(noteId)
+        if (remoteStat.exists) {
+          content = await WebDAVClient.getInstance().downloadNote(noteId)
+        }
+      } catch (_) {
+        content = ''
+      }
+    }
+    try {
+      await WebDAVClient.getInstance().deleteNote(noteId)
+    } catch (error) {
+      Logger.warn('SyncService',
+        `applyPermanentDeleteListedInIndex deleteNote failed: noteId=${noteId}, ${this.describeError(error as Object)}`)
+    }
+    await this.deleteImagesForNote(content)
+    await NoteRepository.getInstance().purgeLocalNoteCompletely(noteId)
+    return {
+      noteId,
+      success: true,
+      action: 'delete',
+      message: '索引标记彻底删除，已移除本地与远端副本',
+      remoteModified: 0
     }
   }
 

@@ -221,14 +221,14 @@ export class PreferencesService {
       const md5Dir = await CryptoService.getInstance().md5Hex(folderKey)
       const notesDir = `/${md5Dir}/`
       Logger.info('PreferencesService',
-        `buildQingyuCloudConfig: derived md5Dir=${md5Dir}, notesDir=${notesDir}, baseUrl=${SyncConstants.QINGYU_WEBDAV_BASE_URL}`)
+        `buildQingyuCloudConfig: derived md5Dir=${md5Dir}, notesDir=${notesDir}, baseUrl=${SyncConstants.qingyuWebDavBaseUrl}`)
       const encFromStore = _store.getSync('webdav_password', '') as string
       const encryptedPassword = encFromStore.length > 0
         ? encFromStore
-        : await CryptoService.getInstance().encryptText(SyncConstants.QINGYU_WEBDAV_PASSWORD)
+        : await CryptoService.getInstance().encryptText(SyncConstants.qingyuWebDavPassword)
       return {
-        baseUrl: SyncConstants.QINGYU_WEBDAV_BASE_URL,
-        username: SyncConstants.QINGYU_WEBDAV_USERNAME,
+        baseUrl: SyncConstants.qingyuWebDavBaseUrl,
+        username: SyncConstants.qingyuWebDavUsername,
         encryptedPassword,
         notesDir,
         enabled: true,

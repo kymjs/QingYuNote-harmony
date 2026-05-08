@@ -54,7 +54,7 @@ struct Index {
 
   aboutToAppear(): void {
     try {
-      AppContextHolder.getContext().eventHub.on(SyncConstants.QINGYU_SYNC_BLOCKED_EVENT, this.qingyuBlockedHandler)
+      AppContextHolder.getContext().eventHub.on(SyncConstants.qingyuSyncBlockedEvent, this.qingyuBlockedHandler)
     } catch (_) {
       console.error('Index: eventHub.on qingyu_sync_blocked failed')
     }
@@ -63,7 +63,7 @@ struct Index {
 
   aboutToDisappear(): void {
     try {
-      AppContextHolder.getContext().eventHub.off(SyncConstants.QINGYU_SYNC_BLOCKED_EVENT, this.qingyuBlockedHandler)
+      AppContextHolder.getContext().eventHub.off(SyncConstants.qingyuSyncBlockedEvent, this.qingyuBlockedHandler)
     } catch (_) {
       console.error('Index: eventHub.off qingyu_sync_blocked failed')
     }
@@ -72,11 +72,19 @@ struct Index {
 
   private async showQingyuSubscriptionBlockedDialog(): Promise<void> {
     try {
-      await this.getUIContext().getPromptAction().showDialog({
+      const result = await this.getUIContext().getPromptAction().showDialog({
         title: '提示',
         message: '请开通轻羽云服务',
-        buttons: [{ text: '确定', color: '#0DAA4A' }]
+        buttons: [
+          { text: '稍后', color: '#6B7280' },
+          { text: '去开通', color: '#0DAA4A' }
+        ]
       })
+      if (result.index === 1) {
+        this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
+          console.error(`push QingyuCloudRecharge: ${JSON.stringify(err)}`)
+        })
+      }
     } catch (_) {
       console.error('showQingyuSubscriptionBlockedDialog failed')
     }
