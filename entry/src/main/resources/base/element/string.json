@@ -17,12 +17,20 @@
       "value": "设置"
     },
     {
+      "name": "settings_user_info",
+      "value": "个人信息"
+    },
+    {
       "name": "settings_cloud_sync",
       "value": "云同步设置"
     },
     {
       "name": "logout",
       "value": "退出登录"
+    },
+    {
+      "name": "login_guest_mode",
+      "value": "游客模式"
     },
     {
       "name": "new_note",

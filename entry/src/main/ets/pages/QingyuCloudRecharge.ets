@@ -1,11 +1,24 @@
 import promptAction from '@ohos.promptAction'
+import type common from '@ohos.app.ability.common'
 import { Want } from '@kit.AbilityKit'
+import * as wxopensdk from '@tencent/wechat_open_sdk'
 import { AppContextHolder } from '../services/AppContextHolder'
+import { NoteApiClient } from '../services/NoteApiClient'
 import { PreferencesService } from '../services/PreferencesService'
-import { WebDAVClient } from '../services/WebDAVClient'
+import {
+  startWeChatAppPay,
+  WECHAT_PAY_RESULT_EVENT,
+  type WeChatPayResultPayload
+} from '../services/WeChatAuthService'
 import type { QingyuRechargePlanId } from '../common/constants/QingyuRechargePlans'
 import { QingyuRechargePlans } from '../common/constants/QingyuRechargePlans'
 import { Logger } from '../common/utils/Logger'
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise<void>((resolve: () => void) => {
+    setTimeout(resolve, ms)
+  })
+}
 
 /**
  * 轻羽云服务 — 会员档位与微信支付入口。
@@ -50,11 +63,39 @@ struct QingyuCloudRecharge {
     })
   }
 
-  /**
-   * 微信支付：正式环境需接入微信开放平台支付能力与商户号；此处确认框代替支付结果回调。
-   */
+  /** 微信支付：服务端下单 → 调起微信 APP → 回调后轮询订单直至支付成功。 */
   private async onWeChatPay(): Promise<void> {
     await this.runConfirmedPurchase()
+  }
+
+  private async waitForPayPayload(timeoutMs: number): Promise<WeChatPayResultPayload> {
+    return await new Promise<WeChatPayResultPayload>((resolve, reject) => {
+      const hub = AppContextHolder.getContext().eventHub
+      let timerId: number = -1
+      const handler = (payload: Object): void => {
+        hub.off(WECHAT_PAY_RESULT_EVENT, handler)
+        if (timerId >= 0) {
+          clearTimeout(timerId)
+        }
+        resolve(payload as WeChatPayResultPayload)
+      }
+      hub.on(WECHAT_PAY_RESULT_EVENT, handler)
+      timerId = setTimeout((): void => {
+        hub.off(WECHAT_PAY_RESULT_EVENT, handler)
+        reject(new Error('支付结果超时'))
+      }, timeoutMs)
+    })
+  }
+
+  private async pollOrderUntilPaid(orderId: number): Promise<boolean> {
+    for (let i = 0; i < 45; i++) {
+      await delayMs(2000)
+      const o = await NoteApiClient.getInstance().getOrder(orderId)
+      if (o !== null && o.status === 'paid') {
+        return true
+      }
+    }
+    return false
   }
 
   private async runConfirmedPurchase(): Promise<void> {
@@ -63,7 +104,12 @@ struct QingyuCloudRecharge {
     }
     const preview = await PreferencesService.getInstance().getQingyuCloudConfigPreview()
     if (preview === null || !preview.enabled) {
-      this.showToast('请先使用华为账号或微信登录后再充值')
+      this.showToast('请先使用微信登录并完成服务端绑定后再充值')
+      return
+    }
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      this.showToast('请先使用微信登录以开通支付')
       return
     }
     const plan = this.selectedPlan
@@ -91,10 +137,67 @@ struct QingyuCloudRecharge {
 
     this.applying = true
     try {
-      const newYmd = await WebDAVClient.getInstance().applyQingyuRechargePlan(preview, plan)
-      this.showToast(`支付成功，云服务有效期已更新至 ${newYmd}`)
+      const created = await NoteApiClient.getInstance().createOrder(plan)
+      if (created === null || created.id === undefined || created.id <= 0) {
+        this.showToast('创建订单失败，请稍后重试')
+        return
+      }
+      const prepay = await NoteApiClient.getInstance().wechatPrepay(created.id)
+      if (prepay === null) {
+        this.showToast('暂无法拉起微信支付（服务端商户参数未就绪）')
+        return
+      }
+      const pid = prepay.prepay_id?.trim() ?? ''
+      if (pid.length === 0) {
+        this.showToast('获取支付参数失败')
+        return
+      }
+      const host = this.getUIContext().getHostContext()
+      const ctx = host as common.UIAbilityContext
+      const req = new wxopensdk.PayReq()
+      req.appId = prepay.app_id ?? ''
+      req.partnerId = prepay.partner_id ?? ''
+      req.prepayId = pid
+      req.packageValue = prepay.package ?? 'Sign=WXPay'
+      req.nonceStr = prepay.nonce_str ?? ''
+      req.timeStamp = prepay.timestamp ?? ''
+      req.sign = prepay.sign ?? ''
+      req.signType = prepay.sign_type ?? 'RSA'
+      const sent = await startWeChatAppPay(ctx, req)
+      if (!sent) {
+        this.showToast('无法拉起微信支付')
+        return
+      }
+      let payResult: WeChatPayResultPayload
+      try {
+        payResult = await this.waitForPayPayload(120000)
+      } catch (error) {
+        Logger.warn('QingyuCloudRecharge', `wait pay: ${JSON.stringify(error)}`)
+        this.showToast('未收到支付结果，请稍后在会员页刷新')
+        return
+      }
+      if (payResult.errCode !== wxopensdk.ErrCode.ERR_OK) {
+        if (payResult.errCode === wxopensdk.ErrCode.ERR_USER_CANCEL) {
+          this.showToast('已取消支付')
+        } else {
+          this.showToast(payResult.errStr ?? '支付未完成')
+        }
+        return
+      }
+      const ok = await this.pollOrderUntilPaid(created.id)
+      if (!ok) {
+        this.showToast('支付确认中，请稍后下拉刷新会员状态')
+        return
+      }
+      const sub = await NoteApiClient.getInstance().fetchSubscription()
+      const ymd = sub?.expires_at?.trim() ?? ''
+      if (ymd.length > 0) {
+        this.showToast(`支付成功，云服务有效期已更新至 ${ymd}`)
+      } else {
+        this.showToast('支付成功')
+      }
     } catch (error) {
-      Logger.warn('QingyuCloudRecharge', `applyQingyuRechargePlan: ${JSON.stringify(error)}`)
+      Logger.warn('QingyuCloudRecharge', `purchase: ${JSON.stringify(error)}`)
       const msg = error instanceof Error ? error.message : `${error}`
       this.showToast(msg.length > 0 ? msg : '充值失败，请稍后重试')
     } finally {

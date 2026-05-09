@@ -13,6 +13,11 @@ export interface QingyuCloudStatusNotPurchased {
   kind: 'not_purchased'
 }
 
+/** 已选轻羽云但未完成服务端微信换票（例如仅华为账号登录）。 */
+export interface QingyuCloudStatusNeedWechatLogin {
+  kind: 'need_wechat_login'
+}
+
 export interface QingyuCloudStatusFetchFailed {
   kind: 'fetch_failed'
 }
@@ -39,6 +44,7 @@ export type QingyuCloudSubscriptionStatus =
   | QingyuCloudStatusNotConfigured
   | QingyuCloudStatusNotQingyu
   | QingyuCloudStatusNotPurchased
+  | QingyuCloudStatusNeedWechatLogin
   | QingyuCloudStatusFetchFailed
   | QingyuCloudStatusMalformed
   | QingyuCloudStatusLifetime

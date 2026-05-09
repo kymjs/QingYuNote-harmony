@@ -2,6 +2,7 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.Ab
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { window } from '@kit.ArkUI'
 import { PreferencesService } from '../services/PreferencesService'
+import { NoteApiClient } from '../services/NoteApiClient'
 import { CryptoService } from '../services/CryptoService'
 import { NoteRepository } from '../services/NoteRepository'
 import { SyncService } from '../services/SyncService'
@@ -48,7 +49,11 @@ export default class EntryAbility extends UIAbility {
     try {
       await PreferencesService.getInstance().init(this.context)
       const loggedIn = await PreferencesService.getInstance().isUserLoggedIn()
-      const entryPage = loggedIn ? 'pages/Index' : 'pages/Login'
+      const guest = await PreferencesService.getInstance().isGuestMode()
+      if (!loggedIn && !guest) {
+        await PreferencesService.getInstance().clearLoginReturnTarget()
+      }
+      const entryPage = (loggedIn || guest) ? 'pages/Index' : 'pages/Login'
       windowStage.loadContent(entryPage, (err) => {
         if (err.code) {
           hilog.error(DOMAIN, 'noteTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err))
@@ -85,6 +90,24 @@ export default class EntryAbility extends UIAbility {
     await NoteRepository.getInstance().init(this.context)
     await SyncService.getInstance().init()
     await AppScheduler.getInstance().init()
+    void this.prefetchQingyuWebDavIfNeeded()
+  }
+
+  /** 应用启动即拉取轻羽 WebDAV（凭据不落盘；与同步前再次拉取配合服务端缓存/限流）。 */
+  private async prefetchQingyuWebDavIfNeeded(): Promise<void> {
+    try {
+      const provider = await PreferencesService.getInstance().getSyncProvider()
+      if (provider !== 'qingyu_cloud') {
+        return
+      }
+      const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+      if (tok === null || tok.length === 0) {
+        return
+      }
+      await NoteApiClient.getInstance().fetchQingyuWebDAV()
+    } catch (_) {
+      // 后续同步与设置页会再次请求
+    }
   }
 
   private scheduleDeferredServices(): void {

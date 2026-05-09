@@ -8,83 +8,13 @@ import type common from '@ohos.app.ability.common'
 import { authentication } from '@kit.AccountKit'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { util } from '@kit.ArkTS'
-import { JwtPayloadUtils } from '../common/utils/JwtPayloadUtils'
 import { Logger } from '../common/utils/Logger'
-import { CryptoService } from './CryptoService'
-import { PreferencesService } from './PreferencesService'
+import { NoteApiClient } from './NoteApiClient'
 
-function readCredentialString(record: Record<string, Object | string | undefined>, key: string): string {
-  const raw = record[key]
-  if (typeof raw === 'string') {
-    return raw.trim()
-  }
-  return ''
-}
-
-function extractHuaweiStableUserKey(credential: Object | undefined): string {
-  if (credential === undefined) {
-    return ''
-  }
-  const record = credential as Record<string, Object | string | undefined>
-
-  const unionKeys = ['unionID', 'unionId', 'union_id']
-  for (const key of unionKeys) {
-    const v = readCredentialString(record, key)
-    if (v.length > 0) {
-      return v
-    }
-  }
-  const openKeys = ['openID', 'openId', 'open_id']
-  for (const key of openKeys) {
-    const v = readCredentialString(record, key)
-    if (v.length > 0) {
-      return v
-    }
-  }
-  const idTokenKeys = ['idToken', 'id_token']
-  for (const key of idTokenKeys) {
-    const token = readCredentialString(record, key)
-    if (token.length > 0) {
-      const sub = JwtPayloadUtils.extractSubFromIdToken(token)
-      if (sub.length > 0) {
-        return sub
-      }
-    }
-  }
-
-  try {
-    const keys = Object.keys(record)
-    for (const key of keys) {
-      const val = record[key]
-      if (typeof val !== 'string') {
-        continue
-      }
-      const s = val.trim()
-      if (s.length === 0) {
-        continue
-      }
-      const lower = key.toLowerCase()
-      if (lower.includes('union')) {
-        return s
-      }
-      if (lower.includes('openid') || lower === 'open_id') {
-        return s
-      }
-      if (s.includes('.') && s.split('.').length === 3) {
-        const sub = JwtPayloadUtils.extractSubFromIdToken(s)
-        if (sub.length > 0) {
-          return sub
-        }
-      }
-    }
-  } catch (_) {
-  }
-
-  return ''
-}
-
-/** 拉起华为账号登录；成功后写入 Preferences（服务端仍需用 authorizationCode 换票）。 */
-export async function startHuaweiLogin(_context: common.UIAbilityContext): Promise<void> {
+/**
+ * 拉起华为账号授权，仅返回 authorization_code（用于已登录用户绑定/合并，不调 POST /auth/huawei）。
+ */
+export async function obtainHuaweiAuthorizationCode(_context: common.UIAbilityContext): Promise<string> {
   const provider = new authentication.HuaweiIDProvider()
   const loginRequest = provider.createLoginWithHuaweiIDRequest()
   loginRequest.forceLogin = true
@@ -111,33 +41,16 @@ export async function startHuaweiLogin(_context: common.UIAbilityContext): Promi
     Logger.warn('HuaweiAuthService', 'authorizationCode is empty after Huawei login')
     throw new Error('未获得授权码，请重试')
   }
+  return authorizationCode
+}
 
-  const stableKey = extractHuaweiStableUserKey(credential as Object | undefined)
-  if (stableKey.length === 0) {
-    Logger.warn('HuaweiAuthService', 'Huawei credential has no unionID/openID/idToken sub; skip third-party id')
-  }
-
-  try {
-    await PreferencesService.getInstance().setHuaweiLoggedIn(true)
-  } catch (e) {
-    Logger.warn('HuaweiAuthService', `setHuaweiLoggedIn failed: ${JSON.stringify(e)}`)
-    throw new Error('保存登录状态失败')
-  }
-
-  if (stableKey.length > 0) {
-    try {
-      await PreferencesService.getInstance().setHuaweiThirdPartyUserId(`hw${stableKey}`)
-      await PreferencesService.getInstance().setHuaweiSettingsDisplayId('')
-    } catch (e) {
-      Logger.warn('HuaweiAuthService', `setHuaweiThirdPartyUserId failed: ${JSON.stringify(e)}`)
-    }
-  } else if (authorizationCode.length > 0) {
-    try {
-      const fp = await CryptoService.getInstance().md5Hex(authorizationCode)
-      await PreferencesService.getInstance().setHuaweiSettingsDisplayId(`hw_${fp}`)
-    } catch (e) {
-      Logger.warn('HuaweiAuthService', `setHuaweiSettingsDisplayId fallback failed: ${JSON.stringify(e)}`)
-    }
+/** 拉起华为账号登录；authorization_code 交由服务端换 JWT（与微信登录同一套账号体系）。 */
+export async function startHuaweiLogin(_context: common.UIAbilityContext): Promise<void> {
+  const authorizationCode = await obtainHuaweiAuthorizationCode(_context)
+  const exchanged = await NoteApiClient.getInstance().exchangeHuaweiAuthorizationCode(authorizationCode)
+  if (!exchanged) {
+    Logger.warn('HuaweiAuthService', 'exchangeHuaweiAuthorizationCode failed (check Note API HUAWEI_* config)')
+    throw new Error('登录失败：网络异常')
   }
 }
 

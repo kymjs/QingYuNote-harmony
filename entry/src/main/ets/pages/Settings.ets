@@ -11,39 +11,26 @@ interface RouterWithOptionalClear {
 @Entry
 @Component
 struct Settings {
-  @State accountTitle: string = ''
+  /** 有 Note API 用户 id 时展示「个人信息」入口 */
   @State accountSubId: string = ''
-  /** 是否展示第二行用户唯一标识；默认隐藏，点击首项区域切换。 */
-  @State showUserIdentifier: boolean = false
+  /** 与 Flutter `SettingsHubPage` 对齐：游客模式下不展示退出登录 */
+  @State guestMode: boolean = false
 
   aboutToAppear(): void {
-    void this.loadAccountBanner()
+    void this.loadSettingsState()
   }
 
   onPageShow(): void {
-    void this.loadAccountBanner()
+    void this.loadSettingsState()
   }
 
-  private async loadAccountBanner(): Promise<void> {
+  private async loadSettingsState(): Promise<void> {
     const context = AppContextHolder.tryGetContext()
     if (context) {
       await PreferencesService.getInstance().init(context)
     }
-    const wechatOn = await PreferencesService.getInstance().isWeChatLoggedIn()
-    const huaweiOn = await PreferencesService.getInstance().isHuaweiLoggedIn()
-    const wxId = (await PreferencesService.getInstance().getWeChatThirdPartyUserId()).trim()
-    const hwId = (await PreferencesService.getInstance().getHuaweiThirdPartyUserId()).trim()
-    const hwDisplayId = (await PreferencesService.getInstance().getHuaweiSettingsDisplayId()).trim()
-    if (wechatOn) {
-      this.accountTitle = '微信用户'
-      this.accountSubId = wxId
-    } else if (huaweiOn) {
-      this.accountTitle = '华为用户'
-      this.accountSubId = hwId.length > 0 ? hwId : hwDisplayId
-    } else {
-      this.accountTitle = '未登录'
-      this.accountSubId = ''
-    }
+    this.guestMode = await PreferencesService.getInstance().isGuestMode()
+    this.accountSubId = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
   }
 
   private async handleLogout(): Promise<void> {
@@ -142,27 +129,37 @@ struct Settings {
 
       Scroll() {
         Column({ space: 12 }) {
-          Column({ space: 6 }) {
-            Text(this.accountTitle.length > 0 ? this.accountTitle : ' ')
-              .fontSize($r('app.float.body_font_size'))
-              .fontColor($r('app.color.primary_text'))
+          Column({ space: 0 }) {
+            if (this.accountSubId.length > 0) {
+              Row() {
+                Text($r('app.string.settings_user_info'))
+                  .fontSize($r('app.float.body_font_size'))
+                  .fontColor($r('app.color.primary_text'))
+                  .layoutWeight(1)
+                Text('›')
+                  .fontSize(22)
+                  .fontColor($r('app.color.tertiary_text'))
+              }
               .width('100%')
-            if (this.accountSubId.length > 0 && this.showUserIdentifier) {
-              Text(this.accountSubId)
-                .fontSize(12)
-                .fontColor($r('app.color.tertiary_text'))
-                .width('100%')
-                .lineHeight(18)
-            }
-          }
+              .padding({
+                left: 20,
+                right: 16,
+                top: 14,
+                bottom: 14
+              })
+              .justifyContent(FlexAlign.SpaceBetween)
+              .alignItems(VerticalAlign.Center)
+              .onClick(() => {
+                this.getUIContext().getRouter().pushUrl({ url: 'pages/Profile' }).catch((err: Error) => {
+                  console.error(`openProfile: ${JSON.stringify(err)}`)
+                })
+              })
+
+              Divider()
+                .color($r('app.color.divider'))
+                .strokeWidth(1)
+            }}
           .width('100%')
-          .alignItems(HorizontalAlign.Start)
-          .padding({
-            left: 20,
-            right: 20,
-            top: 16,
-            bottom: 16
-          })
           .backgroundColor($r('app.color.card_background'))
           .borderRadius($r('app.float.card_radius'))
           .border({ width: 1, color: $r('app.color.card_border') })
@@ -172,13 +169,8 @@ struct Settings {
             offsetX: 0,
             offsetY: 4
           })
-          .onClick(() => {
-            if (this.accountSubId.length > 0) {
-              this.showUserIdentifier = !this.showUserIdentifier
-            }
-          })
 
-          Column({ space: 0 }) {
+            Column({ space: 0 }) {
             Row() {
               Text($r('app.string.settings_cloud_sync'))
                 .fontSize($r('app.float.body_font_size'))
@@ -356,21 +348,23 @@ struct Settings {
             offsetY: 4
           })
 
-          Button() {
-            Text($r('app.string.logout'))
-              .fontColor(Color.White)
-              .fontSize($r('app.float.body_font_size'))
-              .fontWeight(FontWeight.Medium)
+          if (!this.guestMode) {
+            Button() {
+              Text($r('app.string.logout'))
+                .fontColor(Color.White)
+                .fontSize($r('app.float.body_font_size'))
+                .fontWeight(FontWeight.Medium)
+            }
+              .type(ButtonType.Normal)
+              .width('100%')
+              .height(48)
+              .backgroundColor($r('app.color.danger'))
+              .borderRadius($r('app.float.pill_radius'))
+              .margin({ top: 8 })
+              .onClick((): void => {
+                void this.handleLogout()
+              })
           }
-            .type(ButtonType.Normal)
-            .width('100%')
-            .height(48)
-            .backgroundColor($r('app.color.danger'))
-            .borderRadius($r('app.float.pill_radius'))
-            .margin({ top: 8 })
-            .onClick((): void => {
-              void this.handleLogout()
-            })
         }
         .width('100%')
         .alignItems(HorizontalAlign.Center)

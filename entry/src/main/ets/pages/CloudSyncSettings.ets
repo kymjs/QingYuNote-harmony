@@ -5,7 +5,10 @@ import type { SyncPolicy, WebDAVConfig, WebDAVProvider } from '../common/model/N
 import type { QingyuCloudSubscriptionStatus } from '../common/model/QingyuCloudSubscription'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { Logger } from '../common/utils/Logger'
-import { SyncConstants } from '../common/constants/SyncConstants'
+import { buildQingyuCloudWebDavConfig } from '../services/QingyuCloudConfigHelper'
+
+/** 与 `Login.ets` / `pushUrl` 参数一致，登录成功后 `router.back()` 返回云同步页 */
+const LOGIN_RETURN_CLOUD_SYNC = 'cloudSync'
 
 interface SettingsPayload {
   config: WebDAVConfig
@@ -37,6 +40,8 @@ struct CloudSyncSettings {
   @State qingyuSubShowConfirm: boolean = false
   @State qingyuSubLoading: boolean = false
   @State qingyuSubButtonLabel: string = '立即续费'
+  /** 与 Flutter `CloudSyncSettingPage` `_guestMode` 对齐 */
+  @State guestMode: boolean = false
   private storedEncryptedPassword: string = ''
   private passwordTouched: boolean = false
 
@@ -44,11 +49,32 @@ struct CloudSyncSettings {
     void this.loadSettings()
   }
 
+  onPageShow(): void {
+    void this.reloadGuestAndQingyuCard()
+  }
+
+  private async reloadGuestAndQingyuCard(): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+    this.guestMode = await PreferencesService.getInstance().isGuestMode()
+    if (this.selectedProvider !== 'qingyu_cloud') {
+      return
+    }
+    if (this.guestMode) {
+      this.qingyuSubLoading = false
+      return
+    }
+    await this.refreshQingyuSubscriptionCard()
+  }
+
   private async loadSettings(): Promise<void> {
     const context = AppContextHolder.tryGetContext()
     if (context) {
       await PreferencesService.getInstance().init(context)
     }
+    this.guestMode = await PreferencesService.getInstance().isGuestMode()
     const provider = await PreferencesService.getInstance().getSyncProvider()
     this.selectedProvider = provider
     const policy = await PreferencesService.getInstance().getSyncPolicy()
@@ -73,6 +99,10 @@ struct CloudSyncSettings {
     if (this.selectedProvider !== 'qingyu_cloud') {
       return
     }
+    if (this.guestMode) {
+      this.qingyuSubLoading = false
+      return
+    }
     this.qingyuSubLoading = true
     try {
       const preview = await PreferencesService.getInstance().getQingyuCloudConfigPreview()
@@ -94,6 +124,12 @@ struct CloudSyncSettings {
   }
 
   private applyQingyuSubscriptionStatus(status: QingyuCloudSubscriptionStatus): void {
+    if (status.kind === 'need_wechat_login') {
+      this.qingyuSubHint = '请使用微信登录以使用轻羽云服务与支付'
+      this.qingyuSubShowRenew = false
+      this.qingyuSubShowConfirm = false
+      return
+    }
     if (status.kind === 'not_qingyu') {
       this.qingyuSubHint = ''
       this.qingyuSubShowRenew = false
@@ -191,33 +227,52 @@ struct CloudSyncSettings {
   }
 
   private async buildQingyuPayload(): Promise<SettingsPayload> {
-    const encryptedServerPassword =
-      await CryptoService.getInstance().encryptText(SyncConstants.qingyuWebDavPassword)
-    const folderKey = await PreferencesService.getInstance().resolveActiveQingyuFolderIdentityKey()
-    let notesDir = '/'
-    if (folderKey !== null && folderKey.length > 0) {
-      const md5Dir = await CryptoService.getInstance().md5Hex(folderKey)
-      notesDir = `/${md5Dir}/`
+    const policy: SyncPolicy = {
+      autoSync: this.autoSync,
+      syncIntervalMinutes: Number.parseInt(this.syncIntervalMinutes, 10) || 60,
+      wifiOnly: this.wifiOnly,
+      debounceSeconds: 5
     }
-    const enabled = folderKey !== null && folderKey.length > 0
-    Logger.info('CloudSyncSettings', `buildQingyuPayload: enabled=${enabled}, notesDir=${notesDir}`)
+    const cfg = await buildQingyuCloudWebDavConfig()
+    if (cfg === null) {
+      Logger.info('CloudSyncSettings', 'buildQingyuPayload: no resolved qingyu config (need WeChat + Note API)')
+      return {
+        config: {
+          baseUrl: '',
+          username: '',
+          encryptedPassword: '',
+          notesDir: this.notesDir.length > 0 ? this.notesDir : '/qingyu-notes/',
+          enabled: false,
+          provider: 'qingyu_cloud'
+        },
+        policy,
+        reusedStoredPassword: false,
+        effectivePasswordPresent: false
+      }
+    }
+    Logger.info('CloudSyncSettings', `buildQingyuPayload: enabled=${cfg.enabled}, notesDir=${cfg.notesDir}`)
     return {
-      config: {
-        baseUrl: SyncConstants.qingyuWebDavBaseUrl,
-        username: SyncConstants.qingyuWebDavUsername,
-        encryptedPassword: encryptedServerPassword,
-        notesDir,
-        enabled,
-        provider: 'qingyu_cloud'
-      },
-      policy: {
-        autoSync: this.autoSync,
-        syncIntervalMinutes: Number.parseInt(this.syncIntervalMinutes, 10) || 60,
-        wifiOnly: this.wifiOnly,
-        debounceSeconds: 5
-      },
-      reusedStoredPassword: true,
-      effectivePasswordPresent: enabled
+      config: cfg,
+      policy,
+      reusedStoredPassword: false,
+      effectivePasswordPresent: cfg.encryptedPassword.length > 0
+    }
+  }
+
+  private async openLoginFromCloudSync(): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+    await PreferencesService.getInstance().setLoginReturnTarget(LOGIN_RETURN_CLOUD_SYNC)
+    try {
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/Login',
+        params: { returnAfterLogin: LOGIN_RETURN_CLOUD_SYNC }
+      })
+    } catch (error) {
+      Logger.warn('CloudSyncSettings',
+        `openLoginFromCloudSync failed: ${this.describeError(error as Object)}`)
     }
   }
 
@@ -226,6 +281,10 @@ struct CloudSyncSettings {
       `handleSave start: provider=${this.selectedProvider}, serverUrlEmpty=${this.serverUrl.trim().length === 0}`)
     try {
       const payload = await this.buildConfigPayload()
+      if (payload.config.provider === 'qingyu_cloud' && await PreferencesService.getInstance().isGuestMode()) {
+        this.showUserMessage('请先登录后再保存轻羽云同步')
+        return payload
+      }
       await PreferencesService.getInstance().saveSyncPolicy(payload.policy)
       await PreferencesService.getInstance().saveSyncProvider(this.selectedProvider)
       if (payload.config.provider === 'qingyu_cloud' && !payload.config.enabled) {
@@ -531,64 +590,102 @@ struct CloudSyncSettings {
           }
 
           if (this.selectedProvider === 'qingyu_cloud') {
-            Column({ space: 14 }) {
-              this.buildSectionTitle($r('app.string.settings_qingyu_title'))
+            if (this.guestMode) {
+              Column({ space: 14 }) {
+                this.buildSectionTitle($r('app.string.settings_qingyu_title'))
 
-              Text(this.qingyuSubLoading ? '加载中…' : this.qingyuSubHint)
-                .fontSize(12)
-                .fontColor($r('app.color.tertiary_text'))
-                .width('100%')
-
-              if (this.qingyuSubShowRenew || this.qingyuSubShowConfirm) {
-                Row({ space: 10 }) {
-                  if (this.qingyuSubShowRenew) {
-                    Button(this.qingyuSubButtonLabel)
-                      .layoutWeight(1)
-                      .fontSize($r('app.float.caption_font_size'))
-                      .fontWeight(FontWeight.Medium)
-                      .fontColor(this.qingyuSubShowConfirm ? $r('app.color.primary_text') : $r('app.color.on_accent'))
-                      .backgroundColor(this.qingyuSubShowConfirm ? $r('app.color.surface_muted') :
-                      $r('app.color.accent'))
-                      .borderRadius($r('app.float.pill_radius'))
-                      .padding({ top: 12, bottom: 12 })
-                      .onClick(() => {
-                        if (this.qingyuSubButtonLabel === '前往开通') {
-                          void this.showQingyuOpenNotAvailableDialog()
-                          return
-                        }
-                        this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
-                          console.error(`openQingyuCloudRecharge: ${JSON.stringify(err)}`)
-                        })
-                      })
-                  }
-                  if (this.qingyuSubShowConfirm) {
-                    Button('确定')
-                      .layoutWeight(1)
-                      .fontSize($r('app.float.caption_font_size'))
-                      .fontWeight(FontWeight.Medium)
-                      .fontColor($r('app.color.on_accent'))
-                      .backgroundColor($r('app.color.accent'))
-                      .borderRadius($r('app.float.pill_radius'))
-                      .padding({ top: 12, bottom: 12 })
-                      .onClick(() => {
-                        void this.handleConfirmQingyuService()
-                      })
-                  }
+                Row() {
+                  Blank().layoutWeight(1)
+                  Button('登录')
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor($r('app.color.on_accent'))
+                    .backgroundColor($r('app.color.accent'))
+                    .borderRadius($r('app.float.pill_radius'))
+                    .padding({
+                      left: 28,
+                      right: 28,
+                      top: 12,
+                      bottom: 12
+                    })
+                    .onClick(() => {
+                      void this.openLoginFromCloudSync()
+                    })
+                  Blank().layoutWeight(1)
                 }
                 .width('100%')
               }
+              .padding(20)
+              .margin({ bottom: 10 })
+              .backgroundColor($r('app.color.card_background'))
+              .borderRadius($r('app.float.card_radius'))
+              .border({ width: 1, color: $r('app.color.card_border') })
+              .shadow({
+                radius: 20,
+                color: $r('app.color.shadow_color'),
+                offsetX: 0,
+                offsetY: 4
+              })
+            } else {
+              Column({ space: 14 }) {
+                this.buildSectionTitle($r('app.string.settings_qingyu_title'))
+
+                Text(this.qingyuSubLoading ? '加载中…' : this.qingyuSubHint)
+                  .fontSize(12)
+                  .fontColor($r('app.color.tertiary_text'))
+                  .width('100%')
+
+                if (this.qingyuSubShowRenew || this.qingyuSubShowConfirm) {
+                  Row({ space: 10 }) {
+                    if (this.qingyuSubShowRenew) {
+                      Button(this.qingyuSubButtonLabel)
+                        .layoutWeight(1)
+                        .fontSize($r('app.float.caption_font_size'))
+                        .fontWeight(FontWeight.Medium)
+                        .fontColor(this.qingyuSubShowConfirm ? $r('app.color.primary_text') : $r('app.color.on_accent'))
+                        .backgroundColor(this.qingyuSubShowConfirm ? $r('app.color.surface_muted') :
+                        $r('app.color.accent'))
+                        .borderRadius($r('app.float.pill_radius'))
+                        .padding({ top: 12, bottom: 12 })
+                        .onClick(() => {
+                          if (this.qingyuSubButtonLabel === '前往开通') {
+                            void this.showQingyuOpenNotAvailableDialog()
+                            return
+                          }
+                          this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
+                            console.error(`openQingyuCloudRecharge: ${JSON.stringify(err)}`)
+                          })
+                        })
+                    }
+                    if (this.qingyuSubShowConfirm) {
+                      Button('确定')
+                        .layoutWeight(1)
+                        .fontSize($r('app.float.caption_font_size'))
+                        .fontWeight(FontWeight.Medium)
+                        .fontColor($r('app.color.on_accent'))
+                        .backgroundColor($r('app.color.accent'))
+                        .borderRadius($r('app.float.pill_radius'))
+                        .padding({ top: 12, bottom: 12 })
+                        .onClick(() => {
+                          void this.handleConfirmQingyuService()
+                        })
+                    }
+                  }
+                  .width('100%')
+                }
+              }
+              .padding(20)
+              .margin({ bottom: 10 })
+              .backgroundColor($r('app.color.card_background'))
+              .borderRadius($r('app.float.card_radius'))
+              .border({ width: 1, color: $r('app.color.card_border') })
+              .shadow({
+                radius: 20,
+                color: $r('app.color.shadow_color'),
+                offsetX: 0,
+                offsetY: 4
+              })
             }
-            .padding(20)
-            .margin({ bottom: 10 })
-            .backgroundColor($r('app.color.card_background'))
-            .borderRadius($r('app.float.card_radius'))
-            .border({ width: 1, color: $r('app.color.card_border') })
-            .shadow({
-              radius: 20,
-              color: $r('app.color.shadow_color'),
-              offsetX: 0,
-              offsetY: 4
-            })
           }
 
           Column({ space: 16 }) {

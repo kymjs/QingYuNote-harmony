@@ -10,13 +10,22 @@ import {
   wxApi
 } from '../services/WeChatAuthService'
 
+/** 从云同步设置 `pushUrl` 传入，`back()` 返回上一页（与 Flutter 弹窗登录对齐）。 */
+const RETURN_CLOUD_SYNC = 'cloudSync'
+
 @Entry
 @Component
 struct Login {
+  private returnAfterLogin: string = ''
+  /** 自 `peekLoginReturnTarget`（OAuth 返回后 router params 可能丢失） */
+  private pendingReturnTarget: string = ''
   private loginResultCallback = (payload: Object): void => {
     const data = payload as WeChatLoginResultPayload
+    if (data.mergeResult !== undefined) {
+      return
+    }
     if (data.success) {
-      this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' })
+      void this.navigateAfterLogin()
       return
     }
     const msg =
@@ -34,11 +43,70 @@ struct Login {
     return host as common.UIAbilityContext
   }
 
+  private captureNavParams(): void {
+    try {
+      const p = this.getUIContext().getRouter().getParams() as Record<string, Object>
+      const v = p['returnAfterLogin']
+      this.returnAfterLogin = typeof v === 'string' ? v : ''
+    } catch (_) {
+      this.returnAfterLogin = ''
+    }
+  }
+
+  /**
+   * 登录成功或游客进入首页：若从云同步打开则返回上一页，否则进入首页。
+   * OAuth 回调后 `router.getParams()` 可能丢失，故使用 `pendingReturnTarget`（来自 peek）。
+   */
+  private async navigateAfterLogin(): Promise<void> {
+    let target = this.pendingReturnTarget.trim()
+    if (target.length === 0) {
+      this.captureNavParams()
+      target = this.returnAfterLogin
+    }
+    try {
+      await PreferencesService.getInstance().clearLoginReturnTarget()
+    } catch (_) {
+      // ignore
+    }
+    this.pendingReturnTarget = ''
+    if (target === RETURN_CLOUD_SYNC) {
+      try {
+        this.getUIContext().getRouter().back()
+      } catch (e) {
+        console.error(`Login navigateAfterLogin back failed: ${JSON.stringify(e)}`)
+        try {
+          this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' })
+        } catch (e2) {
+          console.error(`Login navigateAfterLogin replaceUrl fallback failed: ${JSON.stringify(e2)}`)
+        }
+      }
+      return
+    }
+    try {
+      this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' })
+    } catch (e) {
+      console.error(`Login navigateAfterLogin replaceUrl failed: ${JSON.stringify(e)}`)
+    }
+  }
+
   aboutToAppear(): void {
     try {
       AppContextHolder.getContext().eventHub.on(WECHAT_LOGIN_RESULT_EVENT, this.loginResultCallback)
     } catch (_) {
       console.error('Login: eventHub.on failed')
+    }
+    void this.loadPendingReturnTarget()
+  }
+
+  private async loadPendingReturnTarget(): Promise<void> {
+    const ctx = this.obtainUiAbilityContext()
+    if (ctx !== undefined) {
+      await PreferencesService.getInstance().init(ctx)
+    }
+    try {
+      this.pendingReturnTarget = await PreferencesService.getInstance().peekLoginReturnTarget()
+    } catch (_) {
+      this.pendingReturnTarget = ''
     }
   }
 
@@ -50,20 +118,36 @@ struct Login {
     }
   }
 
-  /** 登录栈底不可返回上一层；按返回键退出应用。 */
+  /** 栈底登录页按返回退出应用；从云同步进入时可返回设置页。 */
   onBackPress(): boolean {
+    this.captureNavParams()
+    if (this.returnAfterLogin === RETURN_CLOUD_SYNC || this.pendingReturnTarget === RETURN_CLOUD_SYNC) {
+      void PreferencesService.getInstance().clearLoginReturnTarget()
+      this.pendingReturnTarget = ''
+      try {
+        this.getUIContext().getRouter().back()
+      } catch (_) {
+        console.error('Login onBackPress back failed')
+      }
+      return true
+    }
     const host = this.getUIContext().getHostContext()
     const ctx = host as common.UIAbilityContext | undefined
     if (ctx !== undefined) {
-      void ctx.terminateSelf()
+      try {
+        ctx.terminateSelf()
+      } catch (e) {
+        console.error(`Login onBackPress terminateSelf failed: ${JSON.stringify(e)}`)
+      }
     }
     return true
   }
 
   async onPageShow(): Promise<void> {
+    this.captureNavParams()
     try {
       if (await PreferencesService.getInstance().isUserLoggedIn()) {
-        this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' })
+        void this.navigateAfterLogin()
       }
     } catch (_) {
       console.error('Login: onPageShow check failed')
@@ -77,7 +161,7 @@ struct Login {
     }
     try {
       await startHuaweiLogin(ctx)
-      this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' })
+      void this.navigateAfterLogin()
     } catch (error) {
       const message = describeHuaweiLoginError(error as Object)
       try {
@@ -116,10 +200,20 @@ struct Login {
     }
   }
 
+  /** 与 Flutter `login_page.dart` `_onGuestModeTap` 对齐 */
+  private async onGuestTap(): Promise<void> {
+    const ctx = this.obtainUiAbilityContext()
+    if (ctx !== undefined) {
+      await PreferencesService.getInstance().init(ctx)
+    }
+    await PreferencesService.getInstance().setGuestMode(true)
+    void this.navigateAfterLogin()
+  }
+
   build() {
     Column() {
       Column({ space: 12 }) {
-        Image($r('app.media.startIcon'))
+        Image($r('app.media.icon_app'))
           .width(88)
           .height(88)
           .objectFit(ImageFit.Contain)
@@ -144,7 +238,7 @@ struct Login {
 
       Blank().layoutWeight(1)
 
-      // 与 Flutter `login_page.dart` 一致：`Padding(symmetric(horizontal: 28))` 包裹全宽按钮，避免 width 100% 与 margin 叠加导致左右贴边。
+      // 与 Flutter `login_page.dart` 一致：`Padding(symmetric(horizontal: 28))` 包裹全宽按钮
       Column({ space: 0 }) {
         Button() {
           Text($r('app.string.login_with_huawei'))
@@ -177,6 +271,25 @@ struct Login {
           .onClick((): void => {
             void this.onWeChatTap()
           })
+
+        Button() {
+          Text($r('app.string.login_guest_mode'))
+            .fontColor($r('app.color.primary_text'))
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+        }
+          .type(ButtonType.Normal)
+          .width('100%')
+          .height(48)
+          .backgroundColor(Color.Transparent)
+          .border({
+            width: 1,
+            color: $r('app.color.card_border')
+          })
+          .borderRadius($r('app.float.pill_radius'))
+          .onClick((): void => {
+            void this.onGuestTap()
+          })
       }
         .width('100%')
         .padding({ left: 28, right: 28 })
@@ -187,7 +300,7 @@ struct Login {
           .fontColor($r('app.color.tertiary_text'))
           .textAlign(TextAlign.Center)
           .width('100%')
-          .padding({ left: 24, right: 24, bottom: 12 })
+          .padding({ left: 24, right: 24, top: 12, bottom: 12 })
       }
     }
     .width('100%')

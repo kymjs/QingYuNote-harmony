@@ -111,7 +111,9 @@ struct Index {
       if (context) {
         await PreferencesService.getInstance().init(context)
       }
-      if (!(await PreferencesService.getInstance().isUserLoggedIn())) {
+      const loggedIn = await PreferencesService.getInstance().isUserLoggedIn()
+      const guest = await PreferencesService.getInstance().isGuestMode()
+      if (!loggedIn && !guest) {
         await this.getUIContext().getRouter().replaceUrl({ url: 'pages/Login' })
       }
     } catch (_) {
@@ -569,7 +571,7 @@ struct Index {
 
   @Builder
   private buildFab() {
-    Image($r('app.media.startIcon'))
+    Image($r('app.media.icon_app'))
       .align(Alignment.Center)
       .width($r('app.float.fab_size'))
       .height($r('app.float.fab_size'))

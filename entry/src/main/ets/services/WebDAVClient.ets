@@ -7,20 +7,19 @@ import type {
   QingyuCloudStatusFetchFailed,
   QingyuCloudStatusLifetime,
   QingyuCloudStatusMalformed,
+  QingyuCloudStatusNeedWechatLogin,
   QingyuCloudStatusNotConfigured,
   QingyuCloudStatusNotPurchased,
   QingyuCloudStatusNotQingyu,
   QingyuCloudSubscriptionStatus
 } from '../common/model/QingyuCloudSubscription'
+import { NoteApiClient, type SubscriptionBody } from './NoteApiClient'
 import { PreferencesService } from './PreferencesService'
 import { CryptoService } from './CryptoService'
 import { PathUtils } from '../common/utils/PathUtils'
 import { TimeUtils } from '../common/utils/TimeUtils'
 import { Logger } from '../common/utils/Logger'
 import { SyncConstants } from '../common/constants/SyncConstants'
-import type { QingyuRechargePlanId } from '../common/constants/QingyuRechargePlans'
-import { QingyuRechargePlans } from '../common/constants/QingyuRechargePlans'
-
 interface HeaderOverrides {
   contentType?: string
   modifiedAt?: string
@@ -41,13 +40,6 @@ interface ErrorLike {
   code?: number | string
   message?: string
   name?: string
-}
-
-/** parseExpiryEndParts 的归一化结果。 */
-interface QingyuExpiryParseResult {
-  year: number
-  endOfDayMillis: number
-  displayYmd: string
 }
 
 export interface RemoteIndexEntry {
@@ -134,11 +126,8 @@ export class WebDAVClient {
   }
 
   /**
-   * 拉取同步目录根下的 `.qingyu-cloud.json`（仅内存解析），用于设置页展示有效期。
-   */
-  /**
-   * @param configOverride 若传入（如云同步设置页预览），则不再按已保存的 sync_provider 解析配置；
-   *   不传时行为与原先一致，供 SyncService 等使用当前生效同步方式。
+   * 轻羽云订阅：从 Note API 拉取（不再读取 WebDAV 上 `.qingyu-cloud.json`）。
+   * @param configOverride 若传入（如云同步设置页预览），则不再按已保存的 sync_provider 解析配置。
    */
   async fetchQingyuCloudSubscriptionStatus(configOverride?: WebDAVConfig | null): Promise<QingyuCloudSubscriptionStatus> {
     const config =
@@ -151,41 +140,48 @@ export class WebDAVClient {
       const s: QingyuCloudStatusNotQingyu = { kind: 'not_qingyu' }
       return s
     }
-    const url =
-      PathUtils.joinRemotePathFileUrl(config.baseUrl, config.notesDir, SyncConstants.qingyuCloudMetaFile)
-    Logger.info('WebDAVClient', `fetchQingyuCloudSubscriptionStatus GET url=${this.sanitizeUrl(url)}`)
-    try {
-      const response = await this.sendRequest(url, http.RequestMethod.GET, undefined, undefined, config)
-      if (response.responseCode === 404) {
-        const s: QingyuCloudStatusNotPurchased = { kind: 'not_purchased' }
-        return s
-      }
-      if (response.responseCode >= 400) {
-        const s: QingyuCloudStatusFetchFailed = { kind: 'fetch_failed' }
-        return s
-      }
-      const rawBody = this.responseBodyToText(response.result).trim()
-      if (rawBody.length === 0) {
-        const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
-        return s
-      }
-      const dateHeader = this.pickHeader(response.header, 'Date')
-      let referenceNowMillis = TimeUtils.fromHttpDate(dateHeader)
-      if (referenceNowMillis <= 0) {
-        referenceNowMillis = Date.now()
-        Logger.warn('WebDAVClient',
-          'fetchQingyuCloudSubscriptionStatus: missing/invalid HTTP Date header; subscription gate falls back to local clock')
-      }
-      return WebDAVClient.parseQingyuCloudJsonBody(rawBody, referenceNowMillis)
-    } catch (error) {
-      if (this.isCredentialDecryptFailure(error)) {
-        throw this.toRuntimeError(error)
-      }
-      Logger.warn('WebDAVClient',
-        `fetchQingyuCloudSubscriptionStatus failed: ${this.describeError(error as Object)}`)
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      const need: QingyuCloudStatusNeedWechatLogin = { kind: 'need_wechat_login' }
+      return need
+    }
+    const body = await NoteApiClient.getInstance().fetchSubscription()
+    if (body === null) {
       const s: QingyuCloudStatusFetchFailed = { kind: 'fetch_failed' }
       return s
     }
+    return WebDAVClient.mapNoteSubscriptionBody(body)
+  }
+
+  private static mapNoteSubscriptionBody(body: SubscriptionBody): QingyuCloudSubscriptionStatus {
+    const state = body.state?.trim() ?? ''
+    if (state === 'lifetime' || body.is_lifetime === true) {
+      const s: QingyuCloudStatusLifetime = { kind: 'lifetime' }
+      return s
+    }
+    if (state === 'none') {
+      const s: QingyuCloudStatusNotPurchased = { kind: 'not_purchased' }
+      return s
+    }
+    const ymd = body.expires_at?.trim() ?? ''
+    if (state === 'expired') {
+      if (ymd.length === 0) {
+        const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
+        return s
+      }
+      const s: QingyuCloudStatusExpired = { kind: 'expired', expiresDisplayYmd: ymd }
+      return s
+    }
+    if (state === 'active') {
+      if (ymd.length === 0) {
+        const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
+        return s
+      }
+      const s: QingyuCloudStatusActive = { kind: 'active', expiresDisplayYmd: ymd }
+      return s
+    }
+    const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
+    return s
   }
 
   async ensureNotesDirectory(): Promise<void> {
@@ -218,7 +214,6 @@ export class WebDAVClient {
       const response = await this.sendRequest(targetUrl, http.RequestMethod.HEAD)
       if (this.isReachableDirectoryResponse(response.responseCode)) {
         await this.ensureImageDirectory(config)
-        await this.upsertQingyuCloudMetadata(config)
         return
       }
     } catch (error) {
@@ -227,42 +222,6 @@ export class WebDAVClient {
     }
     await this.createDirectoryPath(config.baseUrl, config.notesDir)
     await this.ensureImageDirectory(config)
-    await this.upsertQingyuCloudMetadata(config)
-  }
-
-  /** 合并远端 `.qingyu-cloud.json`：保留服务端 `expiresAt`，写入本地三方标识字段（不落本地磁盘）。 */
-  private async upsertQingyuCloudMetadata(config: WebDAVConfig): Promise<void> {
-    const url =
-      PathUtils.joinRemotePathFileUrl(config.baseUrl, config.notesDir, SyncConstants.qingyuCloudMetaFile)
-    const huawei = await PreferencesService.getInstance().getHuaweiThirdPartyUserId()
-    const wechat = await PreferencesService.getInstance().getWeChatThirdPartyUserId()
-    const merged: Record<string, Object | string | number | boolean | null | undefined> = {}
-    try {
-      const response = await this.sendRequest(url, http.RequestMethod.GET, undefined, undefined, config)
-      if (response.responseCode >= 200 && response.responseCode < 300) {
-        const raw = this.responseBodyToText(response.result).trim()
-        if (raw.length > 0) {
-          const parsed =
-            JSON.parse(raw) as Record<string, Object | string | number | boolean | null | undefined>
-          Object.keys(parsed).forEach((key: string) => {
-            merged[key] = parsed[key]
-          })
-        }
-      }
-    } catch (error) {
-      Logger.warn('WebDAVClient',
-        `upsertQingyuCloudMetadata GET skipped: ${this.describeError(error as Object)}`)
-    }
-    merged[SyncConstants.qingyuCloudFieldHuaweiUser] = huawei
-    merged[SyncConstants.qingyuCloudFieldWechatUser] = wechat
-    try {
-      await this.sendRequest(url, http.RequestMethod.PUT, JSON.stringify(merged), {
-        contentType: 'application/json; charset=utf-8'
-      }, config)
-    } catch (error) {
-      Logger.warn('WebDAVClient',
-        `upsertQingyuCloudMetadata PUT failed: ${this.describeError(error as Object)}`)
-    }
   }
 
   private isQingyuProvider(provider: WebDAVProvider): boolean {
@@ -849,179 +808,6 @@ export class WebDAVClient {
       Logger.warn('WebDAVClient', `resolveAuthorizationHeader failed: ${wrappedError.message}`)
       throw wrappedError
     }
-  }
-
-  /**
-   * @param referenceNowMillis 须与 WebDAV 响应头 `Date`（服务端时间）对齐；不要用本地 Date.now() 作为唯一依据，以免用户改系统时间绕过订阅门禁。
-   */
-  private static parseQingyuCloudJsonBody(rawBody: string, referenceNowMillis: number): QingyuCloudSubscriptionStatus {
-    let decoded: Record<string, Object | string | number | boolean | null | undefined>
-    try {
-      decoded = JSON.parse(rawBody) as Record<string, Object | string | number | boolean | null | undefined>
-    } catch {
-      const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
-      return s
-    }
-    if (typeof decoded !== 'object' || decoded === null) {
-      const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
-      return s
-    }
-    const raw = WebDAVClient.pickQingyuExpiresRaw(decoded)
-    if (raw.length === 0) {
-      const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
-      return s
-    }
-    const parsed = WebDAVClient.parseExpiryEndParts(raw)
-    if (parsed === null) {
-      const s: QingyuCloudStatusMalformed = { kind: 'malformed' }
-      return s
-    }
-    if (parsed.year >= SyncConstants.qingyuLifetimeMinYear) {
-      const s: QingyuCloudStatusLifetime = { kind: 'lifetime' }
-      return s
-    }
-    const now = referenceNowMillis
-    if (now > parsed.endOfDayMillis) {
-      const s: QingyuCloudStatusExpired = { kind: 'expired', expiresDisplayYmd: parsed.displayYmd }
-      return s
-    }
-    const active: QingyuCloudStatusActive = { kind: 'active', expiresDisplayYmd: parsed.displayYmd }
-    return active
-  }
-
-  private static pickQingyuExpiresRaw(record: Record<string, Object | string | number | boolean | null | undefined>): string {
-    const direct: (Object | string | number | boolean | null | undefined)[] = [
-      record[SyncConstants.qingyuCloudFieldExpiresAt],
-      record['expires_at'],
-      record['失效日期'],
-    ]
-    for (let i = 0; i < direct.length; i++) {
-      const v = direct[i]
-      if (typeof v === 'string' && v.trim().length > 0) {
-        return v.trim()
-      }
-    }
-    const keys = Object.keys(record)
-    if (keys.length === 1) {
-      const onlyKey = keys[0]
-      if (onlyKey === SyncConstants.qingyuCloudFieldHuaweiUser ||
-        onlyKey === SyncConstants.qingyuCloudFieldWechatUser) {
-        return ''
-      }
-      const values = Object.values(record)
-      if (values.length === 1) {
-        const only = values[0]
-        if (typeof only === 'string' && only.trim().length > 0) {
-          return only.trim()
-        }
-      }
-    }
-    return ''
-  }
-
-  private static parseExpiryEndParts(raw: string): QingyuExpiryParseResult | null {
-    const trimmed = raw.trim()
-    if (trimmed.length === 0) {
-      return null
-    }
-    if (trimmed.length === 10 && trimmed.charAt(4) === '-' && trimmed.charAt(7) === '-') {
-      const y = Number(trimmed.substring(0, 4))
-      const m = Number(trimmed.substring(5, 7))
-      const d = Number(trimmed.substring(8, 10))
-      if (Number.isNaN(y) || Number.isNaN(m) || Number.isNaN(d)) {
-        return null
-      }
-      const end = new Date(y, m - 1, d, 23, 59, 59, 999).getTime()
-      const r: QingyuExpiryParseResult = { year: y, endOfDayMillis: end, displayYmd: trimmed }
-      return r
-    }
-    const t = Date.parse(trimmed)
-    if (Number.isNaN(t)) {
-      return null
-    }
-    const date = new Date(t)
-    const y = date.getFullYear()
-    const m = date.getMonth() + 1
-    const d = date.getDate()
-    const end = new Date(y, m - 1, d, 23, 59, 59, 999).getTime()
-    const pad = (n: number): string => (n < 10 ? `0${n}` : `${n}`)
-    const displayYmd = `${y}-${pad(m)}-${pad(d)}`
-    const r: QingyuExpiryParseResult = { year: y, endOfDayMillis: end, displayYmd: displayYmd }
-    return r
-  }
-
-  /**
-   * 支付成功后按档位延长远端 `.qingyu-cloud.json` 的 `expiresAt`：
-   * 若会员仍未过期则从原截止日期顺延；已过期则从服务端当前日期起算。
-   */
-  async applyQingyuRechargePlan(config: WebDAVConfig, planId: QingyuRechargePlanId): Promise<string> {
-    if (!config.enabled || !this.isQingyuProvider(config.provider)) {
-      throw new Error('请使用轻羽云同步配置后再充值')
-    }
-    const url =
-      PathUtils.joinRemotePathFileUrl(config.baseUrl, config.notesDir, SyncConstants.qingyuCloudMetaFile)
-    const getResp = await this.sendRequest(url, http.RequestMethod.GET, undefined, undefined, config)
-    const dateHeader = this.pickHeader(getResp.header, 'Date')
-    let serverNowMillis = TimeUtils.fromHttpDate(dateHeader)
-    if (serverNowMillis <= 0) {
-      serverNowMillis = Date.now()
-      Logger.warn('WebDAVClient',
-        'applyQingyuRechargePlan: missing/invalid HTTP Date header; anchor uses local clock')
-    }
-
-    const merged: Record<string, Object | string | number | boolean | null | undefined> = {}
-    if (getResp.responseCode >= 200 && getResp.responseCode < 300) {
-      const rawGet = this.responseBodyToText(getResp.result).trim()
-      if (rawGet.length > 0) {
-        try {
-          const parsed =
-            JSON.parse(rawGet) as Record<string, Object | string | number | boolean | null | undefined>
-          Object.keys(parsed).forEach((key: string) => {
-            merged[key] = parsed[key]
-          })
-        } catch (_) {
-          Logger.warn('WebDAVClient', 'applyQingyuRechargePlan: failed to parse existing metadata JSON')
-        }
-      }
-    }
-
-    const rawExpires = WebDAVClient.pickQingyuExpiresRaw(merged)
-    if (rawExpires.length > 0) {
-      const parsedEx = WebDAVClient.parseExpiryEndParts(rawExpires)
-      if (parsedEx !== null && parsedEx.year >= SyncConstants.qingyuLifetimeMinYear) {
-        throw new Error('当前为终身权益，无需续费')
-      }
-    }
-
-    let anchorYmd: string
-    if (rawExpires.length > 0) {
-      const parsedEx = WebDAVClient.parseExpiryEndParts(rawExpires)
-      if (parsedEx !== null && parsedEx.endOfDayMillis >= serverNowMillis) {
-        anchorYmd = parsedEx.displayYmd
-      } else {
-        anchorYmd = TimeUtils.formatUtcYmdFromMillis(serverNowMillis)
-      }
-    } else {
-      anchorYmd = TimeUtils.formatUtcYmdFromMillis(serverNowMillis)
-    }
-
-    const addMonths = QingyuRechargePlans.months(planId)
-    const newYmd = TimeUtils.addCalendarMonthsToYmd(anchorYmd, addMonths)
-    merged[SyncConstants.qingyuCloudFieldExpiresAt] = newYmd
-
-    const huawei = await PreferencesService.getInstance().getHuaweiThirdPartyUserId()
-    const wechat = await PreferencesService.getInstance().getWeChatThirdPartyUserId()
-    merged[SyncConstants.qingyuCloudFieldHuaweiUser] = huawei
-    merged[SyncConstants.qingyuCloudFieldWechatUser] = wechat
-
-    const putResp = await this.sendRequest(url, http.RequestMethod.PUT, JSON.stringify(merged), {
-      contentType: 'application/json; charset=utf-8'
-    }, config)
-    if (putResp.responseCode < 200 || putResp.responseCode >= 300) {
-      throw new Error(`写入云服务开通信息失败（HTTP ${putResp.responseCode}）`)
-    }
-    Logger.info('WebDAVClient', `applyQingyuRechargePlan success: plan=${planId}, newExpiresAt=${newYmd}`)
-    return newYmd
   }
 
   private sanitizeUrl(url: string): string {

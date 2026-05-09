@@ -9,6 +9,8 @@
     "pages/RecycleBin",
     "pages/About",
     "pages/Feedback",
+    "pages/Profile",
+    "pages/AvatarCrop",
     "pages/TagManage",
     "pages/TagNoteAssign"
   ]

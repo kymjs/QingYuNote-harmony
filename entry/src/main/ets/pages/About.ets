@@ -69,7 +69,7 @@ struct About {
       Scroll() {
         Column() {
           Column({ space: 0 }) {
-            Image($r('app.media.startIcon'))
+            Image($r('app.media.icon_app'))
               .width(80)
               .height(80)
               .objectFit(ImageFit.Contain)

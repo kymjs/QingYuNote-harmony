@@ -18,6 +18,10 @@
       {
         "name": "client_id",
         "value": "6917604436122895003"
+      },
+      {
+        "name": "ohos.application.networkSecurityConfig",
+        "value": "rawfile/network_security_config.xml"
       }
     ],
     "pages": "$profile:main_pages",
@@ -48,9 +52,9 @@
         "name": "EntryAbility",
         "srcEntry": "./ets/entryability/EntryAbility.ets",
         "description": "$string:EntryAbility_desc",
-        "icon": "$media:startIcon",
+        "icon": "$media:layered_image",
         "label": "$string:EntryAbility_label",
-        "startWindowIcon": "$media:startIcon",
+        "startWindowIcon": "$media:layered_image",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "skills": [
