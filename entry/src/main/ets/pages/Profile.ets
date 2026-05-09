@@ -755,9 +755,13 @@ struct Profile {
               this.kvRow(
                 this.membershipTitle(this.profile!),
                 this.membershipRight(this.profile!),
+                true,
                 false,
-                false,
-                (): void => {}
+                (): void => {
+                  this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
+                    console.error(`Profile push QingyuCloudRecharge: ${JSON.stringify(err)}`)
+                  })
+                }
               )
             }
             .width('100%')

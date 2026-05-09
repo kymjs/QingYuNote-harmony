@@ -9,6 +9,7 @@
     "pages/RecycleBin",
     "pages/About",
     "pages/Feedback",
+    "pages/H5WebContainer",
     "pages/Profile",
     "pages/AvatarCrop",
     "pages/TagManage",

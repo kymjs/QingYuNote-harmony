@@ -142,6 +142,18 @@ struct About {
             offsetX: 0,
             offsetY: 4
           })
+
+          Text($r('app.string.contact_us'))
+            .fontSize(13)
+            .fontColor($r('app.color.tertiary_text'))
+            .textAlign(TextAlign.Center)
+            .width('100%')
+            .padding({ top: 24, bottom: 8 })
+            .onClick(() => {
+              this.getUIContext().getRouter().pushUrl({ url: 'pages/Feedback' }).catch((err: Error) => {
+                console.error(`openFeedbackQr: ${JSON.stringify(err)}`)
+              })
+            })
         }
         .width('100%')
         .alignItems(HorizontalAlign.Center)

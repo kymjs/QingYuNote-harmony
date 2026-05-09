@@ -37,7 +37,7 @@ export class QingyuRechargePlans {
       return '10 元 / 月'
     }
     if (planId === 'half_year') {
-      return '60 元 / 7 个月（赠送 1 个月）'
+      return '60 元 / 6 个月（另赠送 1 个月）'
     }
     return '100 元 / 年'
   }
@@ -48,7 +48,7 @@ export class QingyuRechargePlans {
       return '¥10/月'
     }
     if (planId === 'half_year') {
-      return '¥60/7个月'
+      return '¥60/6个月'
     }
     return '¥100/年'
   }
@@ -59,7 +59,7 @@ export class QingyuRechargePlans {
       return '每月 ¥10 · 约 ¥0.33/天'
     }
     if (planId === 'half_year') {
-      return '赠 1 个月 · 约 ¥8.6/月'
+      return '额外加赠 1 个月 · 约 ¥8.6/月'
     }
     return '约 ¥8.3/月 · 年度优选'
   }

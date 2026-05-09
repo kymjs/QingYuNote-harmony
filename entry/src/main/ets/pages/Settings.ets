@@ -218,7 +218,13 @@ struct Settings {
             .justifyContent(FlexAlign.SpaceBetween)
             .alignItems(VerticalAlign.Center)
             .onClick(() => {
-              this.getUIContext().getRouter().pushUrl({ url: 'pages/Feedback' }).catch((err: Error) => {
+              this.getUIContext().getRouter().pushUrl({
+                url: 'pages/H5WebContainer',
+                params: {
+                  title: '问题反馈',
+                  url: 'https://vcnedpub4ekz.feishu.cn/share/base/form/shrcnexjZUlhIkZ4eD9BjcDfdkb'
+                }
+              }).catch((err: Error) => {
                 console.error(`openFeedback: ${JSON.stringify(err)}`)
               })
             })

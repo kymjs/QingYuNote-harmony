@@ -92,7 +92,7 @@ struct Feedback {
         })
 
         Row() {
-          Text($r('app.string.feedback_title'))
+          Text($r('app.string.contact_us'))
             .fontSize($r('app.float.title_font_size'))
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.primary_text'))

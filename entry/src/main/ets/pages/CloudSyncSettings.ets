@@ -342,20 +342,6 @@ struct CloudSyncSettings {
     }
   }
 
-  private async showQingyuOpenNotAvailableDialog(): Promise<void> {
-    try {
-      await this.getUIContext().getPromptAction().showDialog({
-        title: '提示',
-        message: '暂不支持，请等候。',
-        buttons: [
-          { text: '确定', color: '#0DAA4A' }
-        ]
-      })
-    } catch (error) {
-      Logger.warn('CloudSyncSettings', `showQingyuOpenNotAvailableDialog failed: ${this.describeError(error as Object)}`)
-    }
-  }
-
   private async handleTestConnection(): Promise<void> {
     this.testing = true
     Logger.info('CloudSyncSettings', 'handleTestConnection start')
@@ -648,10 +634,6 @@ struct CloudSyncSettings {
                         .borderRadius($r('app.float.pill_radius'))
                         .padding({ top: 12, bottom: 12 })
                         .onClick(() => {
-                          if (this.qingyuSubButtonLabel === '前往开通') {
-                            void this.showQingyuOpenNotAvailableDialog()
-                            return
-                          }
                           this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
                             console.error(`openQingyuCloudRecharge: ${JSON.stringify(err)}`)
                           })
