@@ -10,7 +10,11 @@ import {
 import { WECHAT_APP_ID } from '../common/constants/WeChatConstants'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { obtainHuaweiAuthorizationCode, describeHuaweiLoginError } from '../services/HuaweiAuthService'
-import { MergeAccountResponseBody, NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
+import {
+  MergeAccountResponseBody,
+  NoteApiClient,
+  type ProfileBody
+} from '../services/NoteApiClient'
 import {
   setWeChatOAuthIntent,
   startWeChatLogin,
@@ -137,9 +141,16 @@ struct Profile {
     return '轻羽云服务'
   }
 
-  private membershipRight(p: ProfileBody): string {
+  private isLifetimeVip(p: ProfileBody): boolean {
     if (p.membership_is_lifetime === true) {
-      return '无期限'
+      return true
+    }
+    return (p.membership_level ?? '').trim() === 'lifetime'
+  }
+
+  private membershipRight(p: ProfileBody): string {
+    if (this.isLifetimeVip(p)) {
+      return '终身VIP'
     }
     const st = (p.membership_level ?? '').trim()
     if (st === 'active') {
@@ -149,9 +160,6 @@ struct Profile {
     if (st === 'expired') {
       const exp = (p.membership_expires_at ?? '').trim()
       return exp.length > 0 ? exp : '—'
-    }
-    if (st === 'lifetime') {
-      return '无期限'
     }
     return '未开通'
   }
@@ -443,6 +451,13 @@ struct Profile {
         return '请选择有效图片'
       case 'invalid_multipart':
         return '上传格式无效'
+      case 'redemption_invalid':
+        return '兑换码无效或已使用'
+      case 'invalid_code':
+      case 'invalid_body':
+        return '兑换码格式无效'
+      case 'db_failed':
+        return '服务暂时不可用'
       default:
         return `操作失败（${code}）`
     }
@@ -456,6 +471,77 @@ struct Profile {
       this.getUIContext().getPromptAction().closeCustomDialog(content)
     } catch (e) {
       Logger.warn('Profile', `closeCustomDialog failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private openRedeemDialog(): void {
+    const ui = this.getUIContext()
+    let holder: ComponentContent<ProfileTextEditDialogParams> | undefined = undefined
+    const params: ProfileTextEditDialogParams = {
+      title: '兑换轻羽云服务',
+      initial: '',
+      placeholder: '请输入兑换码',
+      confirmButtonLabel: '确定兑换',
+      onCancel: (): void => {
+        this.closeTextEditDialog(holder)
+      },
+      onConfirm: (text: string): void => {
+        this.closeTextEditDialog(holder)
+        void this.submitRedeem(text)
+      }
+    }
+    holder = new ComponentContent(ui, wrapBuilder(buildProfileTextEditDialogContent), params)
+    try {
+      ui.getPromptAction().openCustomDialog(holder, {
+        alignment: DialogAlignment.Center,
+        autoCancel: true
+      })
+    } catch (e) {
+      Logger.warn('Profile', `openRedeemDialog failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private async submitRedeem(code: string): Promise<void> {
+    const trimmed = code.trim()
+    if (trimmed.length === 0) {
+      this.showToast('请输入兑换码')
+      return
+    }
+    const r = await NoteApiClient.getInstance().redeemCode(trimmed)
+    if (r === null) {
+      this.showToast('网络异常，请稍后重试')
+      return
+    }
+    if (typeof r === 'string') {
+      this.showToast(this.mapErr(r))
+      return
+    }
+    const planId = (r.plan_id ?? '').trim()
+    const msg = this.redeemSuccessMessage(planId)
+    try {
+      await this.getUIContext().getPromptAction().showDialog({
+        title: '兑换成功',
+        message: msg,
+        buttons: [{ text: '好的', color: '#2563EB' }]
+      })
+    } catch (e) {
+      Logger.warn('Profile', `redeem success dialog: ${JSON.stringify(e)}`)
+    }
+    await this.reload()
+  }
+
+  private redeemSuccessMessage(planId: string): string {
+    switch (planId) {
+      case 'monthly':
+        return '已获赠轻羽云服务月卡权益'
+      case 'half_year':
+        return '已获赠轻羽云服务半年卡权益'
+      case 'yearly':
+        return '已获赠轻羽云服务年卡权益'
+      case 'lifetime_vip':
+        return '已获赠终身 VIP 权益'
+      default:
+        return '兑换成功，权益已生效'
     }
   }
 
@@ -755,13 +841,17 @@ struct Profile {
               this.kvRow(
                 this.membershipTitle(this.profile!),
                 this.membershipRight(this.profile!),
-                true,
+                !this.isLifetimeVip(this.profile!),
                 false,
                 (): void => {
+                  if (this.isLifetimeVip(this.profile!)) {
+                    return
+                  }
                   this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
                     console.error(`Profile push QingyuCloudRecharge: ${JSON.stringify(err)}`)
                   })
-                }
+                },
+                !this.isLifetimeVip(this.profile!)
               )
             }
             .width('100%')
@@ -833,6 +923,17 @@ struct Profile {
             this.groupGap()
 
             Column() {
+              this.kvRow(
+                '兑换码',
+                '点击兑换',
+                true,
+                false,
+                (): void => {
+                  this.openRedeemDialog()
+                },
+                true
+              )
+              this.rowDivider()
               this.kvRow(
                 '注册时间',
                 this.regLine(),

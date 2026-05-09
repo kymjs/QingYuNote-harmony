@@ -3,6 +3,8 @@ export interface ProfileTextEditDialogParams {
   title: string
   initial: string
   placeholder: string
+  /** 主按钮文案，默认「保存」。 */
+  confirmButtonLabel?: string
   onCancel: () => void
   onConfirm: (text: string) => void
 }
@@ -46,7 +48,7 @@ export struct ProfileTextEditDialog {
           .onClick(() => {
             this.params.onCancel()
           })
-        Button('保存')
+        Button(this.params.confirmButtonLabel ?? '保存')
           .layoutWeight(1)
           .fontSize($r('app.float.body_font_size'))
           .fontWeight(FontWeight.Medium)

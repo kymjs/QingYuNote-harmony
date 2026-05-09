@@ -67,6 +67,13 @@ export interface MergeAccountResponseBody {
   absorbed_user_id?: number
 }
 
+/** `POST /api/v1/me/redeem` 成功体 */
+export interface RedeemSuccessBody {
+  plan_id?: string
+}
+
+export type RedeemCodeResult = RedeemSuccessBody | string
+
 /** `GET /api/v1/me/profile` */
 export interface ProfileBody {
   huawei_linked?: boolean
@@ -311,6 +318,51 @@ export class NoteApiClient {
       return null
     }
     return obj as ProfileBody
+  }
+
+  /**
+   * POST /api/v1/me/redeem。
+   * 成功返回对象（含 plan_id）；失败返回服务端 error 字符串；网络异常返回 null。
+   */
+  async redeemCode(code: string): Promise<RedeemCodeResult | null> {
+    const trimmed = code.trim()
+    if (trimmed.length === 0) {
+      return 'invalid_body'
+    }
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      return 'not_logged_in'
+    }
+    const req = http.createHttp()
+    try {
+      const resp = await req.request(this.joinUrl('/api/v1/me/redeem'), {
+        method: http.RequestMethod.POST,
+        header: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
+          'Authorization': `Bearer ${tok}`
+        },
+        extraData: JSON.stringify({ code: trimmed }),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000
+      })
+      const httpCode = resp.responseCode
+      const text = (resp.result as string) ?? ''
+      if (httpCode >= 200 && httpCode < 300) {
+        try {
+          return JSON.parse(text) as RedeemSuccessBody
+        } catch (_) {
+          return 'unknown_error'
+        }
+      }
+      return NoteApiClient.parseErrorCode(text)
+    } catch (e) {
+      Logger.warn('NoteApiClient', `redeemCode failed: ${JSON.stringify(e)}`)
+      return null
+    } finally {
+      req.destroy()
+    }
   }
 
   /**
