@@ -57,6 +57,7 @@ export struct NoteEditMarkdownBlocksView {
     .fontColor(fontColor)
     .lineHeight(lineHeight)
     .fontWeight(fontWeight)
+    .copyOption(CopyOptions.LocalDevice)
     .width('100%')
   }
 
@@ -97,6 +98,7 @@ export struct NoteEditMarkdownBlocksView {
             .fontSize($r('app.float.body_font_size'))
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.primary_text'))
+            .copyOption(CopyOptions.LocalDevice)
             .margin({ top: 1 })
           Column() {
             this.buildInlineText(item, $r('app.float.body_font_size'), $r('app.color.primary_text'), 24)
@@ -136,12 +138,14 @@ export struct NoteEditMarkdownBlocksView {
           Text(block.language.toLowerCase())
             .fontSize(11)
             .fontColor($r('app.color.tertiary_text'))
+            .copyOption(CopyOptions.LocalDevice)
         }
         Text(block.content)
           .fontSize($r('app.float.caption_font_size'))
           .fontColor($r('app.color.primary_text'))
           .fontFamily('monospace')
           .lineHeight(22)
+          .copyOption(CopyOptions.LocalDevice)
           .width('100%')
       }
       .width('100%')

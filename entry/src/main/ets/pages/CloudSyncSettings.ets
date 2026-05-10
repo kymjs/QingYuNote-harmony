@@ -75,19 +75,21 @@ struct CloudSyncSettings {
       await PreferencesService.getInstance().init(context)
     }
     this.guestMode = await PreferencesService.getInstance().isGuestMode()
-    const provider = await PreferencesService.getInstance().getSyncProvider()
-    this.selectedProvider = provider
     const policy = await PreferencesService.getInstance().getSyncPolicy()
-    if (provider === 'webdav') {
-      const config = await PreferencesService.getInstance().getWebDAVConfig()
-      if (config && config.provider === 'webdav') {
-        this.serverUrl = config.baseUrl
-        this.username = config.username
-        this.notesDir = config.notesDir
-        this.storedEncryptedPassword = config.encryptedPassword
+    const hasSavedCustom = await PreferencesService.getInstance().hasSavedCustomWebDAVConfig()
+    if (hasSavedCustom) {
+      this.selectedProvider = 'webdav'
+      const snap = await PreferencesService.getInstance().getSavedCustomWebDAVConfigSnapshot()
+      if (snap !== null && snap.provider === 'webdav') {
+        this.serverUrl = snap.baseUrl
+        this.username = snap.username
+        this.notesDir = snap.notesDir
+        this.storedEncryptedPassword = snap.encryptedPassword
         this.password = ''
         this.passwordTouched = false
       }
+    } else {
+      this.selectedProvider = 'qingyu_cloud'
     }
     this.autoSync = policy.autoSync
     this.syncIntervalMinutes = `${policy.syncIntervalMinutes}`
@@ -105,7 +107,17 @@ struct CloudSyncSettings {
     }
     this.qingyuSubLoading = true
     try {
-      const status = await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus()
+      // 与 Flutter `CloudSyncSettingPage` 一致：按账号拉订阅，避免本地仍为 WebDAV 时 intent=not_qingyu 导致卡片空白。
+      const previewQingyu: WebDAVConfig = {
+        baseUrl: '',
+        username: '',
+        encryptedPassword: '',
+        notesDir: '/qingyu-notes/',
+        enabled: true,
+        provider: 'qingyu_cloud'
+      }
+      const status =
+        await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus(previewQingyu)
       this.applyQingyuSubscriptionStatus(status)
     } catch (error) {
       Logger.warn('CloudSyncSettings', `refreshQingyuSubscriptionCard failed: ${this.describeError(error as Object)}`)

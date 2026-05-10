@@ -26,6 +26,7 @@ export struct NoteEditPreviewPane {
             .fontSize(22)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.primary_text'))
+            .copyOption(CopyOptions.LocalDevice)
             .width('100%')
         } else {
           if (this.showSplitTagRow) {

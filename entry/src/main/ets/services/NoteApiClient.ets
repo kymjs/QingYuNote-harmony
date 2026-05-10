@@ -104,6 +104,28 @@ export class NoteApiClient {
     return `${base}${p}`
   }
 
+  /** 与 WebDAVClient.pickHeader 对齐：读取 ArkTS HttpResponse header（大小写不敏感）。 */
+  private pickHeader(headers: Object, key: string): string {
+    const headerRecord = headers as Record<string, Object | string | number | boolean | undefined>
+    const normalizedKey = key.toLowerCase()
+    for (const headerKey of Object.keys(headerRecord)) {
+      if (headerKey.toLowerCase() !== normalizedKey) {
+        continue
+      }
+      const value = headerRecord[headerKey]
+      if (typeof value === 'string') {
+        return value
+      }
+      if (typeof value === 'number' || typeof value === 'boolean') {
+        return `${value}`
+      }
+      if (Array.isArray(value) && value.length > 0) {
+        return `${value[0]}`
+      }
+    }
+    return ''
+  }
+
   private async requestJson(method: http.RequestMethod, path: string, body?: string, bearer?: string): Promise<Object | null> {
     const req = http.createHttp()
     try {
@@ -200,6 +222,57 @@ export class NoteApiClient {
     return true
   }
 
+  /**
+   * POST /api/v1/auth/phone：手机号 + 密码换 JWT；成功返回 null，否则为服务端 error 码。
+   */
+  async loginWithPhonePassword(phone: string, password: string): Promise<string | null> {
+    const pPhone = phone.trim()
+    const pPwd = password.trim()
+    if (pPhone.length === 0 || pPwd.length === 0) {
+      return 'invalid_body'
+    }
+    const req = http.createHttp()
+    try {
+      const resp = await req.request(this.joinUrl('/api/v1/auth/phone'), {
+        method: http.RequestMethod.POST,
+        header: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8'
+        },
+        extraData: JSON.stringify({ phone: pPhone, password: pPwd }),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000
+      })
+      const httpCode = resp.responseCode
+      const text = (resp.result as string) ?? ''
+      if (httpCode >= 200 && httpCode < 300) {
+        let obj: Object
+        try {
+          obj = JSON.parse(text) as Object
+        } catch (_) {
+          return 'unknown_error'
+        }
+        const raw = obj as AuthLoginResponseBody
+        const token = raw.access_token?.trim() ?? ''
+        const expiresIn = raw.expires_in ?? 604800
+        const uid = parseAuthLoginUserId(obj)
+        if (token.length === 0 || uid.length === 0) {
+          return 'unknown_error'
+        }
+        await PreferencesService.getInstance().setNoteApiSession(token, expiresIn)
+        await PreferencesService.getInstance().setNoteApiUserId(uid)
+        return null
+      }
+      return NoteApiClient.parseErrorCode(text)
+    } catch (e) {
+      Logger.warn('NoteApiClient', `loginWithPhonePassword failed: ${JSON.stringify(e)}`)
+      return 'network_error'
+    } finally {
+      req.destroy()
+    }
+  }
+
   async fetchSubscription(): Promise<SubscriptionBody | null> {
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (tok === null || tok.length === 0) {
@@ -217,20 +290,55 @@ export class NoteApiClient {
     if (tok === null || tok.length === 0) {
       return null
     }
-    let obj: Object | null = null
+    let waitMs = 0
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (attempt > 0) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 450))
+      if (waitMs > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, waitMs))
       }
-      obj = await this.requestJson(http.RequestMethod.GET, '/api/v1/qingyu/webdav', undefined, tok)
-      if (obj !== null) {
-        break
+      const req = http.createHttp()
+      try {
+        const headers: Record<string, string> = {
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${tok}`
+        }
+        const resp = await req.request(this.joinUrl('/api/v1/qingyu/webdav'), {
+          method: http.RequestMethod.GET,
+          header: headers,
+          expectDataType: http.HttpDataType.STRING,
+          connectTimeout: 15000,
+          readTimeout: 20000
+        })
+        const code = resp.responseCode
+        const text = (resp.result as string) ?? ''
+        if (code >= 200 && code < 300 && text.trim().length > 0) {
+          try {
+            return JSON.parse(text) as QingyuWebDAVBody
+          } catch (e) {
+            Logger.warn('NoteApiClient', `fetchQingyuWebDAV JSON parse failed: ${JSON.stringify(e)}`)
+            waitMs = attempt === 0 ? 450 : 900
+            continue
+          }
+        }
+        if (code === 429) {
+          const rawRa = this.pickHeader(resp.header, 'retry-after').trim()
+          const sec = Number.parseInt(rawRa, 10)
+          const bounded =
+            Number.isFinite(sec) && sec > 0 ? Math.min(Math.max(sec, 1), 120) * 1000 : (attempt === 0 ? 2000 : 5000)
+          waitMs = bounded
+          Logger.info('NoteApiClient',
+            `GET /api/v1/qingyu/webdav rate limited (429), will retry after ${waitMs}ms (attempt ${attempt + 1}/3)`)
+          continue
+        }
+        Logger.warn('NoteApiClient', `HTTP ${code} /api/v1/qingyu/webdav body=${text.slice(0, 400)}`)
+        waitMs = attempt < 2 ? 450 : 0
+      } catch (e) {
+        Logger.warn('NoteApiClient', `fetchQingyuWebDAV request failed: ${JSON.stringify(e)}`)
+        waitMs = attempt < 2 ? 450 : 0
+      } finally {
+        req.destroy()
       }
     }
-    if (obj === null) {
-      return null
-    }
-    return obj as QingyuWebDAVBody
+    return null
   }
 
   async createOrder(planId: string): Promise<OrderBody | null> {

@@ -182,7 +182,7 @@
     },
     {
       "name": "login_options_hint",
-      "value": "使用华为账号或微信登录"
+      "value": "使用华为账号、微信或手机号登录"
     },
     {
       "name": "login_with_huawei",
@@ -191,6 +191,30 @@
     {
       "name": "login_with_wechat",
       "value": "微信登录"
+    },
+    {
+      "name": "login_with_phone",
+      "value": "手机号登录"
+    },
+    {
+      "name": "phone_password_login_title",
+      "value": "手机号登录"
+    },
+    {
+      "name": "phone_password_field_phone",
+      "value": "手机号"
+    },
+    {
+      "name": "phone_password_field_password",
+      "value": "密码"
+    },
+    {
+      "name": "phone_password_submit",
+      "value": "登录"
+    },
+    {
+      "name": "phone_password_logging_in",
+      "value": "登录中…"
     }
   ]
 }

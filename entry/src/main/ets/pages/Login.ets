@@ -273,6 +273,30 @@ struct Login {
           })
 
         Button() {
+          Text($r('app.string.login_with_phone'))
+            .fontColor($r('app.color.primary_text'))
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+        }
+          .type(ButtonType.Normal)
+          .width('100%')
+          .height(48)
+          .backgroundColor(Color.Transparent)
+          .border({
+            width: 1,
+            color: $r('app.color.card_border')
+          })
+          .borderRadius($r('app.float.pill_radius'))
+          .margin({ bottom: 12 })
+          .onClick((): void => {
+            try {
+              this.getUIContext().getRouter().pushUrl({ url: 'pages/PhonePasswordLogin' })
+            } catch (e) {
+              console.error(`Login push PhonePasswordLogin failed: ${JSON.stringify(e)}`)
+            }
+          })
+
+        Button() {
           Text($r('app.string.login_guest_mode'))
             .fontColor($r('app.color.primary_text'))
             .fontSize(17)

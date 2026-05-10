@@ -2,7 +2,7 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.Ab
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { window } from '@kit.ArkUI'
 import { PreferencesService } from '../services/PreferencesService'
-import { NoteApiClient } from '../services/NoteApiClient'
+import { buildQingyuCloudWebDavConfig } from '../services/QingyuCloudConfigHelper'
 import { CryptoService } from '../services/CryptoService'
 import { NoteRepository } from '../services/NoteRepository'
 import { SyncService } from '../services/SyncService'
@@ -93,7 +93,7 @@ export default class EntryAbility extends UIAbility {
     void this.prefetchQingyuWebDavIfNeeded()
   }
 
-  /** 应用启动即拉取轻羽 WebDAV（凭据不落盘；与同步前再次拉取配合服务端缓存/限流）。 */
+  /** 应用启动预热：与 Preferences/Sync 等处共用 QingyuCloudConfigHelper 合并并发，避免重复 GET /qingyu/webdav。 */
   private async prefetchQingyuWebDavIfNeeded(): Promise<void> {
     try {
       const provider = await PreferencesService.getInstance().getSyncProvider()
@@ -104,7 +104,7 @@ export default class EntryAbility extends UIAbility {
       if (tok === null || tok.length === 0) {
         return
       }
-      await NoteApiClient.getInstance().fetchQingyuWebDAV()
+      await buildQingyuCloudWebDavConfig()
     } catch (_) {
       // 后续同步与设置页会再次请求
     }

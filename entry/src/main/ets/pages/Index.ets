@@ -7,13 +7,10 @@ import { SyncService } from '../services/SyncService'
 import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { runAppUpdateCheckOnLaunch } from '../services/AppUpdateUi'
+import { tryAutoProvisionQingyuCloudOnHomeEntry } from '../services/QingyuCloudAutoProvision'
 import { Logger } from '../common/utils/Logger'
 import { SyncConstants } from '../common/constants/SyncConstants'
 
-const BASE_SYNC_TIMEOUT_MS = 45 * 1000
-const PER_NOTE_SYNC_TIMEOUT_MS = 350
-/** 与 Flutter `_syncTimeout` 对齐：允许一次 `syncNow` 内连续多批全量同步。 */
-const MAX_SYNC_TIMEOUT_MS = 25 * 60 * 1000
 /** 与 HomeDrawerLayer 内 DRAWER_SPAN 一致，用于全屏横向拖动手势计算行程。 */
 const DRAWER_OFFSCREEN_PAD = 20
 const DRAWER_SPAN = 248 + DRAWER_OFFSCREEN_PAD
@@ -21,6 +18,8 @@ const DRAWER_SPAN = 248 + DRAWER_OFFSCREEN_PAD
 const DRAWER_SNAP_MS = 220
 /** 搜索框输入防抖后再筛选列表，降低大库全文扫描频率。 */
 const SEARCH_DEBOUNCE_MS = 280
+/** 与 Flutter `_minHomeNotesReloadInterval`：`onPageShow` 再次拉列表的最短间隔，避免短时间内重复请求。 */
+const MIN_HOME_PAGE_SHOW_RELOAD_INTERVAL_MS = 5000
 const ALL_NOTES_TAG = '__ALL_NOTES__'
 
 @Entry
@@ -45,6 +44,8 @@ struct Index {
   /** 已保存 WebDAV，或已选择并启用轻羽云（不依赖 `/qingyu/webdav` 是否成功）时为 true，右上角不展示「去配置」图标。 */
   @State cloudSyncConfigured: boolean = false
   private hasShownOnce: boolean = false
+  /** 仅统计「非首次」onPageShow 触发的 loadNotes 完成时间；与 initializeHome 首次加载无关，避免阻断从编辑页返回后的刷新。 */
+  private lastPageShowNotesReloadAtMs: number = 0
   /** 当前水平拖动开始时抽屉进度，用于计算跟手位移。 */
   private drawerPanStartProgress: number = 0
   private searchFilterTimer: number = -1
@@ -97,12 +98,19 @@ struct Index {
 
   private async handleIndexPageShow(): Promise<void> {
     await this.ensureLoggedInOrRedirectToLogin()
+    await tryAutoProvisionQingyuCloudOnHomeEntry()
     void this.refreshCloudSyncConfiguredState()
     if (!this.hasShownOnce) {
       this.hasShownOnce = true
       return
     }
-    void this.loadNotes(false)
+    const now = Date.now()
+    if (this.lastPageShowNotesReloadAtMs > 0 &&
+      now - this.lastPageShowNotesReloadAtMs < MIN_HOME_PAGE_SHOW_RELOAD_INTERVAL_MS) {
+      return
+    }
+    await this.loadNotes(false)
+    this.lastPageShowNotesReloadAtMs = Date.now()
   }
 
   /** 退出登录后若仍停留在首页栈，则拉回登录页 */
@@ -122,6 +130,11 @@ struct Index {
   }
 
   private async initializeHome(): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+    await tryAutoProvisionQingyuCloudOnHomeEntry()
     await this.refreshCloudSyncConfiguredState()
     await this.loadNotes(this.notes.length === 0)
     /** 与版本检查并行启动同步，避免「检查更新」阻塞云同步开始时间。 */
@@ -246,32 +259,9 @@ struct Index {
     }
   }
 
-  private calculateSyncTimeoutMs(): number {
-    const noteCount = Math.max(this.notes.length, 1)
-    const computedTimeout = BASE_SYNC_TIMEOUT_MS + noteCount * PER_NOTE_SYNC_TIMEOUT_MS
-    return Math.min(computedTimeout, MAX_SYNC_TIMEOUT_MS)
-  }
-
+  /** 不对整次 syncNow 做外层超时：笔记量大时易误判；单次请求仍有超时。 */
   private async runSyncWithTimeout(): Promise<SyncResult[]> {
-    let timerId: number | undefined = undefined
-    const timeoutMs = this.calculateSyncTimeoutMs()
-    const timeoutPromise = new Promise<SyncResult[]>((_, reject) => {
-      timerId = setTimeout(() => {
-        Logger.warn('Index', `runSyncWithTimeout timeout reached: timeoutMs=${timeoutMs}, notesCount=${this.notes.length}`)
-        reject(new Error('sync timeout'))
-      }, timeoutMs)
-    })
-    try {
-      const results = await Promise.race([
-        SyncService.getInstance().syncNow(),
-        timeoutPromise
-      ])
-      return results
-    } finally {
-      if (timerId !== undefined) {
-        clearTimeout(timerId)
-      }
-    }
+    return await SyncService.getInstance().syncNow()
   }
 
   private async handleDelete(noteId: string): Promise<void> {
@@ -570,12 +560,12 @@ struct Index {
   private summarizeSyncResult(results: SyncResult[]): string | null {
     const more = SyncService.getInstance().getLastFullSyncHadMoreNotes()
     if (results.length === 0) {
-      return more ? '已同步一批笔记，请再次下拉继续' : '同步完成'
+      return more ? '已同步本批笔记，请再次下拉以继续同步剩余条目' : '同步完成'
     }
     const failedResults = results.filter((result: SyncResult) => !result.success)
     if (failedResults.length === 0) {
       if (more) {
-        return '已同步一批笔记，请再次下拉继续同步剩余条目'
+        return '已同步本批笔记，请再次下拉以继续同步剩余条目'
       }
       return '同步完成'
     }

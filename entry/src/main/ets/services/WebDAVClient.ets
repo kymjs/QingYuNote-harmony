@@ -1,6 +1,6 @@
 import http from '@ohos.net.http'
 import { util } from '@kit.ArkTS'
-import type { RemoteNoteStat, WebDAVConfig, WebDAVProvider } from '../common/model/Note'
+import type { Note, RemoteNoteStat, WebDAVConfig, WebDAVProvider } from '../common/model/Note'
 import type {
   QingyuCloudStatusActive,
   QingyuCloudStatusExpired,
@@ -67,10 +67,44 @@ interface RemoteIndexWritePayload {
 export interface RemoteIndexSnapshot {
   noteEntries: Map<string, RemoteIndexEntry>
   permanentlyDeletedNoteIds: Set<string>
+  /** 索引文件中的毫秒时间戳（与 Flutter `RemoteIndexSnapshot.updatedAt` 对齐）。 */
+  updatedAt: number
 }
 
 export class WebDAVClient {
   private static instance: WebDAVClient = new WebDAVClient()
+  private deferRemoteIndexMergeDepth: number = 0
+
+  /** 全量同步批次内调用：跳过每条上传后的索引读写，结束时配合 [flushRemoteIndexFromLocalNotes]。 */
+  beginDeferRemoteIndexMerge(): void {
+    this.deferRemoteIndexMergeDepth += 1
+  }
+
+  endDeferRemoteIndexMerge(): void {
+    if (this.deferRemoteIndexMergeDepth > 0) {
+      this.deferRemoteIndexMergeDepth -= 1
+    }
+  }
+
+  private isDeferRemoteIndexMerge(): boolean {
+    return this.deferRemoteIndexMergeDepth > 0
+  }
+
+  /** 与 Flutter `WebDavClient.canonicalRemoteIndexFingerprint` 算法一致（跨端可比）。 */
+  static canonicalRemoteIndexFingerprint(snapshot: RemoteIndexSnapshot): string {
+    const parts: string[] = []
+    parts.push(`${snapshot.updatedAt}`)
+    const perm = Array.from(snapshot.permanentlyDeletedNoteIds).filter((id: string) => id.length > 0).sort()
+    parts.push(perm.join(','))
+    const ids = Array.from(snapshot.noteEntries.keys()).filter((id: string) => id.length > 0).sort()
+    for (let i = 0; i < ids.length; i += 1) {
+      const id = ids[i]
+      const e = snapshot.noteEntries.get(id)!
+      parts.push(`${id}:${e.remoteModified}:${e.deletedTime}:${e.contentLength}`)
+    }
+    return parts.join('|')
+  }
+
   /** 与 Flutter `WebDavClient._remoteIndexFileName` 一致。 */
   private static readonly _remoteIndexFileName: string = '.qingyu-index.json'
   /** 与 Flutter `WebDavClient.imageDirName` 一致。 */
@@ -377,11 +411,13 @@ export class WebDAVClient {
     const remoteModified = TimeUtils.normalizeRemoteTimestamp(
       TimeUtils.fromHttpDate(this.pickHeader(response.header, 'last-modified')) || lastModified
     )
-    await this.addNoteToRemoteIndex(noteId, {
-      remoteModified,
-      deletedTime: indexHint?.deletedTime ?? 0,
-      contentLength: indexHint?.contentLength ?? content.length
-    })
+    if (!this.isDeferRemoteIndexMerge()) {
+      await this.addNoteToRemoteIndex(noteId, {
+        remoteModified,
+        deletedTime: indexHint?.deletedTime ?? 0,
+        contentLength: indexHint?.contentLength ?? content.length
+      })
+    }
     Logger.info('WebDAVClient',
       `uploadNote success: noteId=${noteId}, lastModifiedHeader=${this.pickHeader(response.header, 'last-modified')}`)
     return {
@@ -400,7 +436,9 @@ export class WebDAVClient {
     if (response.responseCode >= 400 && response.responseCode !== 404) {
       throw new Error(`Delete failed with status ${response.responseCode}`)
     }
-    await this.removeNoteFromRemoteIndex(noteId)
+    if (!this.isDeferRemoteIndexMerge()) {
+      await this.removeNoteFromRemoteIndex(noteId)
+    }
   }
 
   async uploadImage(fileName: string, bytes: ArrayBuffer): Promise<void> {
@@ -477,7 +515,7 @@ export class WebDAVClient {
       Logger.warn('WebDAVClient', `listRemoteNotes GET fallback exception: ${this.describeError(error as Object)}`)
     }
     try {
-      const indexSnapshot = await this.fetchRemoteIndexSnapshot()
+      const indexSnapshot = await this.fetchRemoteIndexSnapshotBestEffort()
       indexSnapshot.noteEntries.forEach((_: RemoteIndexEntry, noteId: string) => results.add(noteId))
     } catch (error) {
       Logger.warn('WebDAVClient', `listRemoteNotes index fallback exception: ${this.describeError(error as Object)}`)
@@ -486,8 +524,44 @@ export class WebDAVClient {
     return Array.from(results)
   }
 
+  /** 全量同步一批结束后调用一次（与 Flutter `flushRemoteIndexFromLocalNotes` 对齐）。 */
+  async flushRemoteIndexFromLocalNotes(notes: Note[]): Promise<void> {
+    let snapshot: RemoteIndexSnapshot
+    try {
+      snapshot = await this.fetchRemoteIndexSnapshotStrict()
+    } catch (error) {
+      Logger.warn('WebDAVClient',
+        `flushRemoteIndexFromLocalNotes skipped (GET failed): ${this.describeError(error as Object)}`)
+      return
+    }
+    for (let i = 0; i < notes.length; i += 1) {
+      const note = notes[i]
+      if (note.id.length === 0) {
+        continue
+      }
+      snapshot.noteEntries.set(note.id, {
+        remoteModified: note.lastOperationAt,
+        deletedTime: note.deletedTime,
+        contentLength: note.content.length
+      })
+    }
+    try {
+      await this.writeRemoteIndexEntries(snapshot.noteEntries, snapshot.permanentlyDeletedNoteIds)
+    } catch (error) {
+      Logger.warn('WebDAVClient',
+        `flushRemoteIndexFromLocalNotes PUT failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
   async reconcileRemoteIndex(noteIds: string[], deletedNoteIds: string[]): Promise<void> {
-    const snapshot = await this.fetchRemoteIndexSnapshot()
+    let snapshot: RemoteIndexSnapshot
+    try {
+      snapshot = await this.fetchRemoteIndexSnapshotStrict()
+    } catch (error) {
+      Logger.warn('WebDAVClient',
+        `reconcileRemoteIndex skipped (index GET failed): ${this.describeError(error as Object)}`)
+      return
+    }
     const mergedEntries = snapshot.noteEntries
     noteIds.forEach((noteId: string) => {
       if (noteId.length > 0) {
@@ -501,17 +575,22 @@ export class WebDAVClient {
         mergedEntries.delete(noteId)
       }
     })
-    await this.writeRemoteIndexEntries(mergedEntries, snapshot.permanentlyDeletedNoteIds)
+    try {
+      await this.writeRemoteIndexEntries(mergedEntries, snapshot.permanentlyDeletedNoteIds)
+    } catch (error) {
+      Logger.warn('WebDAVClient',
+        `reconcileRemoteIndex PUT failed: ${this.describeError(error as Object)}`)
+    }
   }
 
   async getRemoteIndexEntries(): Promise<Map<string, RemoteIndexEntry>> {
-    const snapshot = await this.fetchRemoteIndexSnapshot()
+    const snapshot = await this.fetchRemoteIndexSnapshotBestEffort()
     return snapshot.noteEntries
   }
 
   /** 供同步逻辑一次性读取索引（避免重复 GET）。 */
   async getRemoteIndexSnapshot(): Promise<RemoteIndexSnapshot> {
-    return await this.fetchRemoteIndexSnapshot()
+    return await this.fetchRemoteIndexSnapshotBestEffort()
   }
 
   /**
@@ -521,8 +600,11 @@ export class WebDAVClient {
     if (noteId.length === 0) {
       return
     }
+    if (this.isDeferRemoteIndexMerge()) {
+      return
+    }
     try {
-      const snapshot = await this.fetchRemoteIndexSnapshot()
+      const snapshot = await this.fetchRemoteIndexSnapshotStrict()
       snapshot.noteEntries.delete(noteId)
       snapshot.permanentlyDeletedNoteIds.add(noteId)
       await this.writeRemoteIndexEntries(snapshot.noteEntries, snapshot.permanentlyDeletedNoteIds)
@@ -681,66 +763,91 @@ export class WebDAVClient {
     return `${directoryUrl}${encodeURIComponent(WebDAVClient._remoteIndexFileName)}`
   }
 
-  private async fetchRemoteIndexSnapshot(): Promise<RemoteIndexSnapshot> {
-    const permanentDeletes = new Set<string>()
+  /** 索引 GET 失败时返回空快照（不抛），供列表合并与全量同步容错。 */
+  private async fetchRemoteIndexSnapshotBestEffort(): Promise<RemoteIndexSnapshot> {
     try {
-      const response = await this.sendRequest(await this.remoteIndexUrl(), http.RequestMethod.GET)
-      if (response.responseCode === 404) {
-        return { noteEntries: new Map<string, RemoteIndexEntry>(), permanentlyDeletedNoteIds: permanentDeletes }
-      }
-      if (response.responseCode >= 400) {
-        throw new Error(`Index download failed with status ${response.responseCode}`)
-      }
-      const rawBody = this.responseBodyToText(response.result).trim()
-      if (rawBody.length === 0) {
-        return { noteEntries: new Map<string, RemoteIndexEntry>(), permanentlyDeletedNoteIds: permanentDeletes }
-      }
-      const decoded = JSON.parse(rawBody) as Object
-      const results: Map<string, RemoteIndexEntry> = new Map()
-      if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
-        return { noteEntries: results, permanentlyDeletedNoteIds: permanentDeletes }
-      }
-      const payload = decoded as Record<string, Object | undefined>
-      const permRaw = payload[SyncConstants.remoteIndexFieldPermanentlyDeletedNoteIds]
-      if (Array.isArray(permRaw)) {
-        permRaw.forEach((item: Object) => {
-          if (typeof item === 'string' && item.length > 0) {
-            permanentDeletes.add(item)
-          }
-        })
-      }
-      const rawNoteIds = payload.noteIds
-      if (Array.isArray(rawNoteIds)) {
-        rawNoteIds.forEach((item: Object) => {
-          if (typeof item === 'string' && item.length > 0) {
-            if (!results.has(item)) {
-              results.set(item, this.defaultRemoteIndexEntry())
-            }
-          }
-        })
-      } else if (rawNoteIds !== undefined && rawNoteIds !== null && typeof rawNoteIds === 'object') {
-        const noteIdRecord = rawNoteIds as Record<string, Object | undefined>
-        Object.keys(noteIdRecord).forEach((noteId: string) => {
-          if (noteId.length === 0) {
-            return
-          }
-          const rawEntry = noteIdRecord[noteId]
-          const entryRecord = (rawEntry ?? {}) as Record<string, Object | undefined>
-          results.set(noteId, {
-            remoteModified: this.normalizeIndexNumber(entryRecord.remoteModified),
-            deletedTime: this.normalizeIndexNumber(entryRecord.deletedTime),
-            contentLength: this.normalizeIndexNumber(entryRecord.contentLength)
-          })
-        })
-      }
-      return { noteEntries: results, permanentlyDeletedNoteIds: permanentDeletes }
+      return await this.fetchRemoteIndexSnapshotStrict()
     } catch (error) {
-      if ((error as ErrorLike).message?.includes('Index download failed')) {
-        throw error as Error
+      Logger.warn('WebDAVClient',
+        `fetchRemoteIndexSnapshotBestEffort degraded: ${this.describeError(error as Object)}`)
+      return {
+        noteEntries: new Map<string, RemoteIndexEntry>(),
+        permanentlyDeletedNoteIds: new Set<string>(),
+        updatedAt: 0
       }
-      Logger.warn('WebDAVClient', `fetchRemoteIndexSnapshot parse fallback: ${this.describeError(error as Object)}`)
-      return { noteEntries: new Map<string, RemoteIndexEntry>(), permanentlyDeletedNoteIds: permanentDeletes }
     }
+  }
+
+  private async fetchRemoteIndexSnapshotStrict(): Promise<RemoteIndexSnapshot> {
+    const permanentDeletes = new Set<string>()
+    const response = await this.sendRequest(await this.remoteIndexUrl(), http.RequestMethod.GET)
+    if (response.responseCode === 404) {
+      return {
+        noteEntries: new Map<string, RemoteIndexEntry>(),
+        permanentlyDeletedNoteIds: permanentDeletes,
+        updatedAt: 0
+      }
+    }
+    if (response.responseCode >= 400) {
+      throw new Error(`Index download failed with status ${response.responseCode}`)
+    }
+    const rawBody = this.responseBodyToText(response.result).trim()
+    if (rawBody.length === 0) {
+      return {
+        noteEntries: new Map<string, RemoteIndexEntry>(),
+        permanentlyDeletedNoteIds: permanentDeletes,
+        updatedAt: 0
+      }
+    }
+    const decoded = JSON.parse(rawBody) as Object
+    const results: Map<string, RemoteIndexEntry> = new Map()
+    if (typeof decoded !== 'object' || decoded === null || Array.isArray(decoded)) {
+      return { noteEntries: results, permanentlyDeletedNoteIds: permanentDeletes, updatedAt: 0 }
+    }
+    const payload = decoded as Record<string, Object | undefined>
+    let updatedAt = 0
+    const rawUa = payload.updatedAt
+    if (typeof rawUa === 'number' && Number.isFinite(rawUa)) {
+      updatedAt = rawUa
+    } else if (typeof rawUa === 'string') {
+      const p = Number.parseInt(rawUa, 10)
+      if (Number.isFinite(p)) {
+        updatedAt = p
+      }
+    }
+    const permRaw = payload[SyncConstants.remoteIndexFieldPermanentlyDeletedNoteIds]
+    if (Array.isArray(permRaw)) {
+      permRaw.forEach((item: Object) => {
+        if (typeof item === 'string' && item.length > 0) {
+          permanentDeletes.add(item)
+        }
+      })
+    }
+    const rawNoteIds = payload.noteIds
+    if (Array.isArray(rawNoteIds)) {
+      rawNoteIds.forEach((item: Object) => {
+        if (typeof item === 'string' && item.length > 0) {
+          if (!results.has(item)) {
+            results.set(item, this.defaultRemoteIndexEntry())
+          }
+        }
+      })
+    } else if (rawNoteIds !== undefined && rawNoteIds !== null && typeof rawNoteIds === 'object') {
+      const noteIdRecord = rawNoteIds as Record<string, Object | undefined>
+      Object.keys(noteIdRecord).forEach((noteId: string) => {
+        if (noteId.length === 0) {
+          return
+        }
+        const rawEntry = noteIdRecord[noteId]
+        const entryRecord = (rawEntry ?? {}) as Record<string, Object | undefined>
+        results.set(noteId, {
+          remoteModified: this.normalizeIndexNumber(entryRecord.remoteModified),
+          deletedTime: this.normalizeIndexNumber(entryRecord.deletedTime),
+          contentLength: this.normalizeIndexNumber(entryRecord.contentLength)
+        })
+      })
+    }
+    return { noteEntries: results, permanentlyDeletedNoteIds: permanentDeletes, updatedAt }
   }
 
   private async writeRemoteIndexEntries(noteEntries: Map<string, RemoteIndexEntry>,
@@ -776,19 +883,40 @@ export class WebDAVClient {
   }
 
   private async addNoteToRemoteIndex(noteId: string, entry?: Partial<RemoteIndexEntry>): Promise<void> {
-    const snapshot = await this.fetchRemoteIndexSnapshot()
+    let snapshot: RemoteIndexSnapshot
+    try {
+      snapshot = await this.fetchRemoteIndexSnapshotStrict()
+    } catch (error) {
+      Logger.warn('WebDAVClient',
+        `addNoteToRemoteIndex skipped (index GET failed): ${this.describeError(error as Object)}`)
+      return
+    }
     const noteEntries = snapshot.noteEntries
     const previous = noteEntries.get(noteId) ?? this.defaultRemoteIndexEntry()
-    noteEntries.set(noteId, {
+    const merged: RemoteIndexEntry = {
       remoteModified: this.normalizeIndexNumber(entry?.remoteModified ?? previous.remoteModified),
       deletedTime: this.normalizeIndexNumber(entry?.deletedTime ?? previous.deletedTime),
       contentLength: this.normalizeIndexNumber(entry?.contentLength ?? previous.contentLength)
-    })
+    }
+    if (noteEntries.has(noteId) &&
+      previous.remoteModified === merged.remoteModified &&
+      previous.deletedTime === merged.deletedTime &&
+      previous.contentLength === merged.contentLength) {
+      return
+    }
+    noteEntries.set(noteId, merged)
     await this.writeRemoteIndexEntries(noteEntries, snapshot.permanentlyDeletedNoteIds)
   }
 
   private async removeNoteFromRemoteIndex(noteId: string): Promise<void> {
-    const snapshot = await this.fetchRemoteIndexSnapshot()
+    let snapshot: RemoteIndexSnapshot
+    try {
+      snapshot = await this.fetchRemoteIndexSnapshotStrict()
+    } catch (error) {
+      Logger.warn('WebDAVClient',
+        `removeNoteFromRemoteIndex skipped (index GET failed): ${this.describeError(error as Object)}`)
+      return
+    }
     const noteEntries = snapshot.noteEntries
     if (!noteEntries.delete(noteId)) {
       return

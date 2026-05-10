@@ -25,6 +25,10 @@ import {
 import { PreferencesService } from '../services/PreferencesService'
 import { Logger } from '../common/utils/Logger'
 import {
+  buildProfilePhonePasswordDialogContent,
+  type ProfilePhonePasswordDialogParams
+} from '../dialogs/ProfilePhonePasswordDialog'
+import {
   buildProfileTextEditDialogContent,
   type ProfileTextEditDialogParams
 } from '../dialogs/ProfileTextEditDialog'
@@ -308,14 +312,6 @@ struct Profile {
     return u.length > 0 ? u : '未设置'
   }
 
-  private displayPhone(): string {
-    if (this.profile === null) {
-      return '未绑定'
-    }
-    const u = (this.profile.phone ?? '').trim()
-    return u.length > 0 ? u : '未绑定'
-  }
-
   private async pickAndUploadAvatar(): Promise<void> {
     if (this.profile === null || this.avatarUploading) {
       return
@@ -472,6 +468,74 @@ struct Profile {
     } catch (e) {
       Logger.warn('Profile', `closeCustomDialog failed: ${JSON.stringify(e)}`)
     }
+  }
+
+  private closePhonePasswordDialog(content: ComponentContent<ProfilePhonePasswordDialogParams> | undefined): void {
+    if (content === undefined) {
+      return
+    }
+    try {
+      this.getUIContext().getPromptAction().closeCustomDialog(content)
+    } catch (e) {
+      Logger.warn('Profile', `closeCustomDialog phone dialog failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private openPhonePasswordEdit(): void {
+    const p = this.profile
+    if (p === null) {
+      return
+    }
+    const ui = this.getUIContext()
+    let holder: ComponentContent<ProfilePhonePasswordDialogParams> | undefined = undefined
+    const params: ProfilePhonePasswordDialogParams = {
+      initialPhone: (p.phone ?? '').trim(),
+      passwordSet: p.password_set === true,
+      onCancel: (): void => {
+        this.closePhonePasswordDialog(holder)
+      },
+      onConfirm: (phone: string, password: string): void => {
+        this.closePhonePasswordDialog(holder)
+        void this.patchPhoneAndPassword(phone, password)
+      }
+    }
+    holder = new ComponentContent(ui, wrapBuilder(buildProfilePhonePasswordDialogContent), params)
+    try {
+      ui.getPromptAction().openCustomDialog(holder, {
+        alignment: DialogAlignment.Center,
+        autoCancel: true
+      })
+    } catch (e) {
+      Logger.warn('Profile', `openPhonePasswordEdit failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private async patchPhoneAndPassword(phone: string, password: string): Promise<void> {
+    const pTrim = phone.trim()
+    const pwTrim = password.trim()
+    if (pwTrim.length === 0) {
+      this.showToast('请输入密码')
+      return
+    }
+    const passwordSet = this.profile?.password_set === true
+    if (!passwordSet && pwTrim.length < 8) {
+      this.showToast('登录密码至少 8 位')
+      return
+    }
+    const body: Record<string, Object> = {}
+    body['phone'] = pTrim
+    if (passwordSet) {
+      body['old_password'] = pwTrim
+    } else {
+      body['new_password'] = pwTrim
+    }
+    const err = await NoteApiClient.getInstance().patchProfile(body)
+    if (err !== null) {
+      this.showToast(this.mapErr(err))
+      return
+    }
+    this.showToast('已保存')
+    await this.reload()
   }
 
   private openRedeemDialog(): void {
@@ -877,12 +941,12 @@ struct Profile {
 
             Column() {
               this.kvRow(
-                '手机号',
-                this.displayPhone(),
+                '修改密码',
+                '',
                 true,
                 false,
                 (): void => {
-                  this.openTextEdit('手机号', 'phone', (this.profile!.phone ?? '').trim())
+                  this.openPhonePasswordEdit()
                 }
               )
               this.rowDivider()

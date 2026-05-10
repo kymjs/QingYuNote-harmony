@@ -1,6 +1,7 @@
 {
   "src": [
     "pages/Login",
+    "pages/PhonePasswordLogin",
     "pages/Index",
     "pages/NoteEdit",
     "pages/Settings",

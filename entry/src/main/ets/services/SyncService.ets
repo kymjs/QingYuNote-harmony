@@ -27,6 +27,7 @@ const RETRY_DELAY_MS = 600
 interface RemoteStatSnapshot {
   exists: boolean
   remoteModified: number
+  contentLength: number
 }
 
 interface ErrorLike {
@@ -300,7 +301,16 @@ export class SyncService {
           remoteModified: remoteStat.remoteModified
         }
       }
-      const remoteWhenEqual = await WebDAVClient.getInstance().downloadNote(noteId)
+      const canSkipBodyGet =
+        remoteStat.contentLength > 0 &&
+        remoteStat.contentLength === note.content.length &&
+        remoteStat.remoteModified > 0
+      let remoteWhenEqual = ''
+      if (canSkipBodyGet) {
+        remoteWhenEqual = rawContent
+      } else {
+        remoteWhenEqual = await WebDAVClient.getInstance().downloadNote(noteId)
+      }
       const purgeWhenEqual =
         await this.applyRemotePermanentDeleteIfNeeded(noteId, remoteWhenEqual, remoteStat.remoteModified)
       if (purgeWhenEqual !== null) {
@@ -400,14 +410,32 @@ export class SyncService {
       Logger.warn('SyncService',
         `performFullSync ensureNotesDirectory failed (check WebDAVClient qingyu path + HEAD/PROPFIND diagnostics): ${this.describeError(error as Object)}`)
     }
-    const localNotesInitial = await NoteRepository.getInstance().listAllNotes()
-    const tombstonesInitial = await DatabaseService.getInstance().listDeletedSyncStates()
     const remoteIndexSnapshot = await WebDAVClient.getInstance().getRemoteIndexSnapshot()
     const remoteIndexEntries = remoteIndexSnapshot.noteEntries
     const permanentDeletedIds = remoteIndexSnapshot.permanentlyDeletedNoteIds
+    const localNotesInitial = await NoteRepository.getInstance().listAllNotes()
+    const tombstonesInitial = await DatabaseService.getInstance().listDeletedSyncStates()
     const remoteNoteIds = remoteIndexEntries.size > 0
       ? Array.from(remoteIndexEntries.keys())
       : await WebDAVClient.getInstance().listRemoteNotes()
+    const pendingNoteIds = await DatabaseService.getInstance().listPendingNoteIds()
+    const fpNow = WebDAVClient.canonicalRemoteIndexFingerprint(remoteIndexSnapshot)
+    const lastFp = await PreferencesService.getInstance().getLastRemoteIndexFingerprint()
+    const lastUa = await PreferencesService.getInstance().getLastRemoteIndexUpdatedAt()
+    const allowFastPath =
+      localNotesInitial.length > 0 ||
+      tombstonesInitial.length > 0 ||
+      remoteNoteIds.length === 0
+    if (pendingNoteIds.length === 0 &&
+      allowFastPath &&
+      remoteIndexSnapshot.updatedAt > 0 &&
+      lastUa > 0 &&
+      remoteIndexSnapshot.updatedAt === lastUa &&
+      fpNow === lastFp) {
+      await PreferencesService.getInstance().setLastSyncTime(Date.now())
+      Logger.info('SyncService', 'performFullSync fast path (remote index unchanged)')
+      return []
+    }
     Logger.info('SyncService',
       `performFullSync loaded state: localNotes=${localNotesInitial.length}, deletedStates=${tombstonesInitial.length}, remoteNotes=${remoteNoteIds.length}, indexEntries=${remoteIndexEntries.size}, permanentIndex=${permanentDeletedIds.size}`)
     if (localNotesInitial.length === 0 && remoteNoteIds.length === 0 && tombstonesInitial.length === 0) {
@@ -437,20 +465,38 @@ export class SyncService {
     const unionNoteIdsRefreshed = Array.from(unionIdsRefreshed)
     const indexedSkippedResults: SyncResult[] = []
     const noteIdsNeedingSync: string[] = []
-    unionNoteIdsRefreshed.forEach((noteId: string) => {
+    for (let i = 0; i < unionNoteIdsRefreshed.length; i += 1) {
+      const noteId = unionNoteIdsRefreshed[i]
+      if (permanentDeletedIds.has(noteId)) {
+        noteIdsNeedingSync.push(noteId)
+        continue
+      }
       const indexedEntry = remoteIndexEntries.get(noteId)
-      if (this.canSkipByRemoteIndex(noteId, localNoteMap, indexedEntry)) {
-        indexedSkippedResults.push({
-          noteId,
-          success: true,
-          action: 'skip',
-          message: '索引判定未变化，跳过同步',
-          remoteModified: indexedEntry?.remoteModified ?? 0
-        })
-        return
+      const note = localNoteMap.get(noteId)
+      if (note !== undefined) {
+        if (this.canSkipByRemoteIndex(noteId, localNoteMap, indexedEntry)) {
+          indexedSkippedResults.push({
+            noteId,
+            success: true,
+            action: 'skip',
+            message: '索引判定未变化，跳过同步',
+            remoteModified: indexedEntry?.remoteModified ?? 0
+          })
+          continue
+        }
+        if (await this.canSkipByHeadFallback(noteId, note, indexedEntry)) {
+          indexedSkippedResults.push({
+            noteId,
+            success: true,
+            action: 'skip',
+            message: 'HEAD 判定未变化，跳过同步',
+            remoteModified: indexedEntry?.remoteModified ?? 0
+          })
+          continue
+        }
       }
       noteIdsNeedingSync.push(noteId)
-    })
+    }
     Logger.info('SyncService',
       `performFullSync prefilter: total=${unionNoteIdsRefreshed.length}, skippedByIndex=${indexedSkippedResults.length}, needingSync=${noteIdsNeedingSync.length}`)
     let idsToSync = await this.prioritizedUnionIds(noteIdsNeedingSync)
@@ -462,8 +508,14 @@ export class SyncService {
         `performFullSync: capped to ${cap} notes (${noteIdsNeedingSync.length} needing sync)`)
     }
     const fullSyncConcurrency = this.resolveFullSyncConcurrency(idsToSync.length)
-    const syncResults = await this.runSyncBatchWithDeferredNotifications(idsToSync, localNoteMap,
-      fullSyncConcurrency, permanentDeletedIds, remoteIndexSnapshot)
+    WebDAVClient.getInstance().beginDeferRemoteIndexMerge()
+    let syncResults: SyncResult[] = []
+    try {
+      syncResults = await this.runSyncBatchWithDeferredNotifications(idsToSync, localNoteMap,
+        fullSyncConcurrency, permanentDeletedIds, remoteIndexSnapshot)
+    } finally {
+      WebDAVClient.getInstance().endDeferRemoteIndexMerge()
+    }
     const results = [...indexPurgeResults, ...indexedSkippedResults, ...syncResults]
     const failedNoteIds = results
       .filter((result: SyncResult) => !result.success)
@@ -472,22 +524,28 @@ export class SyncService {
       Logger.warn('SyncService',
         `performFullSync retry failed notes: failedCount=${failedNoteIds.length}, retryConcurrency=1`)
       const retryLocalNotes = await NoteRepository.getInstance().listAllNotes()
-      const retryResults = await this.runSyncBatchWithDeferredNotifications(
-        failedNoteIds,
-        this.buildLocalNoteMap(retryLocalNotes),
-        1,
-        permanentDeletedIds,
-        remoteIndexSnapshot
-      )
-      this.mergeRetryResults(results, retryResults)
-      Logger.info('SyncService',
-        `performFullSync retry finish: retried=${retryResults.length}, remainingFailed=${results.filter((result: SyncResult) => !result.success).length}`)
+      WebDAVClient.getInstance().beginDeferRemoteIndexMerge()
+      try {
+        const retryResults = await this.runSyncBatchWithDeferredNotifications(
+          failedNoteIds,
+          this.buildLocalNoteMap(retryLocalNotes),
+          1,
+          permanentDeletedIds,
+          remoteIndexSnapshot
+        )
+        this.mergeRetryResults(results, retryResults)
+        Logger.info('SyncService',
+          `performFullSync retry finish: retried=${retryResults.length}, remainingFailed=${results.filter((result: SyncResult) => !result.success).length}`)
+      } finally {
+        WebDAVClient.getInstance().endDeferRemoteIndexMerge()
+      }
     }
     const refreshedLocalNotes = await NoteRepository.getInstance().listAllNotes()
-    await WebDAVClient.getInstance().reconcileRemoteIndex(
-      refreshedLocalNotes.map((note: Note) => note.id),
-      []
-    )
+    await WebDAVClient.getInstance().flushRemoteIndexFromLocalNotes(refreshedLocalNotes)
+    const afterSnap = await WebDAVClient.getInstance().getRemoteIndexSnapshot()
+    await PreferencesService.getInstance().setLastRemoteIndexFingerprint(
+      WebDAVClient.canonicalRemoteIndexFingerprint(afterSnap))
+    await PreferencesService.getInstance().setLastRemoteIndexUpdatedAt(afterSnap.updatedAt)
     await PreferencesService.getInstance().setLastSyncTime(Date.now())
     Logger.info('SyncService',
       `performFullSync finish: unionIds=${unionIdsRefreshed.size}, total=${results.length}, failed=${results.filter((result: SyncResult) => !result.success).length}`)
@@ -612,13 +670,15 @@ export class SyncService {
         `safeRemoteStat success: noteId=${noteId}, exists=${remoteStat.exists}, remoteModified=${remoteStat.remoteModified}`)
       return {
         exists: remoteStat.exists,
-        remoteModified: remoteStat.remoteModified
+        remoteModified: remoteStat.remoteModified,
+        contentLength: remoteStat.contentLength
       }
     } catch (error) {
       Logger.warn('SyncService', `safeRemoteStat fallback for ${noteId}: ${JSON.stringify(error)}`)
       return {
         exists: false,
-        remoteModified: 0
+        remoteModified: 0,
+        contentLength: 0
       }
     }
   }
@@ -737,6 +797,26 @@ export class SyncService {
       return false
     }
     return TimeUtils.compareWithTolerance(localNote.lastOperationAt, indexedEntry.remoteModified) === 0
+  }
+
+  /** 索引缺少可靠 `remoteModified` 时，用 HEAD 与本地比对（与 Flutter `_canSkipByHeadFallback` 对齐）。 */
+  private async canSkipByHeadFallback(noteId: string, note: Note,
+    indexedEntry?: RemoteIndexEntry): Promise<boolean> {
+    // 索引无该 id 时不走 HEAD 短路（首次同步）：避免串行 N 次 HEAD。
+    if (indexedEntry === undefined) {
+      return false
+    }
+    if (indexedEntry.remoteModified > 0) {
+      return false
+    }
+    const remoteStat = await this.safeRemoteStat(noteId)
+    if (!remoteStat.exists || remoteStat.remoteModified <= 0) {
+      return false
+    }
+    if (remoteStat.contentLength > 0 && remoteStat.contentLength !== note.content.length) {
+      return false
+    }
+    return TimeUtils.compareWithTolerance(note.lastOperationAt, remoteStat.remoteModified) === 0
   }
 
   private async runSyncBatchWithDeferredNotifications(noteIds: string[], localNoteMap: Map<string, Note>,

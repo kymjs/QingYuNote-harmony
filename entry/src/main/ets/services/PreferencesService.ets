@@ -141,6 +141,55 @@ export class PreferencesService {
     }
   }
 
+  /** 是否曾保存过自建 WebDAV（`saved_webdav_baseUrl` 非空）。与 Flutter 对齐。 */
+  async hasSavedCustomWebDAVConfig(): Promise<boolean> {
+    try {
+      const store = this.ensureStore()
+      const baseUrl = (store.getSync('saved_webdav_baseUrl', '') as string).trim()
+      return baseUrl.length > 0
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `hasSavedCustomWebDAVConfig failed: ${this.describeError(error as Object)}`)
+      return false
+    }
+  }
+
+  /** 读取持久化的自建 WebDAV（`saved_*`），不受当前 sync_provider 影响。 */
+  async getSavedCustomWebDAVConfigSnapshot(): Promise<WebDAVConfig | null> {
+    try {
+      const store = this.ensureStore()
+      return this.buildCustomWebDAVConfig(store)
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `getSavedCustomWebDAVConfigSnapshot failed: ${this.describeError(error as Object)}`)
+      return null
+    }
+  }
+
+  /** 首页自动选用轻羽云：已登录、非游客、无自建保存、且尚未选择轻羽云方案。 */
+  async shouldAttemptAutoQingyuCloudProvisioning(): Promise<boolean> {
+    try {
+      if (await this.isGuestMode()) {
+        return false
+      }
+      if (!(await this.isUserLoggedIn())) {
+        return false
+      }
+      if (await this.hasSavedCustomWebDAVConfig()) {
+        return false
+      }
+      const provider = await this.getSyncProvider()
+      if (provider === 'qingyu_cloud') {
+        return false
+      }
+      return true
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `shouldAttemptAutoQingyuCloudProvisioning failed: ${this.describeError(error as Object)}`)
+      return false
+    }
+  }
+
   private buildCustomWebDAVConfig(store: preferences.Preferences): WebDAVConfig | null {
     try {
       const baseUrl = store.getSync('saved_webdav_baseUrl', '') as string
@@ -260,6 +309,52 @@ export class PreferencesService {
     } catch (error) {
       Logger.warn('PreferencesService', `getLastSyncTime failed: ${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  /** 与 Flutter `prefLastRemoteIndexUpdatedAtKey` 对齐。 */
+  async setLastRemoteIndexUpdatedAt(timestamp: number): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync('last_remote_index_updated_at', timestamp)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `setLastRemoteIndexUpdatedAt failed: ${this.describeError(error as Object)}`)
+      throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  async getLastRemoteIndexUpdatedAt(): Promise<number> {
+    try {
+      return this.ensureStore().getSync('last_remote_index_updated_at', 0) as number
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `getLastRemoteIndexUpdatedAt failed: ${this.describeError(error as Object)}`)
+      return 0
+    }
+  }
+
+  /** 与 Flutter `prefLastRemoteIndexFingerprintKey` 对齐。 */
+  async setLastRemoteIndexFingerprint(value: string): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync('last_remote_index_fingerprint', value)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `setLastRemoteIndexFingerprint failed: ${this.describeError(error as Object)}`)
+      throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  async getLastRemoteIndexFingerprint(): Promise<string> {
+    try {
+      return this.ensureStore().getSync('last_remote_index_fingerprint', '') as string
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `getLastRemoteIndexFingerprint failed: ${this.describeError(error as Object)}`)
+      return ''
     }
   }
 
