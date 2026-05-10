@@ -217,7 +217,16 @@ export class NoteApiClient {
     if (tok === null || tok.length === 0) {
       return null
     }
-    const obj = await this.requestJson(http.RequestMethod.GET, '/api/v1/qingyu/webdav', undefined, tok)
+    let obj: Object | null = null
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 450))
+      }
+      obj = await this.requestJson(http.RequestMethod.GET, '/api/v1/qingyu/webdav', undefined, tok)
+      if (obj !== null) {
+        break
+      }
+    }
     if (obj === null) {
       return null
     }

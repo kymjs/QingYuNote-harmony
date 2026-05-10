@@ -11,7 +11,7 @@ interface RouterWithOptionalClear {
 @Entry
 @Component
 struct Settings {
-  /** 有 Note API 用户 id 时展示「个人信息」入口 */
+  /** 有 Note API 用户 id 时展示「个人信息」；游客且无 id 时展示「未登录」跳转登录页 */
   @State accountSubId: string = ''
   /** 与 Flutter `SettingsHubPage` 对齐：游客模式下不展示退出登录 */
   @State guestMode: boolean = false
@@ -158,7 +158,36 @@ struct Settings {
               Divider()
                 .color($r('app.color.divider'))
                 .strokeWidth(1)
-            }}
+            } else if (this.guestMode) {
+              Row() {
+                Text('未登录')
+                  .fontSize($r('app.float.body_font_size'))
+                  .fontColor($r('app.color.primary_text'))
+                  .layoutWeight(1)
+                Text('›')
+                  .fontSize(22)
+                  .fontColor($r('app.color.tertiary_text'))
+              }
+              .width('100%')
+              .padding({
+                left: 20,
+                right: 16,
+                top: 14,
+                bottom: 14
+              })
+              .justifyContent(FlexAlign.SpaceBetween)
+              .alignItems(VerticalAlign.Center)
+              .onClick(() => {
+                this.getUIContext().getRouter().pushUrl({ url: 'pages/Login' }).catch((err: Error) => {
+                  console.error(`openLoginFromSettings: ${JSON.stringify(err)}`)
+                })
+              })
+
+              Divider()
+                .color($r('app.color.divider'))
+                .strokeWidth(1)
+            }
+          }
           .width('100%')
           .backgroundColor($r('app.color.card_background'))
           .borderRadius($r('app.float.card_radius'))

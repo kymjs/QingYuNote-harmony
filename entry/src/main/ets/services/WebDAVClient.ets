@@ -130,25 +130,44 @@ export class WebDAVClient {
    * @param configOverride 若传入（如云同步设置页预览），则不再按已保存的 sync_provider 解析配置。
    */
   async fetchQingyuCloudSubscriptionStatus(configOverride?: WebDAVConfig | null): Promise<QingyuCloudSubscriptionStatus> {
-    const config =
-      configOverride !== undefined && configOverride !== null ? configOverride : await this.loadConfig()
-    if (!config || !config.enabled) {
-      const s: QingyuCloudStatusNotConfigured = { kind: 'not_configured' }
-      return s
-    }
-    if (!this.isQingyuProvider(config.provider)) {
-      const s: QingyuCloudStatusNotQingyu = { kind: 'not_qingyu' }
-      return s
+    if (configOverride !== undefined && configOverride !== null) {
+      if (!configOverride.enabled) {
+        const s: QingyuCloudStatusNotConfigured = { kind: 'not_configured' }
+        return s
+      }
+      if (!this.isQingyuProvider(configOverride.provider)) {
+        const s: QingyuCloudStatusNotQingyu = { kind: 'not_qingyu' }
+        return s
+      }
+    } else {
+      const intent = await PreferencesService.getInstance().getQingyuCloudSyncIntent()
+      if (intent === 'not_qingyu') {
+        const s: QingyuCloudStatusNotQingyu = { kind: 'not_qingyu' }
+        return s
+      }
+      if (intent === 'disabled') {
+        const s: QingyuCloudStatusNotConfigured = { kind: 'not_configured' }
+        return s
+      }
     }
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (tok === null || tok.length === 0) {
       const need: QingyuCloudStatusNeedWechatLogin = { kind: 'need_wechat_login' }
       return need
     }
-    const body = await NoteApiClient.getInstance().fetchSubscription()
+    let body: SubscriptionBody | null = null
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (attempt > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 400))
+      }
+      body = await NoteApiClient.getInstance().fetchSubscription()
+      if (body !== null) {
+        break
+      }
+    }
     if (body === null) {
-      const s: QingyuCloudStatusFetchFailed = { kind: 'fetch_failed' }
-      return s
+      const failed: QingyuCloudStatusFetchFailed = { kind: 'fetch_failed' }
+      return failed
     }
     return WebDAVClient.mapNoteSubscriptionBody(body)
   }
@@ -519,11 +538,21 @@ export class WebDAVClient {
   }
 
   private async requireConfig(): Promise<WebDAVConfig> {
-    const config = await this.loadConfig()
-    if (!config || !config.enabled) {
-      throw new Error('WebDAV is not configured')
+    let config: WebDAVConfig | null = null
+    for (let round = 0; round < 3; round += 1) {
+      if (round > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 450))
+      }
+      config = await this.loadConfig()
+      if (config !== null && config.enabled) {
+        return config
+      }
     }
-    return config
+    const intent = await PreferencesService.getInstance().getQingyuCloudSyncIntent()
+    if (intent === 'qingyu') {
+      throw new Error('Qingyu WebDAV credentials unavailable')
+    }
+    throw new Error('WebDAV is not configured')
   }
 
   private async loadConfig(): Promise<WebDAVConfig | null> {

@@ -14,12 +14,12 @@ export class QingyuRechargePlans {
 
   static priceYuan(planId: QingyuRechargePlanId): number {
     if (planId === 'monthly') {
-      return 10
+      return 6.6
     }
     if (planId === 'half_year') {
-      return 60
+      return 35
     }
-    return 100
+    return 50
   }
 
   static title(planId: QingyuRechargePlanId): string {
@@ -34,33 +34,33 @@ export class QingyuRechargePlans {
 
   static subtitle(planId: QingyuRechargePlanId): string {
     if (planId === 'monthly') {
-      return '10 元 / 月'
+      return '6.6 元 / 月'
     }
     if (planId === 'half_year') {
-      return '60 元 / 6 个月（另赠送 1 个月）'
+      return '35 元 / 6 个月（另赠送 1 个月）'
     }
-    return '100 元 / 年'
+    return '50 元 / 年'
   }
 
   /** 横向档位卡片主标题（大字一行）。 */
   static cardHeadline(planId: QingyuRechargePlanId): string {
     if (planId === 'monthly') {
-      return '¥10/月'
+      return '¥6.6/月'
     }
     if (planId === 'half_year') {
-      return '¥60/6个月'
+      return '¥35/半年'
     }
-    return '¥100/年'
+    return '¥50/年'
   }
 
   /** 横向档位卡片副标题（小字一行）。 */
   static cardTagline(planId: QingyuRechargePlanId): string {
     if (planId === 'monthly') {
-      return '每月 ¥10 · 约 ¥0.33/天'
+      return '体验试用 · 约 ¥0.22/天'
     }
     if (planId === 'half_year') {
-      return '额外加赠 1 个月 · 约 ¥8.6/月'
+      return '额外赠 1 个月 · 约 ¥5/月'
     }
-    return '约 ¥8.3/月 · 年度优选'
+    return '年度优选 · 约 ¥4.1/月'
   }
 }

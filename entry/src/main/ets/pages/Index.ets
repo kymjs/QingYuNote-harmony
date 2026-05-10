@@ -10,9 +10,10 @@ import { runAppUpdateCheckOnLaunch } from '../services/AppUpdateUi'
 import { Logger } from '../common/utils/Logger'
 import { SyncConstants } from '../common/constants/SyncConstants'
 
-const BASE_SYNC_TIMEOUT_MS = 10 * 1000
+const BASE_SYNC_TIMEOUT_MS = 45 * 1000
 const PER_NOTE_SYNC_TIMEOUT_MS = 350
-const MAX_SYNC_TIMEOUT_MS = 3 * 60 * 1000
+/** 与 Flutter `_syncTimeout` 对齐：允许一次 `syncNow` 内连续多批全量同步。 */
+const MAX_SYNC_TIMEOUT_MS = 25 * 60 * 1000
 /** 与 HomeDrawerLayer 内 DRAWER_SPAN 一致，用于全屏横向拖动手势计算行程。 */
 const DRAWER_OFFSCREEN_PAD = 20
 const DRAWER_SPAN = 248 + DRAWER_OFFSCREEN_PAD
@@ -41,7 +42,7 @@ struct Index {
   /** 选标签或跳转前递增，子组件 @Watch 内吸附关闭。 */
   @State drawerCloseNonce: number = 0
   @State pageWidth: number = 360
-  /** 云同步已保存有效配置时为 true，此时右上角不展示「去配置」图标。 */
+  /** 已保存 WebDAV，或已选择并启用轻羽云（不依赖 `/qingyu/webdav` 是否成功）时为 true，右上角不展示「去配置」图标。 */
   @State cloudSyncConfigured: boolean = false
   private hasShownOnce: boolean = false
   /** 当前水平拖动开始时抽屉进度，用于计算跟手位移。 */
@@ -123,7 +124,12 @@ struct Index {
   private async initializeHome(): Promise<void> {
     await this.refreshCloudSyncConfiguredState()
     await this.loadNotes(this.notes.length === 0)
+    /** 与版本检查并行启动同步，避免「检查更新」阻塞云同步开始时间。 */
+    void this.startStartupSyncIfNeeded()
     await runAppUpdateCheckOnLaunch(this.getUIContext())
+  }
+
+  private async startStartupSyncIfNeeded(): Promise<void> {
     if (await this.shouldRunStartupSync()) {
       void this.maybeSyncAfterInitialLoad()
     }
@@ -165,7 +171,7 @@ struct Index {
       try {
         await this.refreshNotesIfChanged(notesVersion)
       } finally {
-        this.syncing = false
+        this.releaseSyncProgressUi()
       }
     }
   }
@@ -177,7 +183,10 @@ struct Index {
         await PreferencesService.getInstance().init(context)
       }
       const config = await PreferencesService.getInstance().getWebDAVConfig()
-      this.cloudSyncConfigured = config !== null && config.enabled
+      const intent = await PreferencesService.getInstance().getQingyuCloudSyncIntent()
+      const webDavReady = config !== null && config.enabled
+      const qingyuChosen = intent === 'qingyu'
+      this.cloudSyncConfigured = webDavReady || qingyuChosen
     } catch (_) {
       this.cloudSyncConfigured = false
     }
@@ -213,13 +222,20 @@ struct Index {
       console.error(JSON.stringify(error))
       this.showUserMessage(this.formatActionError('同步', error))
     } finally {
-      this.syncing = false
+      this.releaseSyncProgressUi()
     }
+  }
+
+  /** 结束任意来源的全量同步：收起顶部下拉刷新指示并解除「同步中」状态。 */
+  private releaseSyncProgressUi(): void {
+    this.syncing = false
+    this.refreshing = false
   }
 
   private async handlePullToRefresh(): Promise<void> {
     if (this.syncing) {
-      this.refreshing = false
+      /** 后台已在同步：不重复拉列表/请求同步，仅保持下拉刷新动画表示「仍在同步」。动画在 `releaseSyncProgressUi` 时收起。 */
+      this.refreshing = true
       return
     }
     try {
@@ -535,6 +551,9 @@ struct Index {
     if (normalizedMessage.includes('authentication')) {
       return `${actionLabel}失败：账号或密码可能已失效，请检查同步设置`
     }
+    if (normalizedMessage.includes('qingyu webdav credentials unavailable')) {
+      return `${actionLabel}失败：暂时无法连接轻羽云存储，请稍后重试或检查网络`
+    }
     if (normalizedMessage.includes('not configured')) {
       return `${actionLabel}失败：请先完成 WebDAV 配置`
     }
@@ -549,11 +568,15 @@ struct Index {
   }
 
   private summarizeSyncResult(results: SyncResult[]): string | null {
+    const more = SyncService.getInstance().getLastFullSyncHadMoreNotes()
     if (results.length === 0) {
-      return '同步完成'
+      return more ? '已同步一批笔记，请再次下拉继续' : '同步完成'
     }
     const failedResults = results.filter((result: SyncResult) => !result.success)
     if (failedResults.length === 0) {
+      if (more) {
+        return '已同步一批笔记，请再次下拉继续同步剩余条目'
+      }
       return '同步完成'
     }
     if (failedResults.length === 1 && failedResults[0].message.trim().length > 0) {

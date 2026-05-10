@@ -105,19 +105,14 @@ struct CloudSyncSettings {
     }
     this.qingyuSubLoading = true
     try {
-      const preview = await PreferencesService.getInstance().getQingyuCloudConfigPreview()
-      if (preview === null || !preview.enabled) {
-        this.applyQingyuSubscriptionStatus({ kind: 'not_configured' })
-        return
-      }
-      const status = await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus(preview)
+      const status = await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus()
       this.applyQingyuSubscriptionStatus(status)
     } catch (error) {
       Logger.warn('CloudSyncSettings', `refreshQingyuSubscriptionCard failed: ${this.describeError(error as Object)}`)
-      this.qingyuSubHint = '暂未开通轻羽云服务'
+      this.qingyuSubHint = '暂时无法获取云服务状态'
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
-      this.qingyuSubButtonLabel = '前往开通'
+      this.qingyuSubButtonLabel = '立即续费'
     } finally {
       this.qingyuSubLoading = false
     }
@@ -164,10 +159,10 @@ struct CloudSyncSettings {
       return
     }
     if (status.kind === 'fetch_failed') {
-      this.qingyuSubHint = '暂未开通轻羽云服务'
+      this.qingyuSubHint = '暂时无法获取云服务状态'
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
-      this.qingyuSubButtonLabel = '前往开通'
+      this.qingyuSubButtonLabel = '立即续费'
       return
     }
     if (status.kind === 'malformed') {
@@ -235,14 +230,15 @@ struct CloudSyncSettings {
     }
     const cfg = await buildQingyuCloudWebDavConfig()
     if (cfg === null) {
-      Logger.info('CloudSyncSettings', 'buildQingyuPayload: no resolved qingyu config (need WeChat + Note API)')
+      Logger.warn('CloudSyncSettings',
+        'buildQingyuPayload: GET /qingyu/webdav failed or timed out — still persist intent to use 轻羽云 (enabled=true)')
       return {
         config: {
           baseUrl: '',
           username: '',
           encryptedPassword: '',
           notesDir: this.notesDir.length > 0 ? this.notesDir : '/qingyu-notes/',
-          enabled: false,
+          enabled: true,
           provider: 'qingyu_cloud'
         },
         policy,
@@ -288,8 +284,10 @@ struct CloudSyncSettings {
       await PreferencesService.getInstance().saveSyncPolicy(payload.policy)
       await PreferencesService.getInstance().saveSyncProvider(this.selectedProvider)
       if (payload.config.provider === 'qingyu_cloud' && !payload.config.enabled) {
-        Logger.warn('CloudSyncSettings', 'handleSave skip: no Huaweicloud/WeChat identity for Qingyu folder')
-        this.showUserMessage('请先使用华为账号或微信登录后再保存轻羽云同步')
+        Logger.warn('CloudSyncSettings', 'handleSave: qingyu_cloud with enabled=false (user turned off sync)')
+        this.showUserMessage('轻羽云同步已关闭')
+        await PreferencesService.getInstance().saveWebDAVConfig(payload.config)
+        await PreferencesService.getInstance().setAuthInvalid(false)
         return payload
       }
       await PreferencesService.getInstance().saveWebDAVConfig(payload.config)
@@ -349,7 +347,7 @@ struct CloudSyncSettings {
       const payload = await this.handleSave()
       if (!payload.config.enabled) {
         if (this.selectedProvider === 'qingyu_cloud') {
-          this.showUserMessage('请先使用华为账号或微信登录后再测试连接')
+          this.showUserMessage('轻羽云同步未开启或暂时无法获取连接信息，请稍后重试')
         } else {
           this.showUserMessage('请先输入完整的 WebDAV 信息后再测试连接')
         }

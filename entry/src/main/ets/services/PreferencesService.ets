@@ -90,6 +90,28 @@ export class PreferencesService {
     }
   }
 
+  /**
+   * 仅读 preferences，不请求 Note API。
+   * 用于订阅状态展示；避免 `getWebDAVConfig` 因 `/qingyu/webdav` 失败为 null 时被误判为未开通轻羽云。
+   */
+  async getQingyuCloudSyncIntent(): Promise<'not_qingyu' | 'disabled' | 'qingyu'> {
+    try {
+      const store = this.ensureStore()
+      const provider = store.getSync('sync_provider', 'webdav') as WebDAVProvider
+      const enabled = store.getSync('webdav_enabled', true) as boolean
+      if (provider !== 'qingyu_cloud') {
+        return 'not_qingyu'
+      }
+      if (!enabled) {
+        return 'disabled'
+      }
+      return 'qingyu'
+    } catch (error) {
+      Logger.warn('PreferencesService', `getQingyuCloudSyncIntent failed: ${this.describeError(error as Object)}`)
+      return 'not_qingyu'
+    }
+  }
+
   async getWebDAVConfig(): Promise<WebDAVConfig | null> {
     try {
       const store = this.ensureStore()

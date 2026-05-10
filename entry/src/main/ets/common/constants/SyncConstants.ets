@@ -10,4 +10,8 @@ export class SyncConstants {
   static readonly remoteIndexFieldPermanentlyDeletedNoteIds: string = 'permanentlyDeletedNoteIds'
   /** 解析失效日期时，年份 ≥ 此值视为终身 VIP（与 Flutter `qingyuLifetimeMinYear` 一致）。 */
   static readonly qingyuLifetimeMinYear: number = 2099
+  /** 单次全量同步最多处理条目数，与 Flutter `maxNotesPerFullSyncPass` 对齐。 */
+  static readonly maxNotesPerFullSyncPass: number = 120
+  /** 一次 `syncNow` 后台最多连续批次轮数，与 Flutter `maxFullSyncPassesPerUserAction` 对齐。 */
+  static readonly maxFullSyncPassesPerUserAction: number = 64
 }

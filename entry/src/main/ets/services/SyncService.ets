@@ -3,7 +3,7 @@ import { DatabaseService } from './DatabaseService'
 import { NoteRepository } from './NoteRepository'
 import { PreferencesService } from './PreferencesService'
 import { WebDAVClient } from './WebDAVClient'
-import type { RemoteIndexEntry } from './WebDAVClient'
+import type { RemoteIndexEntry, RemoteIndexSnapshot } from './WebDAVClient'
 import { FileService } from './FileService'
 import { TimeUtils } from '../common/utils/TimeUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
@@ -15,6 +15,10 @@ const TOMBSTONE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const FULL_SYNC_CONCURRENCY = 3
 const MEDIUM_SYNC_CONCURRENCY = 2
 const LOW_SYNC_CONCURRENCY = 1
+/** 索引中「待彻底删除」条目的并发度，纯本地+少量 DELETE，可略高于单条同步。 */
+const INDEX_PURGE_CONCURRENCY = 4
+/** 同一笔记内多图与 WebDAV 的并发上限，避免过多 HTTP 连接（与全量笔记并发叠加时仍可控）。 */
+const IMAGE_WEBDAV_CONCURRENCY = 4
 const MEDIUM_SYNC_NOTE_COUNT = 80
 const LARGE_SYNC_NOTE_COUNT = 200
 const MAX_RETRYABLE_SYNC_ATTEMPTS = 3
@@ -31,6 +35,13 @@ interface ErrorLike {
   name?: string
 }
 
+/** 单条笔记内多图传输的工作单元（并行时保留 ref 便于日志）。 */
+interface ImageRefWorkItem {
+  ref: string
+  fileName: string
+  localPath: string
+}
+
 /** eventHub 第二参需为显式类型，不可使用无类型对象字面量 `{}` */
 class QingyuSyncBlockedEventPayload {
 }
@@ -43,9 +54,15 @@ export class SyncService {
   private currentSyncPromise?: Promise<SyncResult[]>
   private syncRunning: boolean = false
   private lastQingyuBlockNotifyMs: number = 0
+  /** 本轮全量同步是否因条目上限而截断（与 Flutter 对齐）。 */
+  private lastFullSyncHadMoreNotesFlag: boolean = false
 
   static getInstance(): SyncService {
     return SyncService.instance
+  }
+
+  getLastFullSyncHadMoreNotes(): boolean {
+    return this.lastFullSyncHadMoreNotesFlag
   }
 
   async init(): Promise<void> {
@@ -105,7 +122,7 @@ export class SyncService {
       return await this.currentSyncPromise
     }
     Logger.info('SyncService', 'syncNow start')
-    this.currentSyncPromise = this.performFullSync()
+    this.currentSyncPromise = this.drainFullSyncBatches()
     this.syncRunning = true
     try {
       const results = await this.currentSyncPromise
@@ -119,7 +136,32 @@ export class SyncService {
     }
   }
 
-  async syncNote(noteId: string): Promise<SyncResult> {
+  /**
+   * 连续执行多轮全量同步批次，直至无剩余或达到 `SyncConstants.maxFullSyncPassesPerUserAction`。
+   */
+  private async drainFullSyncBatches(): Promise<SyncResult[]> {
+    const merged: SyncResult[] = []
+    const maxPasses = SyncConstants.maxFullSyncPassesPerUserAction
+    for (let pass = 0; pass < maxPasses; pass += 1) {
+      const batch = await this.performFullSync()
+      merged.push(...batch)
+      if (!this.lastFullSyncHadMoreNotesFlag) {
+        break
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 80))
+    }
+    if (this.lastFullSyncHadMoreNotesFlag) {
+      Logger.warn('SyncService',
+        `drainFullSyncBatches: stopped after ${maxPasses} passes with remaining work`)
+    }
+    return merged
+  }
+
+  /**
+   * @param reuseRemoteIndexSnapshot 全量同步批次内传入已在 `performFullSync` 拉取的索引，
+   *   避免每条笔记重复 GET `.qingyu-index.json`（首页同步主要耗时来源之一）。
+   */
+  async syncNote(noteId: string, reuseRemoteIndexSnapshot?: RemoteIndexSnapshot): Promise<SyncResult> {
     await this.init()
     if (!(await this.isQingyuSubscriptionSyncAllowed())) {
       this.notifyQingyuSyncBlockedThrottled()
@@ -144,8 +186,11 @@ export class SyncService {
     this.noteLocks.add(noteId)
     try {
       Logger.info('SyncService', `syncNote start: noteId=${noteId}`)
-      const indexEarly = await WebDAVClient.getInstance().getRemoteIndexSnapshot()
-      if (indexEarly.permanentlyDeletedNoteIds.has(noteId)) {
+      const permanentIds =
+        reuseRemoteIndexSnapshot !== undefined
+          ? reuseRemoteIndexSnapshot.permanentlyDeletedNoteIds
+          : (await WebDAVClient.getInstance().getRemoteIndexSnapshot()).permanentlyDeletedNoteIds
+      if (permanentIds.has(noteId)) {
         return await this.applyPermanentDeleteListedInIndex(noteId)
       }
       const syncState = await DatabaseService.getInstance().getSyncState(noteId)
@@ -305,7 +350,8 @@ export class SyncService {
       pendingNoteIds,
       this.buildLocalNoteMap(localNotes),
       FULL_SYNC_CONCURRENCY,
-      permanentSnapshot.permanentlyDeletedNoteIds
+      permanentSnapshot.permanentlyDeletedNoteIds,
+      permanentSnapshot
     )
   }
 
@@ -325,8 +371,25 @@ export class SyncService {
     await DatabaseService.getInstance().purgeDeletedBefore(Date.now() - TOMBSTONE_RETENTION_MS)
   }
 
+  private async prioritizedUnionIds(unionIds: string[]): Promise<string[]> {
+    const set = new Set(unionIds)
+    const pending = await DatabaseService.getInstance().listPendingNoteIds()
+    const out: string[] = []
+    const used = new Set<string>()
+    for (const id of pending) {
+      if (set.has(id)) {
+        out.push(id)
+        used.add(id)
+      }
+    }
+    const rest = unionIds.filter((id) => !used.has(id)).sort()
+    out.push(...rest)
+    return out
+  }
+
   private async performFullSync(): Promise<SyncResult[]> {
     Logger.info('SyncService', 'performFullSync start')
+    this.lastFullSyncHadMoreNotesFlag = false
     if (!(await this.isQingyuSubscriptionSyncAllowed())) {
       this.notifyQingyuSyncBlockedThrottled()
       return []
@@ -358,13 +421,12 @@ export class SyncService {
     remoteNoteIds.forEach((noteId: string) => unionIds.add(noteId))
 
     const unionNoteIds = Array.from(unionIds)
-    const indexPurgeResults: SyncResult[] = []
-    for (const pid of unionNoteIds) {
-      if (!permanentDeletedIds.has(pid)) {
-        continue
-      }
-      indexPurgeResults.push(await this.applyPermanentDeleteListedInIndex(pid))
-    }
+    const purgeCandidateIds = unionNoteIds.filter((pid: string) => permanentDeletedIds.has(pid))
+    const indexPurgeResults =
+      purgeCandidateIds.length === 0
+        ? []
+        : await this.runParallelNoteTasks(purgeCandidateIds, INDEX_PURGE_CONCURRENCY,
+          (pid: string) => this.applyPermanentDeleteListedInIndex(pid))
     const localNotes = await NoteRepository.getInstance().listAllNotes()
     const tombstones = await DatabaseService.getInstance().listDeletedSyncStates()
     const localNoteMap = this.buildLocalNoteMap(localNotes)
@@ -391,9 +453,17 @@ export class SyncService {
     })
     Logger.info('SyncService',
       `performFullSync prefilter: total=${unionNoteIdsRefreshed.length}, skippedByIndex=${indexedSkippedResults.length}, needingSync=${noteIdsNeedingSync.length}`)
-    const fullSyncConcurrency = this.resolveFullSyncConcurrency(unionNoteIdsRefreshed.length)
-    const syncResults = await this.runSyncBatchWithDeferredNotifications(noteIdsNeedingSync, localNoteMap,
-      fullSyncConcurrency, permanentDeletedIds)
+    let idsToSync = await this.prioritizedUnionIds(noteIdsNeedingSync)
+    const cap = SyncConstants.maxNotesPerFullSyncPass
+    if (idsToSync.length > cap) {
+      idsToSync = idsToSync.slice(0, cap)
+      this.lastFullSyncHadMoreNotesFlag = true
+      Logger.info('SyncService',
+        `performFullSync: capped to ${cap} notes (${noteIdsNeedingSync.length} needing sync)`)
+    }
+    const fullSyncConcurrency = this.resolveFullSyncConcurrency(idsToSync.length)
+    const syncResults = await this.runSyncBatchWithDeferredNotifications(idsToSync, localNoteMap,
+      fullSyncConcurrency, permanentDeletedIds, remoteIndexSnapshot)
     const results = [...indexPurgeResults, ...indexedSkippedResults, ...syncResults]
     const failedNoteIds = results
       .filter((result: SyncResult) => !result.success)
@@ -406,7 +476,8 @@ export class SyncService {
         failedNoteIds,
         this.buildLocalNoteMap(retryLocalNotes),
         1,
-        permanentDeletedIds
+        permanentDeletedIds,
+        remoteIndexSnapshot
       )
       this.mergeRetryResults(results, retryResults)
       Logger.info('SyncService',
@@ -424,8 +495,8 @@ export class SyncService {
   }
 
   private async isQingyuSubscriptionSyncAllowed(): Promise<boolean> {
-    const cfg = await PreferencesService.getInstance().getWebDAVConfig()
-    if (cfg === null || cfg.provider !== 'qingyu_cloud' || !cfg.enabled) {
+    const intent = await PreferencesService.getInstance().getQingyuCloudSyncIntent()
+    if (intent !== 'qingyu') {
       return true
     }
     const st = await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus()
@@ -558,8 +629,57 @@ export class SyncService {
     return noteMap
   }
 
+  /** 无顺序要求的并行任务（如索引 purge），与 `runSyncBatch` 同款 worker 模型。 */
+  private async runParallelNoteTasks<T>(noteIds: string[], concurrency: number,
+    task: (noteId: string) => Promise<T>): Promise<T[]> {
+    if (noteIds.length === 0) {
+      return []
+    }
+    const results: Array<T | null> = new Array(noteIds.length).fill(null)
+    let nextIndex: number = 0
+    const workerCount = Math.min(concurrency, noteIds.length)
+    const workers: Promise<void>[] = []
+    for (let workerIndex = 0; workerIndex < workerCount; workerIndex += 1) {
+      workers.push((async () => {
+        while (nextIndex < noteIds.length) {
+          const currentIndex = nextIndex
+          nextIndex += 1
+          results[currentIndex] = await task(noteIds[currentIndex])
+        }
+      })())
+    }
+    await Promise.all(workers)
+    const out: T[] = []
+    for (const item of results) {
+      if (item !== null) {
+        out.push(item as T)
+      }
+    }
+    return out
+  }
+
+  /** 固定并发上限的池化执行（用于笔记内多图等小文件批量 WebDAV）。 */
+  private async runPoolLimited<I>(items: I[], concurrency: number, worker: (item: I) => Promise<void>): Promise<void> {
+    if (items.length === 0) {
+      return
+    }
+    let nextIndex: number = 0
+    const workerCount = Math.min(concurrency, items.length)
+    const workers: Promise<void>[] = []
+    for (let workerIndex = 0; workerIndex < workerCount; workerIndex += 1) {
+      workers.push((async () => {
+        while (nextIndex < items.length) {
+          const currentIndex = nextIndex
+          nextIndex += 1
+          await worker(items[currentIndex])
+        }
+      })())
+    }
+    await Promise.all(workers)
+  }
+
   private async runSyncBatch(noteIds: string[], localNoteMap: Map<string, Note>, concurrency: number,
-    permanentDeletedIds: Set<string>): Promise<SyncResult[]> {
+    permanentDeletedIds: Set<string>, reuseRemoteIndexSnapshot?: RemoteIndexSnapshot): Promise<SyncResult[]> {
     if (noteIds.length === 0) {
       return []
     }
@@ -573,7 +693,8 @@ export class SyncService {
           const currentIndex = nextIndex
           nextIndex += 1
           results[currentIndex] =
-            await this.syncNoteByIdWithRetry(noteIds[currentIndex], localNoteMap, permanentDeletedIds)
+            await this.syncNoteByIdWithRetry(noteIds[currentIndex], localNoteMap, permanentDeletedIds,
+              reuseRemoteIndexSnapshot)
         }
       })())
     }
@@ -619,17 +740,19 @@ export class SyncService {
   }
 
   private async runSyncBatchWithDeferredNotifications(noteIds: string[], localNoteMap: Map<string, Note>,
-    concurrency: number, permanentDeletedIds: Set<string>): Promise<SyncResult[]> {
+    concurrency: number, permanentDeletedIds: Set<string>,
+    reuseRemoteIndexSnapshot?: RemoteIndexSnapshot): Promise<SyncResult[]> {
     NoteRepository.getInstance().beginBulkNotification()
     try {
-      return await this.runSyncBatch(noteIds, localNoteMap, concurrency, permanentDeletedIds)
+      return await this.runSyncBatch(noteIds, localNoteMap, concurrency, permanentDeletedIds,
+        reuseRemoteIndexSnapshot)
     } finally {
       NoteRepository.getInstance().endBulkNotification()
     }
   }
 
   private async syncNoteById(noteId: string, localNoteMap: Map<string, Note>,
-    permanentDeletedIds: Set<string>): Promise<SyncResult | null> {
+    permanentDeletedIds: Set<string>, reuseRemoteIndexSnapshot?: RemoteIndexSnapshot): Promise<SyncResult | null> {
     if (permanentDeletedIds.has(noteId)) {
       return await this.applyPermanentDeleteListedInIndex(noteId)
     }
@@ -637,15 +760,16 @@ export class SyncService {
     if (!localNoteMap.has(noteId) && !syncState?.deleted) {
       return await this.syncRemoteOnlyNote(noteId)
     }
-    return await this.syncNote(noteId)
+    return await this.syncNote(noteId, reuseRemoteIndexSnapshot)
   }
 
   private async syncNoteByIdWithRetry(noteId: string, localNoteMap: Map<string, Note>,
-    permanentDeletedIds: Set<string>): Promise<SyncResult | null> {
+    permanentDeletedIds: Set<string>, reuseRemoteIndexSnapshot?: RemoteIndexSnapshot): Promise<SyncResult | null> {
     let latestResult: SyncResult | null = null
     for (let attempt = 1; attempt <= MAX_RETRYABLE_SYNC_ATTEMPTS; attempt += 1) {
       try {
-        latestResult = await this.syncNoteById(noteId, localNoteMap, permanentDeletedIds)
+        latestResult = await this.syncNoteById(noteId, localNoteMap, permanentDeletedIds,
+          reuseRemoteIndexSnapshot)
         if (!latestResult || latestResult.success || !this.isRetryableSyncMessage(latestResult.message)
           || attempt >= MAX_RETRYABLE_SYNC_ATTEMPTS) {
           return latestResult
@@ -794,22 +918,29 @@ export class SyncService {
       return
     }
     const baseDir = ctx.filesDir
+    const workItems: ImageRefWorkItem[] = []
     for (const ref of imageRefs) {
-      try {
-        const fileName = ref.split('/').pop() ?? ''
-        if (fileName.length === 0) {
-          continue
-        }
-        const localPath = `${baseDir}/qingyu-note-image/${fileName}`
-        if (!FileService.fileExists(localPath)) {
-          continue
-        }
-        const bytes = FileService.readFileAsArrayBuffer(localPath)
-        await WebDAVClient.getInstance().uploadImage(fileName, bytes)
-      } catch (error) {
-        Logger.warn('SyncService', `syncImagesForNote failed for ${ref}: ${this.describeError(error as Object)}`)
+      const fileName = ref.split('/').pop() ?? ''
+      if (fileName.length === 0) {
+        continue
       }
+      const localPath = `${baseDir}/qingyu-note-image/${fileName}`
+      if (!FileService.fileExists(localPath)) {
+        continue
+      }
+      workItems.push({ ref, fileName, localPath })
     }
+    if (workItems.length === 0) {
+      return
+    }
+    await this.runPoolLimited(workItems, IMAGE_WEBDAV_CONCURRENCY, async (item: ImageRefWorkItem) => {
+      try {
+        const bytes = FileService.readFileAsArrayBuffer(item.localPath)
+        await WebDAVClient.getInstance().uploadImage(item.fileName, bytes)
+      } catch (error) {
+        Logger.warn('SyncService', `syncImagesForNote failed for ${item.ref}: ${this.describeError(error as Object)}`)
+      }
+    })
   }
 
   private async downloadImagesForNote(noteId: string, content: string): Promise<void> {
@@ -822,22 +953,30 @@ export class SyncService {
       return
     }
     const baseDir = ctx.filesDir
+    const workItems: ImageRefWorkItem[] = []
     for (const ref of imageRefs) {
-      try {
-        const fileName = ref.split('/').pop() ?? ''
-        if (fileName.length === 0) {
-          continue
-        }
-        const localPath = `${baseDir}/qingyu-note-image/${fileName}`
-        if (FileService.fileExists(localPath)) {
-          continue
-        }
-        const bytes = await WebDAVClient.getInstance().downloadImage(fileName)
-        FileService.writeFile(localPath, bytes)
-      } catch (error) {
-        Logger.warn('SyncService', `downloadImagesForNote failed for ${ref}: ${this.describeError(error as Object)}`)
+      const fileName = ref.split('/').pop() ?? ''
+      if (fileName.length === 0) {
+        continue
       }
+      const localPath = `${baseDir}/qingyu-note-image/${fileName}`
+      if (FileService.fileExists(localPath)) {
+        continue
+      }
+      workItems.push({ ref, fileName, localPath })
     }
+    if (workItems.length === 0) {
+      return
+    }
+    await this.runPoolLimited(workItems, IMAGE_WEBDAV_CONCURRENCY, async (item: ImageRefWorkItem) => {
+      try {
+        const bytes = await WebDAVClient.getInstance().downloadImage(item.fileName)
+        FileService.writeFile(item.localPath, bytes)
+      } catch (error) {
+        Logger.warn('SyncService',
+          `downloadImagesForNote failed for ${item.ref}: ${this.describeError(error as Object)}`)
+      }
+    })
   }
 
   private async deleteImagesForNote(content: string): Promise<void> {
@@ -850,20 +989,27 @@ export class SyncService {
       return
     }
     const baseDir = ctx.filesDir
+    const workItems: ImageRefWorkItem[] = []
     for (const ref of imageRefs) {
-      try {
-        const fileName = ref.split('/').pop() ?? ''
-        if (fileName.length === 0) {
-          continue
-        }
-        const localPath = `${baseDir}/qingyu-note-image/${fileName}`
-        if (FileService.fileExists(localPath)) {
-          FileService.deleteFile(localPath)
-        }
-        await WebDAVClient.getInstance().deleteImage(fileName)
-      } catch (error) {
-        Logger.warn('SyncService', `deleteImagesForNote failed for ${ref}: ${this.describeError(error as Object)}`)
+      const fileName = ref.split('/').pop() ?? ''
+      if (fileName.length === 0) {
+        continue
       }
+      const localPath = `${baseDir}/qingyu-note-image/${fileName}`
+      workItems.push({ ref, fileName, localPath })
     }
+    if (workItems.length === 0) {
+      return
+    }
+    await this.runPoolLimited(workItems, IMAGE_WEBDAV_CONCURRENCY, async (item: ImageRefWorkItem) => {
+      try {
+        if (FileService.fileExists(item.localPath)) {
+          FileService.deleteFile(item.localPath)
+        }
+        await WebDAVClient.getInstance().deleteImage(item.fileName)
+      } catch (error) {
+        Logger.warn('SyncService', `deleteImagesForNote failed for ${item.ref}: ${this.describeError(error as Object)}`)
+      }
+    })
   }
 }

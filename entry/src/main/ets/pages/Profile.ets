@@ -129,11 +129,11 @@ struct Profile {
 
   private membershipTitle(p: ProfileBody): string {
     if (p.membership_is_lifetime === true) {
-      return '尊贵会员'
+      return '轻羽云尊贵会员'
     }
     const st = (p.membership_level ?? '').trim()
     if (st === 'active' || st === 'lifetime') {
-      return '会员'
+      return '轻羽云会员'
     }
     if (st === 'expired') {
       return '会员（已过期）'
