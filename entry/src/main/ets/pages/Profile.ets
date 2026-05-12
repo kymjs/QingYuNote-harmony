@@ -3,7 +3,6 @@ import { ComponentContent } from '@kit.ArkUI'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import fs from '@ohos.file.fs'
 import {
-  PROFILE_ACCOUNT_BIND_SUPPORTED_APPLE,
   PROFILE_ACCOUNT_BIND_SUPPORTED_HUAWEI,
   PROFILE_ACCOUNT_BIND_SUPPORTED_WECHAT
 } from '../common/constants/ProfileAccountBindConstants'
@@ -25,9 +24,13 @@ import {
 import { PreferencesService } from '../services/PreferencesService'
 import { Logger } from '../common/utils/Logger'
 import {
-  buildProfilePhonePasswordDialogContent,
-  type ProfilePhonePasswordDialogParams
-} from '../dialogs/ProfilePhonePasswordDialog'
+  buildProfileChangePasswordDialogContent,
+  type ProfileChangePasswordDialogParams
+} from '../dialogs/ProfileChangePasswordDialog'
+import {
+  buildProfilePhoneSmsDialogContent,
+  type ProfilePhoneSmsDialogParams
+} from '../dialogs/ProfilePhoneSmsDialog'
 import {
   buildProfileTextEditDialogContent,
   type ProfileTextEditDialogParams
@@ -454,6 +457,22 @@ struct Profile {
         return '兑换码格式无效'
       case 'db_failed':
         return '服务暂时不可用'
+      case 'sms_not_configured':
+        return '短信服务未配置'
+      case 'sms_verify_code_required':
+        return '请输入短信验证码'
+      case 'sms_code_invalid':
+        return '验证码错误'
+      case 'invalid_phone':
+        return '手机号格式无效'
+      case 'phone_required':
+        return '请输入手机号'
+      case 'username_required':
+        return '姓名不能为空'
+      case 'clear_password_not_allowed':
+        return '不支持清除已设置的密码'
+      case 'sms_client_failed':
+        return '短信服务暂时不可用'
       default:
         return `操作失败（${code}）`
     }
@@ -470,7 +489,7 @@ struct Profile {
     }
   }
 
-  private closePhonePasswordDialog(content: ComponentContent<ProfilePhonePasswordDialogParams> | undefined): void {
+  private closePhoneSmsDialog(content: ComponentContent<ProfilePhoneSmsDialogParams> | undefined): void {
     if (content === undefined) {
       return
     }
@@ -481,61 +500,107 @@ struct Profile {
     }
   }
 
-  private openPhonePasswordEdit(): void {
+  private phoneKvLabel(): string {
+    const p = this.profile
+    if (p === null) {
+      return '手机号'
+    }
+    const t = (p.phone ?? '').trim()
+    return t.length > 0 ? '修改手机号' : '绑定手机号'
+  }
+
+  /** 列表右侧：已绑定时展示中间四位脱敏（例 138****5678）。 */
+  private phoneKvRightValue(): string {
+    const p = this.profile
+    if (p === null) {
+      return ''
+    }
+    const t = (p.phone ?? '').trim()
+    if (t.length !== 11) {
+      return ''
+    }
+    if (!/^\d{11}$/.test(t)) {
+      return ''
+    }
+    return `${t.substring(0, 3)}****${t.substring(7)}`
+  }
+
+  private closeChangePasswordDialog(content: ComponentContent<ProfileChangePasswordDialogParams> | undefined): void {
+    if (content === undefined) {
+      return
+    }
+    try {
+      this.getUIContext().getPromptAction().closeCustomDialog(content)
+    } catch (e) {
+      Logger.warn('Profile', `closeCustomDialog change password failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private openChangePasswordDialog(): void {
     const p = this.profile
     if (p === null) {
       return
     }
     const ui = this.getUIContext()
-    let holder: ComponentContent<ProfilePhonePasswordDialogParams> | undefined = undefined
-    const params: ProfilePhonePasswordDialogParams = {
-      initialPhone: (p.phone ?? '').trim(),
-      passwordSet: p.password_set === true,
+    let holder: ComponentContent<ProfileChangePasswordDialogParams> | undefined = undefined
+    const params: ProfileChangePasswordDialogParams = {
+      password_set: p.password_set === true,
       onCancel: (): void => {
-        this.closePhonePasswordDialog(holder)
+        this.closeChangePasswordDialog(holder)
       },
-      onConfirm: (phone: string, password: string): void => {
-        this.closePhonePasswordDialog(holder)
-        void this.patchPhoneAndPassword(phone, password)
+      onSuccess: (): void => {
+        this.closeChangePasswordDialog(holder)
+        void this.reloadAfterPasswordChanged()
       }
     }
-    holder = new ComponentContent(ui, wrapBuilder(buildProfilePhonePasswordDialogContent), params)
+    holder = new ComponentContent(ui, wrapBuilder(buildProfileChangePasswordDialogContent), params)
     try {
       ui.getPromptAction().openCustomDialog(holder, {
         alignment: DialogAlignment.Center,
-        autoCancel: true
+        autoCancel: false
       })
     } catch (e) {
-      Logger.warn('Profile', `openPhonePasswordEdit failed: ${JSON.stringify(e)}`)
+      Logger.warn('Profile', `openChangePasswordDialog failed: ${JSON.stringify(e)}`)
     }
   }
 
-  private async patchPhoneAndPassword(phone: string, password: string): Promise<void> {
-    const pTrim = phone.trim()
-    const pwTrim = password.trim()
-    if (pwTrim.length === 0) {
-      this.showToast('请输入密码')
-      return
-    }
-    const passwordSet = this.profile?.password_set === true
-    if (!passwordSet && pwTrim.length < 8) {
-      this.showToast('登录密码至少 8 位')
-      return
-    }
-    const body: Record<string, Object> = {}
-    body['phone'] = pTrim
-    if (passwordSet) {
-      body['old_password'] = pwTrim
-    } else {
-      body['new_password'] = pwTrim
-    }
-    const err = await NoteApiClient.getInstance().patchProfile(body)
-    if (err !== null) {
-      this.showToast(this.mapErr(err))
-      return
-    }
-    this.showToast('已保存')
+  private async reloadAfterPasswordChanged(): Promise<void> {
     await this.reload()
+    this.showToast('密码已更新')
+  }
+
+  private openPhoneSmsEdit(): void {
+    const p = this.profile
+    if (p === null) {
+      return
+    }
+    const ui = this.getUIContext()
+    let holder: ComponentContent<ProfilePhoneSmsDialogParams> | undefined = undefined
+    const bound = (p.phone ?? '').trim()
+    const params: ProfilePhoneSmsDialogParams = {
+      boundPhone: bound,
+      onCancel: (): void => {
+        this.closePhoneSmsDialog(holder)
+      },
+      onSuccess: (): void => {
+        this.closePhoneSmsDialog(holder)
+        void this.reloadAfterPhoneSaved()
+      }
+    }
+    holder = new ComponentContent(ui, wrapBuilder(buildProfilePhoneSmsDialogContent), params)
+    try {
+      ui.getPromptAction().openCustomDialog(holder, {
+        alignment: DialogAlignment.Center,
+        autoCancel: false
+      })
+    } catch (e) {
+      Logger.warn('Profile', `openPhoneSmsEdit failed: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private async reloadAfterPhoneSaved(): Promise<void> {
+    await this.reload()
+    this.showToast('已保存')
   }
 
   private openRedeemDialog(): void {
@@ -558,7 +623,7 @@ struct Profile {
     try {
       ui.getPromptAction().openCustomDialog(holder, {
         alignment: DialogAlignment.Center,
-        autoCancel: true
+        autoCancel: false
       })
     } catch (e) {
       Logger.warn('Profile', `openRedeemDialog failed: ${JSON.stringify(e)}`)
@@ -615,11 +680,16 @@ struct Profile {
     const params: ProfileTextEditDialogParams = {
       title,
       initial,
-      placeholder: '留空可清空',
+      placeholder: fieldKey === 'username' ? '请输入姓名' : '请输入内容',
       onCancel: (): void => {
         this.closeTextEditDialog(holder)
       },
       onConfirm: (text: string): void => {
+        const t = text.trim()
+        if (fieldKey === 'username' && t.length === 0) {
+          this.showToast('姓名不能为空')
+          return
+        }
         this.closeTextEditDialog(holder)
         void this.patchSingleField(fieldKey, text)
       }
@@ -628,7 +698,7 @@ struct Profile {
     try {
       ui.getPromptAction().openCustomDialog(holder, {
         alignment: DialogAlignment.Center,
-        autoCancel: true
+        autoCancel: false
       })
     } catch (e) {
       Logger.warn('Profile', `openTextEdit dialog failed: ${JSON.stringify(e)}`)
@@ -925,12 +995,12 @@ struct Profile {
 
             Column() {
               this.kvRow(
-                '昵称',
+                '姓名',
                 this.displayNickname(),
                 true,
                 false,
                 (): void => {
-                  this.openTextEdit('昵称', 'username', (this.profile!.username ?? '').trim())
+                  this.openTextEdit('姓名', 'username', (this.profile!.username ?? '').trim())
                 }
               )
             }
@@ -941,12 +1011,22 @@ struct Profile {
 
             Column() {
               this.kvRow(
+                this.phoneKvLabel(),
+                this.phoneKvRightValue(),
+                true,
+                false,
+                (): void => {
+                  this.openPhoneSmsEdit()
+                }
+              )
+              this.rowDivider()
+              this.kvRow(
                 '修改密码',
                 '',
                 true,
                 false,
                 (): void => {
-                  this.openPhonePasswordEdit()
+                  this.openChangePasswordDialog()
                 }
               )
               this.rowDivider()
@@ -970,15 +1050,6 @@ struct Profile {
                   void this.onTapBindWeChat()
                 },
                 this.thirdPartyRowInteractive(PROFILE_ACCOUNT_BIND_SUPPORTED_WECHAT, this.profile!.wechat_linked)
-              )
-              this.rowDivider()
-              this.kvRow(
-                'Apple 账号',
-                this.bindLabel(this.profile!.apple_linked),
-                this.thirdPartyRowInteractive(PROFILE_ACCOUNT_BIND_SUPPORTED_APPLE, this.profile!.apple_linked),
-                false,
-                (): void => {},
-                this.thirdPartyRowInteractive(PROFILE_ACCOUNT_BIND_SUPPORTED_APPLE, this.profile!.apple_linked)
               )
             }
             .width('100%')

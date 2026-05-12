@@ -1,4 +1,4 @@
-/** 单字段编辑（昵称 / 头像链接 / 邮箱 / 手机号），与 `ComponentContent` + `openCustomDialog` 配合使用。 */
+/** 单字段编辑（姓名 / 头像链接 / 邮箱 / 手机号），与 `ComponentContent` + `openCustomDialog` 配合使用。 */
 export interface ProfileTextEditDialogParams {
   title: string
   initial: string

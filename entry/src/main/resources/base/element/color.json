@@ -111,6 +111,10 @@
     {
       "name": "link_text",
       "value": "#FF2563EB"
+    },
+    {
+      "name": "login_primary_button",
+      "value": "#FF161B26"
     }
   ]
 }

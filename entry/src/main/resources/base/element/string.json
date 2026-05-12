@@ -182,7 +182,27 @@
     },
     {
       "name": "login_options_hint",
-      "value": "使用华为账号、微信或手机号登录"
+      "value": "使用微信或手机号登录"
+    },
+    {
+      "name": "login_account_placeholder",
+      "value": "请输入手机号"
+    },
+    {
+      "name": "login_password_placeholder",
+      "value": "请输入密码"
+    },
+    {
+      "name": "login_other_methods",
+      "value": "其它登录方式"
+    },
+    {
+      "name": "login_register",
+      "value": "注册账号"
+    },
+    {
+      "name": "login_forgot_password",
+      "value": "忘记密码"
     },
     {
       "name": "login_with_huawei",
@@ -215,6 +235,42 @@
     {
       "name": "phone_password_logging_in",
       "value": "登录中…"
+    },
+    {
+      "name": "change_password_title",
+      "value": "重置密码"
+    },
+    {
+      "name": "change_password_code_placeholder",
+      "value": "请输入验证码"
+    },
+    {
+      "name": "change_password_send_code",
+      "value": "发送验证码"
+    },
+    {
+      "name": "change_password_new_password_placeholder",
+      "value": "请输入新密码"
+    },
+    {
+      "name": "change_password_submit",
+      "value": "重置密码"
+    },
+    {
+      "name": "register_title",
+      "value": "注册账号"
+    },
+    {
+      "name": "register_code_placeholder",
+      "value": "请输入验证码"
+    },
+    {
+      "name": "register_password_placeholder",
+      "value": "设置登录密码"
+    },
+    {
+      "name": "register_submit",
+      "value": "注册"
     }
   ]
 }

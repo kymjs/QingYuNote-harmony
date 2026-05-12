@@ -4,7 +4,8 @@ import { WebDAVClient } from './WebDAVClient'
 import { buildQingyuCloudWebDavConfig } from './QingyuCloudConfigHelper'
 import { Logger } from '../common/utils/Logger'
 
-const previewQingyuForHomeSubscription: WebDAVConfig = {
+/** 首页工具栏云同步入口显隐与自动开通逻辑共用。 */
+export const previewQingyuForHomeSubscription: WebDAVConfig = {
   baseUrl: '',
   username: '',
   encryptedPassword: '',

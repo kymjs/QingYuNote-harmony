@@ -7,7 +7,11 @@ import { SyncService } from '../services/SyncService'
 import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { runAppUpdateCheckOnLaunch } from '../services/AppUpdateUi'
-import { tryAutoProvisionQingyuCloudOnHomeEntry } from '../services/QingyuCloudAutoProvision'
+import {
+  previewQingyuForHomeSubscription,
+  tryAutoProvisionQingyuCloudOnHomeEntry
+} from '../services/QingyuCloudAutoProvision'
+import { WebDAVClient } from '../services/WebDAVClient'
 import { Logger } from '../common/utils/Logger'
 import { SyncConstants } from '../common/constants/SyncConstants'
 
@@ -41,8 +45,8 @@ struct Index {
   /** 选标签或跳转前递增，子组件 @Watch 内吸附关闭。 */
   @State drawerCloseNonce: number = 0
   @State pageWidth: number = 360
-  /** 已保存 WebDAV，或已选择并启用轻羽云（不依赖 `/qingyu/webdav` 是否成功）时为 true，右上角不展示「去配置」图标。 */
-  @State cloudSyncConfigured: boolean = false
+  /** 已配置自建 WebDAV，或轻羽云订阅有效（active/lifetime）时为 true，右上角不展示「去配置」图标；首帧默认 true 以免误闪。 */
+  @State cloudSyncConfigured: boolean = true
   private hasShownOnce: boolean = false
   /** 仅统计「非首次」onPageShow 触发的 loadNotes 完成时间；与 initializeHome 首次加载无关，避免阻断从编辑页返回后的刷新。 */
   private lastPageShowNotesReloadAtMs: number = 0
@@ -195,13 +199,18 @@ struct Index {
       if (context) {
         await PreferencesService.getInstance().init(context)
       }
-      const config = await PreferencesService.getInstance().getWebDAVConfig()
-      const intent = await PreferencesService.getInstance().getQingyuCloudSyncIntent()
-      const webDavReady = config !== null && config.enabled
-      const qingyuChosen = intent === 'qingyu'
-      this.cloudSyncConfigured = webDavReady || qingyuChosen
+      const snap = await PreferencesService.getInstance().getSavedCustomWebDAVConfigSnapshot()
+      const customReady = snap !== null && snap.enabled
+      if (customReady) {
+        this.cloudSyncConfigured = true
+        return
+      }
+      const status =
+        await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus(previewQingyuForHomeSubscription)
+      const purchased = status.kind === 'lifetime' || status.kind === 'active'
+      this.cloudSyncConfigured = purchased
     } catch (_) {
-      this.cloudSyncConfigured = false
+      this.cloudSyncConfigured = true
     }
   }
 

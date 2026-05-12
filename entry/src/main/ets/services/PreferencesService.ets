@@ -1,6 +1,7 @@
 import { preferences } from '@kit.ArkData'
 import type common from '@ohos.app.ability.common'
 import type { SyncPolicy, WebDAVConfig, WebDAVProvider } from '../common/model/Note'
+import { util } from '@kit.ArkTS'
 import { Logger } from '../common/utils/Logger'
 import { buildQingyuCloudWebDavConfig } from './QingyuCloudConfigHelper'
 
@@ -11,6 +12,16 @@ const HUAWEI_LOGGED_IN_KEY = 'account_huawei_logged_in'
 const NOTE_API_USER_ID_KEY = 'note_api_user_id'
 const NOTE_API_ACCESS_TOKEN_KEY = 'note_api_access_token'
 const NOTE_API_EXPIRES_AT_MS_KEY = 'note_api_expires_at_ms'
+/**
+ * 与 Flutter `AppConst.prefSmsDeviceIdKey` 键名一致（`note_api_sms_device_id`）。
+ *
+ * **服务端（维护者）**：`POST /api/v1/register/sms/send` 与 `POST /api/v1/password/reset/sms/send` 在调阿里云前，
+ * 对客户端 IP、规范化手机号、设备 ID 三轴各自做滑动 24 小时窗口计数，每轴上限 3 次；两接口共用计数。
+ * 详见仓库 `server/TECHNICAL.md` §2.11 与 `internal/api/sms_public_quota.go`。
+ *
+ * **对用户**：错误码 `sms_quota_exceeded` 时仅展示泛化 Toast，勿写「每 IP / 每设备 / 3 次」等文案。
+ */
+const NOTE_SMS_DEVICE_ID_KEY = 'note_api_sms_device_id'
 /** 与 Flutter `prefGuestModeKey` 对齐：未绑定 Note API 亦可进入首页 */
 const GUEST_MODE_KEY = 'guest_mode'
 /** 登录成功后导航：`Login` 消费并清空（OAuth 返回后 router params 可能丢失） */
@@ -115,11 +126,15 @@ export class PreferencesService {
   async getWebDAVConfig(): Promise<WebDAVConfig | null> {
     try {
       const store = this.ensureStore()
+      const custom = this.buildCustomWebDAVConfig(store)
+      if (custom !== null && custom.enabled) {
+        return custom
+      }
       const provider = store.getSync('sync_provider', 'webdav') as WebDAVProvider
       if (provider === 'qingyu_cloud') {
         return await this.buildQingyuCloudConfig(store)
       }
-      return this.buildCustomWebDAVConfig(store)
+      return custom
     } catch (error) {
       Logger.warn('PreferencesService', `getWebDAVConfig failed: ${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)
@@ -166,7 +181,7 @@ export class PreferencesService {
     }
   }
 
-  /** 首页自动选用轻羽云：已登录、非游客、无自建保存、且尚未选择轻羽云方案。 */
+  /** 首页自动选用轻羽云：无自建 WebDAV、且本地未处于「已启用轻羽云同步」或「用户已关闭轻羽同步」。 */
   async shouldAttemptAutoQingyuCloudProvisioning(): Promise<boolean> {
     try {
       if (await this.isGuestMode()) {
@@ -178,8 +193,11 @@ export class PreferencesService {
       if (await this.hasSavedCustomWebDAVConfig()) {
         return false
       }
-      const provider = await this.getSyncProvider()
-      if (provider === 'qingyu_cloud') {
+      const intent = await this.getQingyuCloudSyncIntent()
+      if (intent === 'qingyu') {
+        return false
+      }
+      if (intent === 'disabled') {
         return false
       }
       return true
@@ -547,6 +565,28 @@ export class PreferencesService {
     } catch (error) {
       Logger.warn('PreferencesService', `clearNoteApiSession failed: ${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  /**
+   * 首次调用生成 UUID 写入 preferences，之后只读；与 Flutter `getOrCreateSmsDeviceId` 对齐。
+   * 值通过 `X-Device-Id` / JSON `device_id` 发往 Note API，供公开短信频控「设备」维度使用。
+   * 规则与运维注意见 `server/TECHNICAL.md` §2.11。
+   */
+  async getOrCreateSmsDeviceId(): Promise<string> {
+    try {
+      const store = this.ensureStore()
+      let v = (store.getSync(NOTE_SMS_DEVICE_ID_KEY, '') as string).trim()
+      if (v.length > 0) {
+        return v
+      }
+      v = util.generateRandomUUID()
+      store.putSync(NOTE_SMS_DEVICE_ID_KEY, v)
+      await store.flush()
+      return v
+    } catch (error) {
+      Logger.warn('PreferencesService', `getOrCreateSmsDeviceId failed: ${this.describeError(error as Object)}`)
+      return util.generateRandomUUID()
     }
   }
 

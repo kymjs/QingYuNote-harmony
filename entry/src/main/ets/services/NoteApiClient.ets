@@ -4,6 +4,15 @@ import { NoteApiConstants } from '../common/constants/NoteApiConstants'
 import { PreferencesService } from './PreferencesService'
 import { Logger } from '../common/utils/Logger'
 
+/**
+ * Note API HTTP 客户端。
+ *
+ * **公开短信频控（维护者）**：注册/重置密码发短信接口需要稳定的设备 ID；本类在
+ * `sendPasswordResetSms`、`sendRegisterSms` 中设置 `X-Device-Id` 与 body `device_id`（与 Flutter Dio 拦截器一致）。
+ * 服务端对 IP、手机号、设备三轴各滑动 24h 最多 3 次，详见仓库 `server/TECHNICAL.md` §2.11。
+ * 对用户展示 `sms_quota_exceeded` 时勿暴露维度与数字。
+ */
+
 /** `POST /api/v1/auth/*` 登录成功响应（仅含 JWT、有效期与平台用户 id）。 */
 export interface AuthLoginResponseBody {
   access_token?: string
@@ -65,6 +74,12 @@ export interface MergeAccountResponseBody {
   ok?: boolean
   action?: string
   absorbed_user_id?: number
+}
+
+/** `POST /api/v1/register/captcha/new` */
+export interface RegisterCaptchaNewBody {
+  captcha_id: string
+  image_base64: string
 }
 
 /** `POST /api/v1/me/redeem` 成功体 */
@@ -477,6 +492,376 @@ export class NoteApiClient {
     } catch (e) {
       Logger.warn('NoteApiClient', `redeemCode failed: ${JSON.stringify(e)}`)
       return null
+    } finally {
+      req.destroy()
+    }
+  }
+
+  /**
+   * POST /api/v1/me/profile/phone/sms/send：向填写的目标手机号发送验证码（资料页绑定/改号）。
+   */
+  async sendProfilePhoneSms(phone: string): Promise<string | null> {
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      return 'not_logged_in'
+    }
+    const trimmed = phone.trim()
+    if (trimmed.length === 0) {
+      return 'empty_phone'
+    }
+    const req = http.createHttp()
+    try {
+      const resp = await req.request(this.joinUrl('/api/v1/me/profile/phone/sms/send'), {
+        method: http.RequestMethod.POST,
+        header: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
+          'Authorization': `Bearer ${tok}`
+        },
+        extraData: JSON.stringify({ phone: trimmed }),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000
+      })
+      const code = resp.responseCode
+      const text = (resp.result as string) ?? ''
+      if (code >= 200 && code < 300) {
+        return null
+      }
+      Logger.warn('NoteApiClient', `sendProfilePhoneSms HTTP ${code} body=${text.slice(0, 500)}`)
+      return NoteApiClient.parseErrorCode(text)
+    } catch (e) {
+      Logger.warn('NoteApiClient', `sendProfilePhoneSms failed: ${JSON.stringify(e)}`)
+      return 'network_error'
+    } finally {
+      req.destroy()
+    }
+  }
+
+  /**
+   * POST /api/v1/me/password/sms/send：向账号绑定手机号发送修改密码验证码。
+   * 成功返回 null，否则为服务端 `error` 代码。
+   */
+  async sendPasswordSms(phone: string): Promise<string | null> {
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      return 'not_logged_in'
+    }
+    const trimmed = phone.trim()
+    if (trimmed.length === 0) {
+      return 'empty_phone'
+    }
+    const req = http.createHttp()
+    try {
+      const resp = await req.request(this.joinUrl('/api/v1/me/password/sms/send'), {
+        method: http.RequestMethod.POST,
+        header: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
+          'Authorization': `Bearer ${tok}`
+        },
+        extraData: JSON.stringify({ phone: trimmed }),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000
+      })
+      const code = resp.responseCode
+      const text = (resp.result as string) ?? ''
+      if (code >= 200 && code < 300) {
+        return null
+      }
+      Logger.warn('NoteApiClient', `sendPasswordSms HTTP ${code} body=${text.slice(0, 500)}`)
+      return NoteApiClient.parseErrorCode(text)
+    } catch (e) {
+      Logger.warn('NoteApiClient', `sendPasswordSms failed: ${JSON.stringify(e)}`)
+      return 'network_error'
+    } finally {
+      req.destroy()
+    }
+  }
+
+  /**
+   * POST /api/v1/password/reset/check-phone：无需登录。
+   * 返回 true/false；网络或解析失败返回 null。
+   */
+  async checkPasswordResetRegistered(phone: string): Promise<boolean | null> {
+    const trimmed = phone.trim()
+    if (trimmed.length === 0) {
+      return null
+    }
+    const req = http.createHttp()
+    try {
+      const resp = await req.request(this.joinUrl('/api/v1/password/reset/check-phone'), {
+        method: http.RequestMethod.POST,
+        header: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8'
+        },
+        extraData: JSON.stringify({ phone: trimmed }),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000
+      })
+      const code = resp.responseCode
+      const text = (resp.result as string) ?? ''
+      if (code >= 200 && code < 300) {
+        try {
+          const obj = JSON.parse(text) as Record<string, Object>
+          const r = obj['registered']
+          if (typeof r === 'boolean') {
+            return r
+          }
+        } catch (_) {
+          return null
+        }
+        return null
+      }
+      Logger.warn('NoteApiClient', `checkPasswordResetRegistered HTTP ${code} body=${text.slice(0, 500)}`)
+      return null
+    } catch (e) {
+      Logger.warn('NoteApiClient', `checkPasswordResetRegistered failed: ${JSON.stringify(e)}`)
+      return null
+    } finally {
+      req.destroy()
+    }
+  }
+
+  /**
+   * POST /api/v1/password/reset/sms/send：无需登录。
+   */
+  async sendPasswordResetSms(phone: string): Promise<string | null> {
+    const trimmed = phone.trim()
+    if (trimmed.length === 0) {
+      return 'empty_phone'
+    }
+    let dev = ''
+    try {
+      dev = await PreferencesService.getInstance().getOrCreateSmsDeviceId()
+    } catch (_) {
+      dev = ''
+    }
+    const req = http.createHttp()
+    try {
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json; charset=utf-8'
+      }
+      if (dev.trim().length > 0) {
+        headers['X-Device-Id'] = dev.trim()
+      }
+      const resp = await req.request(this.joinUrl('/api/v1/password/reset/sms/send'), {
+        method: http.RequestMethod.POST,
+        header: headers,
+        extraData: JSON.stringify({ phone: trimmed, device_id: dev.trim() }),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000
+      })
+      const code = resp.responseCode
+      const text = (resp.result as string) ?? ''
+      if (code >= 200 && code < 300) {
+        return null
+      }
+      Logger.warn('NoteApiClient', `sendPasswordResetSms HTTP ${code} body=${text.slice(0, 500)}`)
+      return NoteApiClient.parseErrorCode(text)
+    } catch (e) {
+      Logger.warn('NoteApiClient', `sendPasswordResetSms failed: ${JSON.stringify(e)}`)
+      return 'network_error'
+    } finally {
+      req.destroy()
+    }
+  }
+
+  /**
+   * POST /api/v1/password/reset：无需登录，短信核验后重置密码。
+   */
+  async resetPasswordWithSms(phone: string, smsVerifyCode: string, newPassword: string): Promise<string | null> {
+    const req = http.createHttp()
+    try {
+      const resp = await req.request(this.joinUrl('/api/v1/password/reset'), {
+        method: http.RequestMethod.POST,
+        header: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8'
+        },
+        extraData: JSON.stringify({
+          phone: phone.trim(),
+          sms_verify_code: smsVerifyCode.trim(),
+          new_password: newPassword.trim()
+        }),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000
+      })
+      const code = resp.responseCode
+      const text = (resp.result as string) ?? ''
+      if (code >= 200 && code < 300) {
+        return null
+      }
+      Logger.warn('NoteApiClient', `resetPasswordWithSms HTTP ${code} body=${text.slice(0, 500)}`)
+      return NoteApiClient.parseErrorCode(text)
+    } catch (e) {
+      Logger.warn('NoteApiClient', `resetPasswordWithSms failed: ${JSON.stringify(e)}`)
+      return 'network_error'
+    } finally {
+      req.destroy()
+    }
+  }
+
+  /**
+   * POST /api/v1/register/captcha/new：获取图形验证码 PNG（base64）。
+   */
+  async fetchRegisterCaptchaNew(): Promise<RegisterCaptchaNewBody | null> {
+    const req = http.createHttp()
+    try {
+      const resp = await req.request(this.joinUrl('/api/v1/register/captcha/new'), {
+        method: http.RequestMethod.POST,
+        header: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8'
+        },
+        extraData: '{}',
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000
+      })
+      const code = resp.responseCode
+      const text = ((resp.result as string) ?? '').trim()
+      if (code >= 200 && code < 300) {
+        try {
+          const obj = JSON.parse(text) as Record<string, Object>
+          const id = obj['captcha_id']
+          const b64 = obj['image_base64']
+          if (typeof id === 'string' && typeof b64 === 'string') {
+            const tid = id.trim()
+            const tb64 = b64.trim()
+            if (tid.length > 0 && tb64.length > 0) {
+              return { captcha_id: tid, image_base64: tb64 }
+            }
+          }
+        } catch (e) {
+          Logger.warn('NoteApiClient', `fetchRegisterCaptchaNew JSON parse: ${JSON.stringify(e)} head=${text.slice(0, 120)}`)
+          return null
+        }
+        return null
+      }
+      Logger.warn('NoteApiClient', `fetchRegisterCaptchaNew HTTP ${code} body=${text.slice(0, 500)}`)
+      return null
+    } catch (e) {
+      Logger.warn('NoteApiClient', `fetchRegisterCaptchaNew failed: ${JSON.stringify(e)}`)
+      return null
+    } finally {
+      req.destroy()
+    }
+  }
+
+  /**
+   * POST /api/v1/register/sms/send：无需登录；须先通过图形验证码，且仅当手机号尚未注册时发送验证码。
+   */
+  async sendRegisterSms(phone: string, captchaId: string, captchaCode: string): Promise<string | null> {
+    const trimmed = phone.trim()
+    const cid = captchaId.trim()
+    const ccode = captchaCode.trim()
+    if (trimmed.length === 0) {
+      return 'empty_phone'
+    }
+    if (cid.length === 0 || ccode.length === 0) {
+      return 'invalid_body'
+    }
+    let dev = ''
+    try {
+      dev = await PreferencesService.getInstance().getOrCreateSmsDeviceId()
+    } catch (_) {
+      dev = ''
+    }
+    const req = http.createHttp()
+    try {
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json; charset=utf-8'
+      }
+      if (dev.trim().length > 0) {
+        headers['X-Device-Id'] = dev.trim()
+      }
+      const resp = await req.request(this.joinUrl('/api/v1/register/sms/send'), {
+        method: http.RequestMethod.POST,
+        header: headers,
+        extraData: JSON.stringify({
+          phone: trimmed,
+          captcha_id: cid,
+          captcha_code: ccode,
+          device_id: dev.trim()
+        }),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000
+      })
+      const code = resp.responseCode
+      const text = (resp.result as string) ?? ''
+      if (code >= 200 && code < 300) {
+        return null
+      }
+      Logger.warn('NoteApiClient', `sendRegisterSms HTTP ${code} body=${text.slice(0, 500)}`)
+      return NoteApiClient.parseErrorCode(text)
+    } catch (e) {
+      Logger.warn('NoteApiClient', `sendRegisterSms failed: ${JSON.stringify(e)}`)
+      return 'network_error'
+    } finally {
+      req.destroy()
+    }
+  }
+
+  /**
+   * POST /api/v1/register：无需登录，短信核验后创建账号并写入会话（与手机号登录一致）。
+   */
+  async registerWithPhoneSms(phone: string, smsVerifyCode: string, password: string): Promise<string | null> {
+    const pPhone = phone.trim()
+    const pCode = smsVerifyCode.trim()
+    const pPwd = password.trim()
+    if (pPhone.length === 0 || pCode.length === 0 || pPwd.length === 0) {
+      return 'invalid_body'
+    }
+    const req = http.createHttp()
+    try {
+      const resp = await req.request(this.joinUrl('/api/v1/register'), {
+        method: http.RequestMethod.POST,
+        header: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8'
+        },
+        extraData: JSON.stringify({
+          phone: pPhone,
+          sms_verify_code: pCode,
+          password: pPwd
+        }),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000
+      })
+      const httpCode = resp.responseCode
+      const text = (resp.result as string) ?? ''
+      if (httpCode >= 200 && httpCode < 300) {
+        let obj: Object
+        try {
+          obj = JSON.parse(text) as Object
+        } catch (_) {
+          return 'unknown_error'
+        }
+        const raw = obj as AuthLoginResponseBody
+        const token = raw.access_token?.trim() ?? ''
+        const expiresIn = raw.expires_in ?? 604800
+        const uid = parseAuthLoginUserId(obj)
+        if (token.length === 0 || uid.length === 0) {
+          return 'unknown_error'
+        }
+        await PreferencesService.getInstance().setNoteApiSession(token, expiresIn)
+        await PreferencesService.getInstance().setNoteApiUserId(uid)
+        return null
+      }
+      return NoteApiClient.parseErrorCode(text)
+    } catch (e) {
+      Logger.warn('NoteApiClient', `registerWithPhoneSms failed: ${JSON.stringify(e)}`)
+      return 'network_error'
     } finally {
       req.destroy()
     }

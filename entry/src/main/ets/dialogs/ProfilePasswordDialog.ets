@@ -1,8 +1,8 @@
-/** 登录密码修改 / 清除，与 `ComponentContent` + `openCustomDialog` 配合使用。 */
+/** 登录密码修改，与 `ComponentContent` + `openCustomDialog` 配合使用。 */
 export interface ProfilePasswordDialogParams {
   password_set: boolean
   onCancel: () => void
-  onConfirm: (oldPwd: string, newPwd: string, newPwd2: string, clearPwd: boolean) => void
+  onConfirm: (oldPwd: string, newPwd: string, newPwd2: string) => void
 }
 
 @Component
@@ -10,18 +10,16 @@ export struct ProfilePasswordDialog {
   @Prop params: ProfilePasswordDialogParams = {
     password_set: false,
     onCancel: (): void => {},
-    onConfirm: (_a: string, _b: string, _c: string, _d: boolean): void => {}
+    onConfirm: (_a: string, _b: string, _c: string): void => {}
   }
   @State pwdOld: string = ''
   @State pwdNew: string = ''
   @State pwdNew2: string = ''
-  @State clearPwd: boolean = false
 
   aboutToAppear(): void {
     this.pwdOld = ''
     this.pwdNew = ''
     this.pwdNew2 = ''
-    this.clearPwd = false
   }
 
   build() {
@@ -42,7 +40,7 @@ export struct ProfilePasswordDialog {
                 this.pwdOld = v
               })
           }
-          TextInput({ text: this.pwdNew, placeholder: '新密码（至少 8 位，留空表示不改）' })
+          TextInput({ text: this.pwdNew, placeholder: '新密码（至少 8 位）' })
             .fontSize($r('app.float.body_font_size'))
             .type(InputType.Password)
             .width('100%')
@@ -56,20 +54,6 @@ export struct ProfilePasswordDialog {
             .onChange((v: string) => {
               this.pwdNew2 = v
             })
-          Row({ space: 12 }) {
-            Checkbox()
-              .select(this.clearPwd)
-              .selectedColor($r('app.color.accent'))
-              .onChange((v: boolean) => {
-                this.clearPwd = v
-              })
-            Text('清除已设置的密码')
-              .fontSize($r('app.float.body_font_size'))
-              .fontColor($r('app.color.primary_text'))
-              .layoutWeight(1)
-          }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
         }
         .width('100%')
       }
@@ -96,7 +80,7 @@ export struct ProfilePasswordDialog {
           .borderRadius($r('app.float.pill_radius'))
           .padding({ top: 12, bottom: 12 })
           .onClick(() => {
-            this.params.onConfirm(this.pwdOld, this.pwdNew, this.pwdNew2, this.clearPwd)
+            this.params.onConfirm(this.pwdOld, this.pwdNew, this.pwdNew2)
           })
       }
       .width('100%')

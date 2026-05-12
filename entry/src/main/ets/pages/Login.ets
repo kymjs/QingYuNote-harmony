@@ -1,7 +1,8 @@
 import type common from '@ohos.app.ability.common'
-import { WECHAT_APP_ID } from '../common/constants/WeChatConstants'
+
 import { AppContextHolder } from '../services/AppContextHolder'
 import { describeHuaweiLoginError, startHuaweiLogin } from '../services/HuaweiAuthService'
+import { NoteApiClient } from '../services/NoteApiClient'
 import { PreferencesService } from '../services/PreferencesService'
 import {
   startWeChatLogin,
@@ -9,6 +10,11 @@ import {
   WeChatLoginResultPayload,
   wxApi
 } from '../services/WeChatAuthService'
+
+/** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展，进入首页前清空以免返回登录页。 */
+interface RouterWithOptionalClear {
+  clear?: () => void
+}
 
 /** 从云同步设置 `pushUrl` 传入，`back()` 返回上一页（与 Flutter 弹窗登录对齐）。 */
 const RETURN_CLOUD_SYNC = 'cloudSync'
@@ -19,6 +25,9 @@ struct Login {
   private returnAfterLogin: string = ''
   /** 自 `peekLoginReturnTarget`（OAuth 返回后 router params 可能丢失） */
   private pendingReturnTarget: string = ''
+  @State phone: string = ''
+  @State password: string = ''
+  @State accountBusy: boolean = false
   private loginResultCallback = (payload: Object): void => {
     const data = payload as WeChatLoginResultPayload
     if (data.mergeResult !== undefined) {
@@ -54,7 +63,7 @@ struct Login {
   }
 
   /**
-   * 登录成功或游客进入首页：若从云同步打开则返回上一页，否则进入首页。
+   * 登录成功进入首页：若从云同步打开则返回上一页，否则进入首页。
    * OAuth 回调后 `router.getParams()` 可能丢失，故使用 `pendingReturnTarget`（来自 peek）。
    */
   private async navigateAfterLogin(): Promise<void> {
@@ -75,7 +84,12 @@ struct Login {
       } catch (e) {
         console.error(`Login navigateAfterLogin back failed: ${JSON.stringify(e)}`)
         try {
-          this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' })
+          const router = this.getUIContext().getRouter()
+          const routerWithClear = router as RouterWithOptionalClear
+          if (routerWithClear.clear !== undefined) {
+            routerWithClear.clear()
+          }
+          await router.replaceUrl({ url: 'pages/Index' })
         } catch (e2) {
           console.error(`Login navigateAfterLogin replaceUrl fallback failed: ${JSON.stringify(e2)}`)
         }
@@ -83,7 +97,12 @@ struct Login {
       return
     }
     try {
-      this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' })
+      const router = this.getUIContext().getRouter()
+      const routerWithClear = router as RouterWithOptionalClear
+      if (routerWithClear.clear !== undefined) {
+        routerWithClear.clear()
+      }
+      await router.replaceUrl({ url: 'pages/Index' })
     } catch (e) {
       console.error(`Login navigateAfterLogin replaceUrl failed: ${JSON.stringify(e)}`)
     }
@@ -154,21 +173,53 @@ struct Login {
     }
   }
 
-  private async onHuaweiTap(): Promise<void> {
-    const ctx = this.obtainUiAbilityContext()
-    if (ctx === undefined) {
+  private mapLoginError(code: string): string {
+    switch (code) {
+      case 'invalid_body':
+        return '请输入手机号和密码'
+      case 'invalid_credentials':
+        return '手机号或密码错误'
+      case 'password_not_set':
+        return '该账号尚未设置登录密码'
+      case 'db_failed':
+        return '服务暂时不可用'
+      case 'network_error':
+        return '网络异常，请稍后重试'
+      default:
+        return '登录失败'
+    }
+  }
+
+  private showToast(message: string): void {
+    const msg = message.trim()
+    if (msg.length === 0) {
       return
     }
     try {
-      await startHuaweiLogin(ctx)
-      void this.navigateAfterLogin()
-    } catch (error) {
-      const message = describeHuaweiLoginError(error as Object)
-      try {
-        this.getUIContext().getPromptAction().showToast({ message, duration: 2000 })
-      } catch (_) {
-        console.error(`Login Huawei toast failed: ${message}`)
+      this.getUIContext().getPromptAction().showToast({ message: msg, duration: 2000 })
+    } catch (_) {
+      console.error(`Login toast failed: ${msg}`)
+    }
+  }
+
+  private async onAccountPasswordSubmit(): Promise<void> {
+    if (this.accountBusy) {
+      return
+    }
+    this.accountBusy = true
+    try {
+      const ctx = this.obtainUiAbilityContext()
+      if (ctx !== undefined) {
+        await PreferencesService.getInstance().init(ctx)
       }
+      const err = await NoteApiClient.getInstance().loginWithPhonePassword(this.phone, this.password)
+      if (err !== null) {
+        this.showToast(this.mapLoginError(err))
+        return
+      }
+      void this.navigateAfterLogin()
+    } finally {
+      this.accountBusy = false
     }
   }
 
@@ -200,132 +251,210 @@ struct Login {
     }
   }
 
-  /** 与 Flutter `login_page.dart` `_onGuestModeTap` 对齐 */
-  private async onGuestTap(): Promise<void> {
+  private async onHuaweiTap(): Promise<void> {
     const ctx = this.obtainUiAbilityContext()
-    if (ctx !== undefined) {
-      await PreferencesService.getInstance().init(ctx)
+    if (ctx === undefined) {
+      return
     }
-    await PreferencesService.getInstance().setGuestMode(true)
-    void this.navigateAfterLogin()
+    try {
+      await startHuaweiLogin(ctx)
+      void this.navigateAfterLogin()
+    } catch (error) {
+      const message = describeHuaweiLoginError(error as Object)
+      try {
+        this.getUIContext().getPromptAction().showToast({ message, duration: 2000 })
+      } catch (_) {
+        console.error(`Login Huawei toast failed: ${message}`)
+      }
+    }
   }
 
   build() {
-    Column() {
-      Column({ space: 12 }) {
+    Column({ space: 0 }) {
+      Column({ space: 10 }) {
         Image($r('app.media.icon_app'))
-          .width(88)
-          .height(88)
+          .width(72)
+          .height(72)
           .objectFit(ImageFit.Contain)
-          .margin({ top: 72, bottom: 8 })
 
-        Text($r('app.string.login_title'))
-          .fontSize($r('app.float.title_font_size'))
-          .fontWeight(FontWeight.Bold)
+        Text($r('app.string.EntryAbility_label'))
+          .fontSize(26)
+          .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.primary_text'))
+          .letterSpacing(2)
           .textAlign(TextAlign.Center)
-          .width('100%')
-
-        Text($r('app.string.login_options_hint'))
-          .fontSize($r('app.float.body_font_size'))
-          .fontColor($r('app.color.secondary_text'))
-          .lineHeight(22)
-          .textAlign(TextAlign.Center)
-          .width('100%')
-          .padding({ left: 28, right: 28 })
       }
       .width('100%')
+      .padding({ top: 48, bottom: 20 })
+      .alignItems(HorizontalAlign.Center)
 
-      Blank().layoutWeight(1)
-
-      // 与 Flutter `login_page.dart` 一致：`Padding(symmetric(horizontal: 28))` 包裹全宽按钮
-      Column({ space: 0 }) {
-        Button() {
-          Text($r('app.string.login_with_huawei'))
-            .fontColor('#FFFFFFFF')
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-        }
-          .type(ButtonType.Normal)
-          .width('100%')
-          .height(48)
-          .backgroundColor($r('app.color.huawei_login_brand'))
-          .borderRadius($r('app.float.pill_radius'))
-          .margin({ bottom: 12 })
-          .onClick((): void => {
-            void this.onHuaweiTap()
-          })
-
-        Button() {
-          Text($r('app.string.login_with_wechat'))
-            .fontColor('#FFFFFFFF')
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-        }
-          .type(ButtonType.Normal)
-          .width('100%')
-          .height(48)
-          .backgroundColor($r('app.color.wechat_brand'))
-          .borderRadius($r('app.float.pill_radius'))
-          .margin({ bottom: 12 })
-          .onClick((): void => {
-            void this.onWeChatTap()
-          })
-
-        Button() {
-          Text($r('app.string.login_with_phone'))
-            .fontColor($r('app.color.primary_text'))
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-        }
-          .type(ButtonType.Normal)
-          .width('100%')
-          .height(48)
-          .backgroundColor(Color.Transparent)
-          .border({
-            width: 1,
-            color: $r('app.color.card_border')
-          })
-          .borderRadius($r('app.float.pill_radius'))
-          .margin({ bottom: 12 })
-          .onClick((): void => {
-            try {
-              this.getUIContext().getRouter().pushUrl({ url: 'pages/PhonePasswordLogin' })
-            } catch (e) {
-              console.error(`Login push PhonePasswordLogin failed: ${JSON.stringify(e)}`)
-            }
-          })
-
-        Button() {
-          Text($r('app.string.login_guest_mode'))
-            .fontColor($r('app.color.primary_text'))
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-        }
-          .type(ButtonType.Normal)
-          .width('100%')
-          .height(48)
-          .backgroundColor(Color.Transparent)
-          .border({
-            width: 1,
-            color: $r('app.color.card_border')
-          })
-          .borderRadius($r('app.float.pill_radius'))
-          .onClick((): void => {
-            void this.onGuestTap()
-          })
-      }
+      Blank()
         .width('100%')
-        .padding({ left: 28, right: 28 })
+        .layoutWeight(1)
 
-      if (this.buildAppIdHint().length > 0) {
-        Text(this.buildAppIdHint())
-          .fontSize(12)
-          .fontColor($r('app.color.tertiary_text'))
-          .textAlign(TextAlign.Center)
+      Column({ space: 14 }) {
+          TextInput({ text: this.phone, placeholder: $r('app.string.login_account_placeholder') })
+            .width('100%')
+            .height(50)
+            .fontSize($r('app.float.body_font_size'))
+            .backgroundColor($r('app.color.card_background'))
+            .borderRadius(12)
+            .padding({ left: 14, right: 14 })
+            .shadow({
+              radius: 8,
+              color: $r('app.color.shadow_color'),
+              offsetX: 0,
+              offsetY: 2
+            })
+            .enabled(!this.accountBusy)
+            .onChange((v: string) => {
+              this.phone = v
+            })
+
+          TextInput({
+            text: this.password,
+            placeholder: $r('app.string.login_password_placeholder')
+          })
+            .width('100%')
+            .height(50)
+            .fontSize($r('app.float.body_font_size'))
+            .backgroundColor($r('app.color.card_background'))
+            .borderRadius(12)
+            .padding({ left: 14, right: 14 })
+            .shadow({
+              radius: 8,
+              color: $r('app.color.shadow_color'),
+              offsetX: 0,
+              offsetY: 2
+            })
+            .type(InputType.Password)
+            .enabled(!this.accountBusy)
+            .onChange((v: string) => {
+              this.password = v
+            })
+
+          Row() {
+            Text($r('app.string.login_register'))
+              .fontSize(14)
+              .fontColor($r('app.color.secondary_text'))
+              .padding({ top: 4, bottom: 4 })
+              .onClick((): void => {
+                if (!this.accountBusy) {
+                  try {
+                    this.captureNavParams()
+                    const params: Record<string, Object> = {}
+                    if (this.returnAfterLogin.length > 0) {
+                      params['returnAfterLogin'] = this.returnAfterLogin
+                    }
+                    this.getUIContext().getRouter().pushUrl({
+                      url: 'pages/Register',
+                      params: Object.keys(params).length > 0 ? params : undefined
+                    }).catch((err: Error) => {
+                      console.error(`Login push Register: ${JSON.stringify(err)}`)
+                    })
+                  } catch (e) {
+                    console.error(`Login push Register: ${JSON.stringify(e)}`)
+                  }
+                }
+              })
+
+            Blank().layoutWeight(1)
+
+            Text($r('app.string.login_forgot_password'))
+              .fontSize(14)
+              .fontColor($r('app.color.secondary_text'))
+              .padding({ top: 4, bottom: 4 })
+              .onClick((): void => {
+                if (!this.accountBusy) {
+                  try {
+                    this.getUIContext().getRouter().pushUrl({ url: 'pages/ChangePassword' }).catch((err: Error) => {
+                      console.error(`Login push ChangePassword: ${JSON.stringify(err)}`)
+                    })
+                  } catch (e) {
+                    console.error(`Login push ChangePassword: ${JSON.stringify(e)}`)
+                  }
+                }
+              })
+          }
           .width('100%')
-          .padding({ left: 24, right: 24, top: 12, bottom: 12 })
-      }
+
+          Button() {
+            Text(this.accountBusy ? $r('app.string.phone_password_logging_in') : $r('app.string.phone_password_submit'))
+              .fontColor('#FFFFFFFF')
+              .fontSize(17)
+              .fontWeight(FontWeight.Medium)
+          }
+            .type(ButtonType.Normal)
+            .width('100%')
+            .height(50)
+            .backgroundColor($r('app.color.login_primary_button'))
+            .borderRadius(12)
+            .enabled(!this.accountBusy)
+            .onClick((): void => {
+              void this.onAccountPasswordSubmit()
+            })
+
+          Row() {
+            Divider()
+              .layoutWeight(1)
+              .color($r('app.color.divider'))
+              .strokeWidth(1)
+
+            Text($r('app.string.login_other_methods'))
+              .fontSize(13)
+              .fontColor($r('app.color.tertiary_text'))
+              .padding({ left: 14, right: 14 })
+
+            Divider()
+              .layoutWeight(1)
+              .color($r('app.color.divider'))
+              .strokeWidth(1)
+          }
+          .width('100%')
+          .margin({ top: 18 })
+          .alignItems(VerticalAlign.Center)
+
+          Row({ space: 36 }) {
+            Image($r('app.media.ic_login_huawei'))
+              .width(48)
+              .height(48)
+              .borderRadius(24)
+              .objectFit(ImageFit.Cover)
+              .shadow({
+                radius: 6,
+                color: $r('app.color.shadow_color'),
+                offsetX: 0,
+                offsetY: 2
+              })
+              .onClick((): void => {
+                if (!this.accountBusy) {
+                  void this.onHuaweiTap()
+                }
+              })
+
+            Image($r('app.media.ic_login_wechat'))
+              .width(48)
+              .height(48)
+              .borderRadius(24)
+              .objectFit(ImageFit.Cover)
+              .shadow({
+                radius: 6,
+                color: $r('app.color.shadow_color'),
+                offsetX: 0,
+                offsetY: 2
+              })
+              .onClick((): void => {
+                if (!this.accountBusy) {
+                  void this.onWeChatTap()
+                }
+              })
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
+          .margin({ top: 18 })
+        }
+        .width('100%')
+        .padding({ left: 28, right: 28, top: 0, bottom: 36 })
     }
     .width('100%')
     .height('100%')
@@ -334,15 +463,7 @@ struct Login {
       top: $r('app.float.toolbar_page_padding_top'),
       left: 0,
       right: 0,
-      bottom: 48
+      bottom: 36
     })
-  }
-
-  private buildAppIdHint(): string {
-    const raw = WECHAT_APP_ID.trim()
-    if (raw.length === 0 || raw === 'wx0000000000000000') {
-      return '请在 WeChatConstants 中配置微信开放平台移动应用 AppID'
-    }
-    return ''
   }
 }
