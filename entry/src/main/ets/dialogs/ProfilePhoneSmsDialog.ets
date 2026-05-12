@@ -199,10 +199,10 @@ export struct ProfilePhoneSmsDialog {
       try {
         dlg = await this.getUIContext().getPromptAction().showDialog({
           title: '该手机号已绑定其他账号',
-          message: '是否解除对方账号上的该手机号绑定，并绑定到当前账号？对方账号不会被注销，数据也不会合并。',
+          message: '确定绑定到当前账号吗？',
           buttons: [
             { text: '取消', color: '#6B7280' },
-            { text: '解绑并绑定', color: '#2563EB' }
+            { text: '绑定', color: '#2563EB' }
           ]
         })
       } catch (e) {

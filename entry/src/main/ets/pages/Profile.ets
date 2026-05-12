@@ -221,10 +221,10 @@ struct Profile {
     try {
       dlg = await this.getUIContext().getPromptAction().showDialog({
         title: `该${platformLabel}账号已绑定其他账号`,
-        message: '是否将对方账号上的该登录方式解除绑定，并绑定到当前账号？对方账号的数据不会被合并或删除。',
+        message: '确定绑定到当前账号吗？',
         buttons: [
           { text: '取消', color: '#6B7280' },
-          { text: '解绑并绑定', color: '#2563EB' }
+          { text: '绑定', color: '#2563EB' }
         ]
       })
     } catch (e) {
