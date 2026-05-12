@@ -5,11 +5,12 @@ import { getAppVersionName } from '../services/AppUpdateService'
 @Entry
 @Component
 struct About {
-  @State appVersionLine: string = '轻羽云笔记 v1.0.1'
+  /** 异步拉取包 `versionName` 后追加，如 ` v1.0.1`；未就绪前不展示占位版本号。 */
+  @State versionSuffix: string = ''
 
   aboutToAppear(): void {
     void getAppVersionName().then((v: string) => {
-      this.appVersionLine = `轻羽云笔记 v${v}`
+      this.versionSuffix = ` v${v}`
     })
   }
 
@@ -76,7 +77,10 @@ struct About {
               .margin({ top: 20, bottom: 20 })
 
             Column({ space: 16 }) {
-              Text(this.appVersionLine)
+              Text() {
+                Span($r('app.string.app_name'))
+                Span(this.versionSuffix)
+              }
                 .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.secondary_text'))
                 .lineHeight(22)
