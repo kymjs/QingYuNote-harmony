@@ -91,6 +91,12 @@ export interface RedeemSuccessBody {
 
 export type RedeemCodeResult = RedeemSuccessBody | string
 
+/** `postAuthJsonStatus` 的 HTTP 状态与解析后的 JSON 对象。 */
+interface PostAuthJsonStatusResult {
+  status: number
+  obj: Object | null
+}
+
 /** `GET /api/v1/me/profile` */
 export interface ProfileBody {
   huawei_linked?: boolean
@@ -143,10 +149,7 @@ export class NoteApiClient {
     return ''
   }
 
-  private async postAuthJsonStatus(path: string, bodyJson: string, bearer: string): Promise<{
-    status: number
-    obj: Object | null
-  }> {
+  private async postAuthJsonStatus(path: string, bodyJson: string, bearer: string): Promise<PostAuthJsonStatusResult> {
     const req = http.createHttp()
     try {
       const resp = await req.request(this.joinUrl(path), {
@@ -171,10 +174,12 @@ export class NoteApiClient {
           obj = null
         }
       }
-      return { status, obj }
+      const ok: PostAuthJsonStatusResult = { status: status, obj: obj }
+      return ok
     } catch (e) {
       Logger.warn('NoteApiClient', `postAuthJsonStatus ${path}: ${JSON.stringify(e)}`)
-      return { status: 0, obj: null }
+      const err: PostAuthJsonStatusResult = { status: 0, obj: null }
+      return err
     } finally {
       req.destroy()
     }
@@ -446,11 +451,13 @@ export class NoteApiClient {
     if (tok === null || tok.length === 0) {
       return null
     }
-    const { status, obj } = await this.postAuthJsonStatus(
+    const mergeWechat = await this.postAuthJsonStatus(
       '/api/v1/me/merge/wechat',
       JSON.stringify({ code: trimmed }),
       tok
     )
+    const status = mergeWechat.status
+    const obj = mergeWechat.obj
     if (obj === null) {
       return null
     }
@@ -477,11 +484,13 @@ export class NoteApiClient {
     if (redir.length > 0) {
       body['redirect_uri'] = redir
     }
-    const { status, obj } = await this.postAuthJsonStatus(
+    const mergeHuawei = await this.postAuthJsonStatus(
       '/api/v1/me/merge/huawei',
       JSON.stringify(body),
       tok
     )
+    const status = mergeHuawei.status
+    const obj = mergeHuawei.obj
     if (obj === null) {
       return null
     }
@@ -1129,11 +1138,13 @@ export class NoteApiClient {
     if (tok === null || tok.length === 0) {
       return null
     }
-    const { status, obj } = await this.postAuthJsonStatus(
+    const rebind = await this.postAuthJsonStatus(
       '/api/v1/me/rebind/identity/confirm',
       JSON.stringify({ rebind_ticket: trimmed }),
       tok
     )
+    const status = rebind.status
+    const obj = rebind.obj
     if (obj === null || status !== 200) {
       return null
     }
@@ -1150,11 +1161,13 @@ export class NoteApiClient {
     if (tok === null || tok.length === 0) {
       return null
     }
-    const { status, obj } = await this.postAuthJsonStatus(
+    const mergeApple = await this.postAuthJsonStatus(
       '/api/v1/me/merge/apple',
       JSON.stringify({ identity_token: trimmed }),
       tok
     )
+    const status = mergeApple.status
+    const obj = mergeApple.obj
     if (obj === null) {
       return null
     }
