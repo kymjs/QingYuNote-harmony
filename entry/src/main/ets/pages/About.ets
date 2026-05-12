@@ -29,6 +29,21 @@ struct About {
     })
   }
 
+  private openMiitBeian(): void {
+    const context = AppContextHolder.tryGetContext()
+    if (context === undefined) {
+      return
+    }
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      entities: ['entity.system.browsable'],
+      uri: 'https://beian.miit.gov.cn/'
+    }
+    context.startAbility(want).catch((err: Error) => {
+      console.error(`openMiitBeian: ${JSON.stringify(err)}`)
+    })
+  }
+
   build() {
     Column() {
       Row() {
@@ -131,6 +146,19 @@ struct About {
               .width('100%')
               .justifyContent(FlexAlign.Center)
               .alignItems(VerticalAlign.Center)
+              Text('沪ICP备2025129343号-3A')
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor(0xFF2563EB)
+                .lineHeight(22)
+                .textAlign(TextAlign.Center)
+                .width('100%')
+                .decoration({
+                  type: TextDecorationType.Underline,
+                  color: 0xFF2563EB
+                })
+                .onClick(() => {
+                  this.openMiitBeian()
+                })
             }
             .width('100%')
           }
