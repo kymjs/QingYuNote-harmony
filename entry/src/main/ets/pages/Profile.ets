@@ -23,6 +23,7 @@ import {
 } from '../services/WeChatAuthService'
 import { PreferencesService } from '../services/PreferencesService'
 import { Logger } from '../common/utils/Logger'
+import promptAction from '@ohos.promptAction'
 import {
   buildProfileChangePasswordDialogContent,
   type ProfileChangePasswordDialogParams
@@ -70,6 +71,11 @@ struct Profile {
     this.bindBusy = false
     const data = payload as WeChatLoginResultPayload
     if (!data.success) {
+      const ticket = (data.rebindTicket ?? '').trim()
+      if (ticket.length > 0) {
+        void this.handleWeChatIdentityRebindPrompt(ticket)
+        return
+      }
       const msg =
         data.errStr ??
         (data.errCode !== undefined ? `授权失败（${data.errCode}）` : '微信绑定未完成')
@@ -197,10 +203,53 @@ struct Profile {
         return `${platformShortName}账号已绑定`
       case 'noop':
         return '该身份已关联当前账号'
+      case 'relinked':
+        return '已从其他账号解绑并绑定到当前账号'
       case 'merged':
         return '已将该第三方账号关联的用户数据合并到当前账号'
       default:
         return '绑定完成'
+    }
+  }
+
+  private async confirmThirdPartyIdentityRebind(platformLabel: string, ticket: string): Promise<boolean> {
+    const t = ticket.trim()
+    if (t.length === 0) {
+      return false
+    }
+    let dlg: promptAction.ShowDialogSuccessResponse
+    try {
+      dlg = await this.getUIContext().getPromptAction().showDialog({
+        title: `该${platformLabel}账号已绑定其他账号`,
+        message: '是否将对方账号上的该登录方式解除绑定，并绑定到当前账号？对方账号的数据不会被合并或删除。',
+        buttons: [
+          { text: '取消', color: '#6B7280' },
+          { text: '解绑并绑定', color: '#2563EB' }
+        ]
+      })
+    } catch (e) {
+      Logger.warn('Profile', `rebind dialog: ${JSON.stringify(e)}`)
+      return false
+    }
+    if (dlg.index !== 1) {
+      return false
+    }
+    this.bindBusy = true
+    const rel = await NoteApiClient.getInstance().confirmIdentityRebind(t)
+    this.bindBusy = false
+    if (rel === null || rel.ok !== true) {
+      this.showToast('绑定失败，请稍后重试')
+      return false
+    }
+    this.showToast(this.describeMergeOutcome(rel, platformLabel))
+    await this.reload()
+    return true
+  }
+
+  private async handleWeChatIdentityRebindPrompt(ticket: string): Promise<void> {
+    const ok = await this.confirmThirdPartyIdentityRebind('微信', ticket)
+    if (ok) {
+      await PreferencesService.getInstance().setWeChatLoggedIn(true)
     }
   }
 
@@ -220,13 +269,21 @@ struct Profile {
     try {
       const code = await obtainHuaweiAuthorizationCode(ctx)
       const merged = await NoteApiClient.getInstance().mergeAccountWithHuaweiAuthorizationCode(code)
-      if (merged === null || merged.ok !== true) {
-        this.showToast('绑定失败，请稍后重试')
+      if (merged !== null && merged.ok === true) {
+        await PreferencesService.getInstance().setHuaweiLoggedIn(true)
+        this.showToast(this.describeMergeOutcome(merged, '华为'))
+        await this.reload()
         return
       }
-      await PreferencesService.getInstance().setHuaweiLoggedIn(true)
-      this.showToast(this.describeMergeOutcome(merged, '华为'))
-      await this.reload()
+      const ticket = (merged?.rebind_ticket ?? '').trim()
+      if (merged !== null && merged.error === 'identity_owned_by_other' && ticket.length > 0) {
+        const ok = await this.confirmThirdPartyIdentityRebind('华为', ticket)
+        if (ok) {
+          await PreferencesService.getInstance().setHuaweiLoggedIn(true)
+        }
+        return
+      }
+      this.showToast('绑定失败，请稍后重试')
     } catch (error) {
       this.showToast(describeHuaweiLoginError(error as Object))
     } finally {
@@ -473,6 +530,10 @@ struct Profile {
         return '不支持清除已设置的密码'
       case 'sms_client_failed':
         return '短信服务暂时不可用'
+      case 'phone_bound_to_other':
+        return '该手机号已绑定其他账号'
+      case 'phone_rebind_race':
+        return '手机号状态已变化，请重试绑定'
       default:
         return `操作失败（${code}）`
     }

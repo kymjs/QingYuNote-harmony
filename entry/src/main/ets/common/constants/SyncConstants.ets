@@ -6,6 +6,8 @@ export class SyncConstants {
   static readonly qingyuCloudFieldPlatformUserId: string = 'platformUserId'
   /** 轻羽云未开通/过期时 `SyncService` 通过 EventHub 通知 UI 弹窗。 */
   static readonly qingyuSyncBlockedEvent: string = 'qingyu_sync_blocked'
+  /** 既未开通轻羽云、也未配置完整自建 WebDAV 时，仅 Toast，不弹开通弹窗。 */
+  static readonly cloudSyncNotConfiguredToastEvent: string = 'cloud_sync_not_configured_toast'
   /** `.qingyu-index.json` 中已彻底删除笔记 id 列表。 */
   static readonly remoteIndexFieldPermanentlyDeletedNoteIds: string = 'permanentlyDeletedNoteIds'
   /** 解析失效日期时，年份 ≥ 此值视为终身 VIP（与 Flutter `qingyuLifetimeMinYear` 一致）。 */

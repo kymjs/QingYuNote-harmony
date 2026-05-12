@@ -57,10 +57,15 @@ struct Index {
   private qingyuBlockedHandler = (): void => {
     void this.showQingyuSubscriptionBlockedDialog()
   }
+  private cloudSyncNotConfiguredHandler = (): void => {
+    this.showUserMessage('当前未配置云服务')
+  }
 
   aboutToAppear(): void {
     try {
       AppContextHolder.getContext().eventHub.on(SyncConstants.qingyuSyncBlockedEvent, this.qingyuBlockedHandler)
+      AppContextHolder.getContext().eventHub.on(SyncConstants.cloudSyncNotConfiguredToastEvent,
+        this.cloudSyncNotConfiguredHandler)
     } catch (_) {
       console.error('Index: eventHub.on qingyu_sync_blocked failed')
     }
@@ -70,6 +75,8 @@ struct Index {
   aboutToDisappear(): void {
     try {
       AppContextHolder.getContext().eventHub.off(SyncConstants.qingyuSyncBlockedEvent, this.qingyuBlockedHandler)
+      AppContextHolder.getContext().eventHub.off(SyncConstants.cloudSyncNotConfiguredToastEvent,
+        this.cloudSyncNotConfiguredHandler)
     } catch (_) {
       console.error('Index: eventHub.off qingyu_sync_blocked failed')
     }

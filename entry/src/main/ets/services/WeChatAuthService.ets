@@ -21,6 +21,8 @@ export interface WeChatLoginResultPayload {
   errStr?: string
   /** 个人信息页「绑定微信」流程由服务端先 merge 再回传，供页面区分于普通登录。 */
   mergeResult?: MergeAccountResponseBody
+  /** 第三方身份已被其他账号占用时，用于二次确认后 `confirmIdentityRebind`。 */
+  rebindTicket?: string
 }
 
 /** `login`：code 换 JWT；`profile_merge`：将 code 对应身份合并到当前 Bearer 用户（已登录）。 */
@@ -85,17 +87,25 @@ class WeChatAbilityHandler implements wxopensdk.WXApiEventHandler {
     try {
       if (intent === 'profile_merge') {
         const merged = await NoteApiClient.getInstance().mergeAccountWithWeChatCode(code)
-        if (merged === null || merged.ok !== true) {
+        if (merged !== null && merged.ok === true) {
+          await PreferencesService.getInstance().setWeChatLoggedIn(true)
           hub?.emit(WECHAT_LOGIN_RESULT_EVENT, {
-            success: false,
-            errStr: '绑定失败，请稍后重试'
+            success: true,
+            mergeResult: merged
           } as WeChatLoginResultPayload)
           return
         }
-        await PreferencesService.getInstance().setWeChatLoggedIn(true)
+        const ticket = (merged?.rebind_ticket ?? '').trim()
+        if (merged !== null && merged.error === 'identity_owned_by_other' && ticket.length > 0) {
+          hub?.emit(WECHAT_LOGIN_RESULT_EVENT, {
+            success: false,
+            rebindTicket: ticket
+          } as WeChatLoginResultPayload)
+          return
+        }
         hub?.emit(WECHAT_LOGIN_RESULT_EVENT, {
-          success: true,
-          mergeResult: merged
+          success: false,
+          errStr: '绑定失败，请稍后重试'
         } as WeChatLoginResultPayload)
         return
       }

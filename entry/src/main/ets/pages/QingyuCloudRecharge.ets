@@ -1,4 +1,3 @@
-import promptAction from '@ohos.promptAction'
 import type common from '@ohos.app.ability.common'
 import { Want } from '@kit.AbilityKit'
 import * as wxopensdk from '@tencent/wechat_open_sdk'
@@ -102,42 +101,16 @@ struct QingyuCloudRecharge {
     if (this.applying) {
       return
     }
-    const preview = await PreferencesService.getInstance().getQingyuCloudConfigPreview()
-    if (preview === null || !preview.enabled) {
-      this.showToast('请先使用微信登录并完成服务端绑定后再充值')
-      return
-    }
+    // 不在此用 getQingyuCloudConfigPreview：其依赖 /qingyu/webdav，仅订阅有效时才下发；
+    // 过期/未开通用户正是要充值，不能因拉不到 WebDAV 而拦截微信支付。
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (tok === null || tok.length === 0) {
       this.showToast('请先使用微信登录以开通支付')
       return
     }
-    const plan = this.selectedPlan
-    const yuan = QingyuRechargePlans.priceYuan(plan)
-    const planTitle = QingyuRechargePlans.title(plan)
-    const channelLabel = '微信支付'
-    const prompt = this.getUIContext().getPromptAction()
-    const dialogOpts: promptAction.ShowDialogOptions = {
-      title: `${channelLabel}`,
-      message: `确认购买「${planTitle}」¥${yuan}？支付成功后将为您的账号延长轻羽云服务有效期（按档位顺延）。`,
-      buttons: [
-        { text: '取消', color: '#6B7280' },
-        { text: '确认支付', color: '#0DAA4A' }
-      ]
-    }
-    try {
-      const result: promptAction.ShowDialogSuccessResponse = await prompt.showDialog(dialogOpts)
-      if (result.index !== 1) {
-        return
-      }
-    } catch (error) {
-      Logger.warn('QingyuCloudRecharge', `showDialog failed: ${JSON.stringify(error)}`)
-      return
-    }
-
     this.applying = true
     try {
-      const created = await NoteApiClient.getInstance().createOrder(plan)
+      const created = await NoteApiClient.getInstance().createOrder(this.selectedPlan)
       if (created === null || created.id === undefined || created.id <= 0) {
         this.showToast('创建订单失败，请稍后重试')
         return

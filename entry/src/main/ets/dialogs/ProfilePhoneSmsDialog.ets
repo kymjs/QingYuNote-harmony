@@ -1,4 +1,5 @@
 import { NoteApiClient } from '../services/NoteApiClient'
+import promptAction from '@ohos.promptAction'
 
 /** 绑定手机号编辑：须填写新号码 + 验证码。 */
 export interface ProfilePhoneSmsDialogParams {
@@ -119,6 +120,10 @@ export struct ProfilePhoneSmsDialog {
         return '服务暂时不可用'
       case 'phone_required':
         return '请输入手机号'
+      case 'phone_bound_to_other':
+        return '该手机号已绑定其他账号'
+      case 'phone_rebind_race':
+        return '手机号状态已变化，请重试绑定'
       case 'username_required':
         return '姓名不能为空'
       case 'clear_password_not_allowed':
@@ -187,7 +192,30 @@ export struct ProfilePhoneSmsDialog {
     const body: Record<string, Object> = {}
     body['phone'] = phone
     body['sms_verify_code'] = code
-    const err = await NoteApiClient.getInstance().patchProfile(body)
+    let err = await NoteApiClient.getInstance().patchProfile(body)
+    if (err === 'phone_bound_to_other') {
+      this.saving = false
+      let dlg: promptAction.ShowDialogSuccessResponse
+      try {
+        dlg = await this.getUIContext().getPromptAction().showDialog({
+          title: '该手机号已绑定其他账号',
+          message: '是否解除对方账号上的该手机号绑定，并绑定到当前账号？对方账号不会被注销，数据也不会合并。',
+          buttons: [
+            { text: '取消', color: '#6B7280' },
+            { text: '解绑并绑定', color: '#2563EB' }
+          ]
+        })
+      } catch (e) {
+        console.error(`ProfilePhoneSmsDialog rebind dialog: ${JSON.stringify(e)}`)
+        return
+      }
+      if (dlg.index !== 1) {
+        return
+      }
+      this.saving = true
+      body['unbind_phone_from_other'] = true
+      err = await NoteApiClient.getInstance().patchProfile(body)
+    }
     this.saving = false
     if (err !== null) {
       this.showToast(this.mapPatchError(err))

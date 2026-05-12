@@ -5,7 +5,7 @@ import { getAppVersionName } from '../services/AppUpdateService'
 @Entry
 @Component
 struct About {
-  @State appVersionLine: string = '轻羽云笔记 v1.0.0'
+  @State appVersionLine: string = '轻羽云笔记 v1.0.1'
 
   aboutToAppear(): void {
     void getAppVersionName().then((v: string) => {

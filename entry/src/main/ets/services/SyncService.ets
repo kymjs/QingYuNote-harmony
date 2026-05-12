@@ -570,11 +570,33 @@ export class SyncService {
       return
     }
     this.lastQingyuBlockNotifyMs = now
+    void this.emitQingyuBlockedUi()
+  }
+
+  private async emitQingyuBlockedUi(): Promise<void> {
+    const hub = AppContextHolder.tryGetContext()?.eventHub
+    if (hub === undefined) {
+      return
+    }
+    let hasSelfHosted = false
     try {
-      AppContextHolder.tryGetContext()?.eventHub.emit(
-        SyncConstants.qingyuSyncBlockedEvent, new QingyuSyncBlockedEventPayload())
+      const ctx = AppContextHolder.tryGetContext()
+      if (ctx !== undefined) {
+        await PreferencesService.getInstance().init(ctx)
+      }
+      const snapshot = await PreferencesService.getInstance().getSavedCustomWebDAVConfigSnapshot()
+      hasSelfHosted = snapshot !== null && snapshot.enabled
     } catch (_) {
-      Logger.warn('SyncService', 'emit qingyu_sync_blocked failed')
+      hasSelfHosted = false
+    }
+    try {
+      if (!hasSelfHosted) {
+        hub.emit(SyncConstants.cloudSyncNotConfiguredToastEvent, new QingyuSyncBlockedEventPayload())
+      } else {
+        hub.emit(SyncConstants.qingyuSyncBlockedEvent, new QingyuSyncBlockedEventPayload())
+      }
+    } catch (_) {
+      Logger.warn('SyncService', 'emit qingyu_sync_blocked / cloud_sync_not_configured_toast failed')
     }
   }
 

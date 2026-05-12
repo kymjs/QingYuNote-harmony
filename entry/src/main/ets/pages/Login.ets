@@ -33,6 +33,9 @@ struct Login {
     if (data.mergeResult !== undefined) {
       return
     }
+    if ((data.rebindTicket ?? '').trim().length > 0) {
+      return
+    }
     if (data.success) {
       void this.navigateAfterLogin()
       return

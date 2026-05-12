@@ -69,11 +69,13 @@ export interface WeChatPrepayBody {
   sign_type?: string
 }
 
-/** `POST /api/v1/me/merge/*` 响应：action 为 noop（已绑定） / linked（新绑定） / merged（已并入另一账号）。 */
+/** `POST /api/v1/me/merge/*` 响应：action 为 noop / linked / relinked；冲突时 HTTP 409 且含 `rebind_ticket`。 */
 export interface MergeAccountResponseBody {
   ok?: boolean
   action?: string
   absorbed_user_id?: number
+  error?: string
+  rebind_ticket?: string
 }
 
 /** `POST /api/v1/register/captcha/new` */
@@ -139,6 +141,43 @@ export class NoteApiClient {
       }
     }
     return ''
+  }
+
+  private async postAuthJsonStatus(path: string, bodyJson: string, bearer: string): Promise<{
+    status: number
+    obj: Object | null
+  }> {
+    const req = http.createHttp()
+    try {
+      const resp = await req.request(this.joinUrl(path), {
+        method: http.RequestMethod.POST,
+        header: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json; charset=utf-8',
+          'Authorization': `Bearer ${bearer}`
+        },
+        extraData: bodyJson,
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000
+      })
+      const status = resp.responseCode
+      const text = (resp.result as string) ?? ''
+      let obj: Object | null = null
+      if (text.trim().length > 0) {
+        try {
+          obj = JSON.parse(text) as Object
+        } catch (_) {
+          obj = null
+        }
+      }
+      return { status, obj }
+    } catch (e) {
+      Logger.warn('NoteApiClient', `postAuthJsonStatus ${path}: ${JSON.stringify(e)}`)
+      return { status: 0, obj: null }
+    } finally {
+      req.destroy()
+    }
   }
 
   private async requestJson(method: http.RequestMethod, path: string, body?: string, bearer?: string): Promise<Object | null> {
@@ -396,7 +435,7 @@ export class NoteApiClient {
   }
 
   /**
-   * 将微信身份合并到当前登录账号；若该微信原属另一用户，则把对方账号数据并入（见服务端说明）。
+   * 将微信身份绑定到当前登录账号；若已绑定到其他用户则返回 409 与 `rebind_ticket`。
    */
   async mergeAccountWithWeChatCode(code: string): Promise<MergeAccountResponseBody | null> {
     const trimmed = code.trim()
@@ -407,17 +446,22 @@ export class NoteApiClient {
     if (tok === null || tok.length === 0) {
       return null
     }
-    const obj = await this.requestJson(http.RequestMethod.POST, '/api/v1/me/merge/wechat', JSON.stringify({
-      code: trimmed
-    }), tok)
+    const { status, obj } = await this.postAuthJsonStatus(
+      '/api/v1/me/merge/wechat',
+      JSON.stringify({ code: trimmed }),
+      tok
+    )
     if (obj === null) {
       return null
     }
-    return obj as MergeAccountResponseBody
+    if (status === 200 || status === 409) {
+      return obj as MergeAccountResponseBody
+    }
+    return null
   }
 
   /**
-   * 将华为身份合并到当前登录账号（凭据体与 link 相同，语义为可吸收另一用户）。
+   * 将华为身份绑定到当前登录账号；若已绑定到其他用户则返回 409 与 `rebind_ticket`。
    */
   async mergeAccountWithHuaweiAuthorizationCode(code: string, redirectUri?: string): Promise<MergeAccountResponseBody | null> {
     const trimmed = code.trim()
@@ -433,11 +477,18 @@ export class NoteApiClient {
     if (redir.length > 0) {
       body['redirect_uri'] = redir
     }
-    const obj = await this.requestJson(http.RequestMethod.POST, '/api/v1/me/merge/huawei', JSON.stringify(body), tok)
+    const { status, obj } = await this.postAuthJsonStatus(
+      '/api/v1/me/merge/huawei',
+      JSON.stringify(body),
+      tok
+    )
     if (obj === null) {
       return null
     }
-    return obj as MergeAccountResponseBody
+    if (status === 200 || status === 409) {
+      return obj as MergeAccountResponseBody
+    }
+    return null
   }
 
   async fetchProfile(): Promise<ProfileBody | null> {
@@ -1068,7 +1119,28 @@ export class NoteApiClient {
     return 'unknown_error'
   }
 
-  /** 将 Apple 身份合并到当前登录账号。 */
+  /** 确认 `rebind_ticket`，将第三方身份从其他账号解绑并绑定到当前用户。 */
+  async confirmIdentityRebind(rebindTicket: string): Promise<MergeAccountResponseBody | null> {
+    const trimmed = rebindTicket.trim()
+    if (trimmed.length === 0) {
+      return null
+    }
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      return null
+    }
+    const { status, obj } = await this.postAuthJsonStatus(
+      '/api/v1/me/rebind/identity/confirm',
+      JSON.stringify({ rebind_ticket: trimmed }),
+      tok
+    )
+    if (obj === null || status !== 200) {
+      return null
+    }
+    return obj as MergeAccountResponseBody
+  }
+
+  /** 将 Apple 身份绑定到当前登录账号；冲突时返回 409 与 `rebind_ticket`。 */
   async mergeAccountWithAppleIdentityToken(identityToken: string): Promise<MergeAccountResponseBody | null> {
     const trimmed = identityToken.trim()
     if (trimmed.length === 0) {
@@ -1078,8 +1150,7 @@ export class NoteApiClient {
     if (tok === null || tok.length === 0) {
       return null
     }
-    const obj = await this.requestJson(
-      http.RequestMethod.POST,
+    const { status, obj } = await this.postAuthJsonStatus(
       '/api/v1/me/merge/apple',
       JSON.stringify({ identity_token: trimmed }),
       tok
@@ -1087,6 +1158,9 @@ export class NoteApiClient {
     if (obj === null) {
       return null
     }
-    return obj as MergeAccountResponseBody
+    if (status === 200 || status === 409) {
+      return obj as MergeAccountResponseBody
+    }
+    return null
   }
 }

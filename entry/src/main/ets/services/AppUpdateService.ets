@@ -95,6 +95,6 @@ export async function getAppVersionName(): Promise<string> {
     return info.versionName
   } catch (e) {
     console.error(`getAppVersionName: ${JSON.stringify(e)}`)
-    return '1.0.0'
+    return '1.0.1'
   }
 }
