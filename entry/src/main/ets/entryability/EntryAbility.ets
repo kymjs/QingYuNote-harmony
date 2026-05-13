@@ -9,6 +9,7 @@ import { SyncService } from '../services/SyncService'
 import { AppScheduler } from '../services/AppScheduler'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { handleWeChatWant } from '../services/WeChatAuthService'
+import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 
 const DOMAIN = 0x0000
 const DEFERRED_SERVICES_DELAY_MS = 1500
@@ -86,6 +87,10 @@ export default class EntryAbility extends UIAbility {
 
   private async prepareCriticalServices(): Promise<void> {
     await PreferencesService.getInstance().init(this.context)
+    const filesDir = this.context.filesDir ?? ''
+    void RemoteAppConfigService.fetchAndCacheToFilesDir(filesDir).catch((error: Error) => {
+      hilog.info(DOMAIN, 'noteTag', 'RemoteAppConfig fetch failed: %{public}s', JSON.stringify(error))
+    })
     await CryptoService.getInstance().init()
     await NoteRepository.getInstance().init(this.context)
     await SyncService.getInstance().init()
