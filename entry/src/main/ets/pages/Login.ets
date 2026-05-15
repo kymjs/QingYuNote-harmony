@@ -1,4 +1,5 @@
-import type common from '@ohos.app.ability.common'
+import { Want } from '@kit.AbilityKit'
+import common from '@ohos.app.ability.common'
 
 import { describeHuaweiLoginError, startHuaweiLogin } from '../services/HuaweiAuthService'
 import { NoteApiClient } from '../services/NoteApiClient'
@@ -203,6 +204,23 @@ struct Login {
     }
   }
 
+  private async openInBrowser(url: string): Promise<void> {
+    const ctx = this.obtainUiAbilityContext()
+    if (ctx === undefined) {
+      return
+    }
+    try {
+      const want: Want = {
+        action: 'ohos.want.action.viewData',
+        entities: ['entity.system.browsable'],
+        uri: url
+      }
+      await ctx.startAbility(want)
+    } catch (e) {
+      console.error(`Login openInBrowser: ${JSON.stringify(e)}`)
+    }
+  }
+
   build() {
     Column({ space: 0 }) {
       Column({ space: 10 }) {
@@ -327,6 +345,30 @@ struct Login {
             .onClick((): void => {
               void this.onAccountPasswordSubmit()
             })
+
+          Row() {
+            Text('登录即表示您已阅读并同意')
+              .fontSize(12)
+              .fontColor($r('app.color.tertiary_text'))
+            Text('《隐私政策》')
+              .fontSize(12)
+              .fontColor($r('app.color.accent'))
+              .onClick((): void => {
+                void this.openInBrowser('https://note.kymjs.com/private/harmony.html')
+              })
+            Text('和')
+              .fontSize(12)
+              .fontColor($r('app.color.tertiary_text'))
+            Text('《服务协议》')
+              .fontSize(12)
+              .fontColor($r('app.color.accent'))
+              .onClick((): void => {
+                void this.openInBrowser('https://note.kymjs.com/private/terms.html')
+              })
+          }
+          .width('100%')
+          .justifyContent(FlexAlign.Center)
+          .margin({ top: 12 })
 
           Row() {
             Divider()
