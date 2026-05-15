@@ -7,7 +7,6 @@ import { buildQingyuCloudWebDavConfig } from './QingyuCloudConfigHelper'
 
 const PREFERENCES_NAME = 'qingyu_preferences'
 const TAG_LIST_KEY = 'note_tags'
-const WECHAT_LOGGED_IN_KEY = 'account_wechat_logged_in'
 const HUAWEI_LOGGED_IN_KEY = 'account_huawei_logged_in'
 const NOTE_API_USER_ID_KEY = 'note_api_user_id'
 const NOTE_API_ACCESS_TOKEN_KEY = 'note_api_access_token'
@@ -396,26 +395,6 @@ export class PreferencesService {
     }
   }
 
-  async setWeChatLoggedIn(loggedIn: boolean): Promise<void> {
-    try {
-      const store = this.ensureStore()
-      store.putSync(WECHAT_LOGGED_IN_KEY, loggedIn)
-      await store.flush()
-    } catch (error) {
-      Logger.warn('PreferencesService', `setWeChatLoggedIn failed: ${this.describeError(error as Object)}`)
-      throw this.toRuntimeError(error as Object)
-    }
-  }
-
-  async isWeChatLoggedIn(): Promise<boolean> {
-    try {
-      return this.ensureStore().getSync(WECHAT_LOGGED_IN_KEY, false) as boolean
-    } catch (error) {
-      Logger.warn('PreferencesService', `isWeChatLoggedIn failed: ${this.describeError(error as Object)}`)
-      return false
-    }
-  }
-
   async setHuaweiLoggedIn(loggedIn: boolean): Promise<void> {
     try {
       const store = this.ensureStore()
@@ -593,7 +572,6 @@ export class PreferencesService {
   async clearLoginSession(): Promise<void> {
     try {
       const store = this.ensureStore()
-      store.putSync(WECHAT_LOGGED_IN_KEY, false)
       store.putSync(HUAWEI_LOGGED_IN_KEY, false)
       store.putSync(NOTE_API_USER_ID_KEY, '')
       store.putSync(GUEST_MODE_KEY, false)
@@ -627,16 +605,19 @@ export class PreferencesService {
       if (serialized.trim().length === 0) {
         return []
       }
-      let parsed: Object = []
+      let parsed: string[] = []
       try {
-        parsed = JSON.parse(serialized)
+        const raw: Object = JSON.parse(serialized) as Object
+        if (Array.isArray(raw)) {
+          parsed = raw as string[]
+        }
       } catch (_) {
         parsed = []
       }
       if (!Array.isArray(parsed)) {
         return []
       }
-      return this.normalizeTags(parsed as string[])
+      return this.normalizeTags(parsed)
     } catch (error) {
       Logger.warn('PreferencesService', `getNoteTags failed: ${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)

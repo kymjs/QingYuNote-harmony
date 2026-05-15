@@ -39,7 +39,7 @@ struct CloudSyncSettings {
   @State qingyuSubShowRenew: boolean = false
   @State qingyuSubShowConfirm: boolean = false
   @State qingyuSubLoading: boolean = false
-  @State qingyuSubButtonLabel: string = '立即续费'
+  @State qingyuSubButtonLabel: string = '立即续期'
   /** 与 Flutter `CloudSyncSettingPage` `_guestMode` 对齐 */
   @State guestMode: boolean = false
   private storedEncryptedPassword: string = ''
@@ -124,15 +124,15 @@ struct CloudSyncSettings {
       this.qingyuSubHint = '暂时无法获取云服务状态'
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
-      this.qingyuSubButtonLabel = '立即续费'
+      this.qingyuSubButtonLabel = '立即续期'
     } finally {
       this.qingyuSubLoading = false
     }
   }
 
   private applyQingyuSubscriptionStatus(status: QingyuCloudSubscriptionStatus): void {
-    if (status.kind === 'need_wechat_login') {
-      this.qingyuSubHint = '请使用微信登录以使用轻羽云服务与支付'
+    if (status.kind === 'need_note_api_session') {
+      this.qingyuSubHint = '请先登录账号以使用轻羽云服务与支付'
       this.qingyuSubShowRenew = false
       this.qingyuSubShowConfirm = false
       return
@@ -153,14 +153,14 @@ struct CloudSyncSettings {
       this.qingyuSubHint = '云服务已过期'
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
-      this.qingyuSubButtonLabel = '立即续费'
+      this.qingyuSubButtonLabel = '立即续期'
       return
     }
     if (status.kind === 'active') {
       this.qingyuSubHint = `云服务有效期至：${status.expiresDisplayYmd}`
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = true
-      this.qingyuSubButtonLabel = '立即续费'
+      this.qingyuSubButtonLabel = '立即续期'
       return
     }
     if (status.kind === 'not_purchased' || status.kind === 'not_configured') {
@@ -174,7 +174,7 @@ struct CloudSyncSettings {
       this.qingyuSubHint = '暂时无法获取云服务状态'
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
-      this.qingyuSubButtonLabel = '立即续费'
+      this.qingyuSubButtonLabel = '立即续期'
       return
     }
     if (status.kind === 'malformed') {

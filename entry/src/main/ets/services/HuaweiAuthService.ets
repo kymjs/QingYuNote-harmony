@@ -44,7 +44,7 @@ export async function obtainHuaweiAuthorizationCode(_context: common.UIAbilityCo
   return authorizationCode
 }
 
-/** 拉起华为账号登录；authorization_code 交由服务端换 JWT（与微信登录同一套账号体系）。 */
+/** 拉起华为账号登录；authorization_code 交由服务端换 JWT（与手机号登录共用同一套账号体系）。 */
 export async function startHuaweiLogin(_context: common.UIAbilityContext): Promise<void> {
   const authorizationCode = await obtainHuaweiAuthorizationCode(_context)
   const exchanged = await NoteApiClient.getInstance().exchangeHuaweiAuthorizationCode(authorizationCode)

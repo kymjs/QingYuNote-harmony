@@ -7,7 +7,7 @@ import type {
   QingyuCloudStatusFetchFailed,
   QingyuCloudStatusLifetime,
   QingyuCloudStatusMalformed,
-  QingyuCloudStatusNeedWechatLogin,
+  QingyuCloudStatusNeedNoteApiSession,
   QingyuCloudStatusNotConfigured,
   QingyuCloudStatusNotPurchased,
   QingyuCloudStatusNotQingyu,
@@ -186,7 +186,7 @@ export class WebDAVClient {
     }
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (tok === null || tok.length === 0) {
-      const need: QingyuCloudStatusNeedWechatLogin = { kind: 'need_wechat_login' }
+      const need: QingyuCloudStatusNeedNoteApiSession = { kind: 'need_note_api_session' }
       return need
     }
     let body: SubscriptionBody | null = null

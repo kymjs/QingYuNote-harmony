@@ -104,7 +104,7 @@ struct NoteEdit {
     for (const n of allNotes) {
       fromNotes.push(...n.tags)
     }
-    this.tagPool = this.normalizeTags([...fromNotes, ...stored, ...this.noteTags])
+    this.tagPool = this.normalizeTags(fromNotes.concat(stored).concat(this.noteTags))
   }
 
   private normalizeTags(tags: string[]): string[] {

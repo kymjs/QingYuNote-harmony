@@ -346,10 +346,7 @@ struct Index {
   private async refreshTagCatalog(notes: Note[]): Promise<void> {
     await this.ensurePreferencesInitialized()
     const storedTags = await PreferencesService.getInstance().getNoteTags()
-    const mergedTags = this.normalizeTags([
-      ...this.extractTagsFromNotes(notes),
-      ...storedTags
-    ])
+    const mergedTags = this.normalizeTags(this.extractTagsFromNotes(notes).concat(storedTags))
     this.tags = mergedTags
     if (this.selectedTag !== ALL_NOTES_TAG && !mergedTags.includes(this.selectedTag)) {
       this.selectedTag = ALL_NOTES_TAG

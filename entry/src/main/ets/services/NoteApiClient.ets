@@ -56,17 +56,8 @@ export interface OrderBody {
   plan_id?: string
   amount_total?: number
   status?: string
-}
-
-export interface WeChatPrepayBody {
-  app_id?: string
-  partner_id?: string
-  prepay_id?: string
-  package?: string
-  nonce_str?: string
-  timestamp?: string
-  sign?: string
-  sign_type?: string
+  /** 支付成功后为网关侧订单号（苹果 transactionId / 华为 orderId）。 */
+  gateway_transaction_id?: string
 }
 
 /** `POST /api/v1/me/merge/*` 响应：action 为 noop / linked / relinked；冲突时 HTTP 409 且含 `rebind_ticket`。 */
@@ -92,7 +83,7 @@ export interface RedeemSuccessBody {
 export type RedeemCodeResult = RedeemSuccessBody | string
 
 /** `postAuthJsonStatus` 的 HTTP 状态与解析后的 JSON 对象。 */
-interface PostAuthJsonStatusResult {
+export interface PostAuthJsonStatusResult {
   status: number
   obj: Object | null
 }
@@ -221,30 +212,6 @@ export class NoteApiClient {
     } finally {
       req.destroy()
     }
-  }
-
-  /** 微信 OAuth code 换 JWT，并写入 Preferences（token + 平台 users.id）。 */
-  async exchangeWeChatCode(code: string): Promise<boolean> {
-    const trimmed = code.trim()
-    if (trimmed.length === 0) {
-      return false
-    }
-    const payload = JSON.stringify({ code: trimmed })
-    const obj = await this.requestJson(http.RequestMethod.POST, '/api/v1/auth/wechat', payload, undefined)
-    if (obj === null) {
-      return false
-    }
-    const raw = obj as AuthLoginResponseBody
-    const token = raw.access_token?.trim() ?? ''
-    const expiresIn = raw.expires_in ?? 604800
-    const uid = parseAuthLoginUserId(obj)
-    if (token.length === 0 || uid.length === 0) {
-      return false
-    }
-    await PreferencesService.getInstance().setNoteApiSession(token, expiresIn)
-    await PreferencesService.getInstance().setNoteApiUserId(uid)
-    await PreferencesService.getInstance().setWeChatLoggedIn(true)
-    return true
   }
 
   /**
@@ -413,19 +380,6 @@ export class NoteApiClient {
     return obj as OrderBody
   }
 
-  async wechatPrepay(orderId: number): Promise<WeChatPrepayBody | null> {
-    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
-    if (tok === null || tok.length === 0) {
-      return null
-    }
-    const path = `/api/v1/orders/${orderId}/wechat/prepay`
-    const obj = await this.requestJson(http.RequestMethod.POST, path, JSON.stringify({}), tok)
-    if (obj === null) {
-      return null
-    }
-    return obj as WeChatPrepayBody
-  }
-
   async getOrder(orderId: number): Promise<OrderBody | null> {
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (tok === null || tok.length === 0) {
@@ -440,31 +394,39 @@ export class NoteApiClient {
   }
 
   /**
-   * 将微信身份绑定到当前登录账号；若已绑定到其他用户则返回 409 与 `rebind_ticket`。
+   * 获取支付宝 App 支付 orderStr（`alipay.trade.app.pay`），与 Android/Flutter 一致。
+   * 成功时 HTTP 200 且 JSON 含 `order_str`、`app_id`；配置缺失等为 503 等，body 仍可能为 JSON。
    */
-  async mergeAccountWithWeChatCode(code: string): Promise<MergeAccountResponseBody | null> {
-    const trimmed = code.trim()
-    if (trimmed.length === 0) {
-      return null
-    }
+  async alipayAppPayOrderStr(orderId: number): Promise<PostAuthJsonStatusResult> {
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (tok === null || tok.length === 0) {
-      return null
+      const empty: PostAuthJsonStatusResult = { status: 0, obj: null }
+      return empty
     }
-    const mergeWechat = await this.postAuthJsonStatus(
-      '/api/v1/me/merge/wechat',
-      JSON.stringify({ code: trimmed }),
+    return await this.postAuthJsonStatus(`/api/v1/orders/${orderId}/alipay/app-pay`, '{}', tok)
+  }
+
+  /**
+   * 上报华为 IAP purchaseToken，服务端调 AGC 校验后标记订单已支付并顺延订阅。
+   * 4xx 时仍可能返回 JSON（含 payment_verified），请用 PostAuthJsonStatusResult 读取 status。
+   */
+  async huaweiVerifyOrder(orderId: number, purchaseToken: string, productId: string,
+    accountFlag: number): Promise<PostAuthJsonStatusResult> {
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      const empty: PostAuthJsonStatusResult = { status: 0, obj: null }
+      return empty
+    }
+    const payload: Record<string, string | number> = {
+      'purchase_token': purchaseToken.trim(),
+      'product_id': productId.trim(),
+      'account_flag': accountFlag
+    }
+    return await this.postAuthJsonStatus(
+      `/api/v1/orders/${orderId}/huawei/verify`,
+      JSON.stringify(payload),
       tok
     )
-    const status = mergeWechat.status
-    const obj = mergeWechat.obj
-    if (obj === null) {
-      return null
-    }
-    if (status === 200 || status === 409) {
-      return obj as MergeAccountResponseBody
-    }
-    return null
   }
 
   /**

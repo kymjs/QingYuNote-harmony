@@ -1,15 +1,8 @@
 import type common from '@ohos.app.ability.common'
 
-import { AppContextHolder } from '../services/AppContextHolder'
 import { describeHuaweiLoginError, startHuaweiLogin } from '../services/HuaweiAuthService'
 import { NoteApiClient } from '../services/NoteApiClient'
 import { PreferencesService } from '../services/PreferencesService'
-import {
-  startWeChatLogin,
-  WECHAT_LOGIN_RESULT_EVENT,
-  WeChatLoginResultPayload,
-  wxApi
-} from '../services/WeChatAuthService'
 
 /** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展，进入首页前清空以免返回登录页。 */
 interface RouterWithOptionalClear {
@@ -28,27 +21,6 @@ struct Login {
   @State phone: string = ''
   @State password: string = ''
   @State accountBusy: boolean = false
-  private loginResultCallback = (payload: Object): void => {
-    const data = payload as WeChatLoginResultPayload
-    if (data.mergeResult !== undefined) {
-      return
-    }
-    if ((data.rebindTicket ?? '').trim().length > 0) {
-      return
-    }
-    if (data.success) {
-      void this.navigateAfterLogin()
-      return
-    }
-    const msg =
-      data.errStr ??
-      (data.errCode !== undefined ? `授权失败（${data.errCode}）` : '微信授权未完成')
-    try {
-      this.getUIContext().getPromptAction().showToast({ message: msg, duration: 2000 })
-    } catch (_) {
-      console.error(`Login toast failed: ${msg}`)
-    }
-  }
 
   private obtainUiAbilityContext(): common.UIAbilityContext | undefined {
     const host = this.getUIContext().getHostContext()
@@ -112,11 +84,6 @@ struct Login {
   }
 
   aboutToAppear(): void {
-    try {
-      AppContextHolder.getContext().eventHub.on(WECHAT_LOGIN_RESULT_EVENT, this.loginResultCallback)
-    } catch (_) {
-      console.error('Login: eventHub.on failed')
-    }
     void this.loadPendingReturnTarget()
   }
 
@@ -129,14 +96,6 @@ struct Login {
       this.pendingReturnTarget = await PreferencesService.getInstance().peekLoginReturnTarget()
     } catch (_) {
       this.pendingReturnTarget = ''
-    }
-  }
-
-  aboutToDisappear(): void {
-    try {
-      AppContextHolder.getContext().eventHub.off(WECHAT_LOGIN_RESULT_EVENT, this.loginResultCallback)
-    } catch (_) {
-      console.error('Login: eventHub.off failed')
     }
   }
 
@@ -223,34 +182,6 @@ struct Login {
       void this.navigateAfterLogin()
     } finally {
       this.accountBusy = false
-    }
-  }
-
-  private async onWeChatTap(): Promise<void> {
-    if (!wxApi.isWXAppInstalled()) {
-      try {
-        this.getUIContext().getPromptAction().showToast({
-          message: '未安装微信，请先安装微信客户端',
-          duration: 2000
-        })
-      } catch (_) {
-        console.error('Login: showToast failed')
-      }
-      return
-    }
-    const ctx = this.obtainUiAbilityContext()
-    if (ctx === undefined) {
-      return
-    }
-    try {
-      await startWeChatLogin(ctx)
-    } catch (error) {
-      console.error(`Login: sendReq failed: ${JSON.stringify(error)}`)
-      try {
-        this.getUIContext().getPromptAction().showToast({ message: '无法拉起微信，请稍后重试', duration: 2000 })
-      } catch (_) {
-        console.error('Login: showToast failed')
-      }
     }
   }
 
@@ -417,7 +348,7 @@ struct Login {
           .margin({ top: 18 })
           .alignItems(VerticalAlign.Center)
 
-          Row({ space: 36 }) {
+          Row({ space: 0 }) {
             Image($r('app.media.ic_login_huawei'))
               .width(48)
               .height(48)
@@ -432,23 +363,6 @@ struct Login {
               .onClick((): void => {
                 if (!this.accountBusy) {
                   void this.onHuaweiTap()
-                }
-              })
-
-            Image($r('app.media.ic_login_wechat'))
-              .width(48)
-              .height(48)
-              .borderRadius(24)
-              .objectFit(ImageFit.Cover)
-              .shadow({
-                radius: 6,
-                color: $r('app.color.shadow_color'),
-                offsetX: 0,
-                offsetY: 2
-              })
-              .onClick((): void => {
-                if (!this.accountBusy) {
-                  void this.onWeChatTap()
                 }
               })
           }

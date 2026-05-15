@@ -7,11 +7,6 @@
     "deviceTypes": [
       "phone"
     ],
-    "querySchemes": [
-      "weixin",
-      "wxopensdk",
-      "weixing"
-    ],
     "deliveryWithInstall": true,
     "installationFree": false,
     "metadata": [
@@ -25,6 +20,9 @@
       }
     ],
     "pages": "$profile:main_pages",
+    "querySchemes": [
+      "alipays"
+    ],
     "requestPermissions": [
       {
         "name": "ohos.permission.INTERNET",
@@ -35,8 +33,7 @@
           ],
           "when": "always"
         }
-      },
-      {
+      },     {
         "name": "ohos.permission.GET_NETWORK_INFO",
         "reason": "$string:permission_network_info_reason",
         "usedScene": {

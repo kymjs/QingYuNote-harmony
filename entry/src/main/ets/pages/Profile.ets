@@ -2,11 +2,7 @@ import type common from '@ohos.app.ability.common'
 import { ComponentContent } from '@kit.ArkUI'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import fs from '@ohos.file.fs'
-import {
-  PROFILE_ACCOUNT_BIND_SUPPORTED_HUAWEI,
-  PROFILE_ACCOUNT_BIND_SUPPORTED_WECHAT
-} from '../common/constants/ProfileAccountBindConstants'
-import { WECHAT_APP_ID } from '../common/constants/WeChatConstants'
+import { PROFILE_ACCOUNT_BIND_SUPPORTED_HUAWEI } from '../common/constants/ProfileAccountBindConstants'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { obtainHuaweiAuthorizationCode, describeHuaweiLoginError } from '../services/HuaweiAuthService'
 import {
@@ -14,13 +10,6 @@ import {
   NoteApiClient,
   type ProfileBody
 } from '../services/NoteApiClient'
-import {
-  setWeChatOAuthIntent,
-  startWeChatLogin,
-  WECHAT_LOGIN_RESULT_EVENT,
-  WeChatLoginResultPayload,
-  wxApi
-} from '../services/WeChatAuthService'
 import { PreferencesService } from '../services/PreferencesService'
 import { Logger } from '../common/utils/Logger'
 import promptAction from '@ohos.promptAction'
@@ -58,53 +47,12 @@ struct Profile {
   @State profile: ProfileBody | null = null
   /** 登录会话写入的 Note API `users.id`，用于「第 xx 名用户」。 */
   @State noteApiUserId: string = ''
-  /** 正在拉起 OAuth（华为同步 / 微信异步回调），用于禁用行重复点击。 */
+  /** 正在拉起华为 OAuth，用于禁用行重复点击。 */
   @State bindBusy: boolean = false
-  /** 仅在个人信息发起微信绑定时为 true，用于过滤 EventHub 中与登录页无关的事件。 */
-  private expectingWeChatBind: boolean = false
-
-  private weChatBindResultCallback = (payload: Object): void => {
-    if (!this.expectingWeChatBind) {
-      return
-    }
-    this.expectingWeChatBind = false
-    this.bindBusy = false
-    const data = payload as WeChatLoginResultPayload
-    if (!data.success) {
-      const ticket = (data.rebindTicket ?? '').trim()
-      if (ticket.length > 0) {
-        void this.handleWeChatIdentityRebindPrompt(ticket)
-        return
-      }
-      const msg =
-        data.errStr ??
-        (data.errCode !== undefined ? `授权失败（${data.errCode}）` : '微信绑定未完成')
-      this.showToast(msg)
-      return
-    }
-    if (data.mergeResult !== undefined) {
-      this.showToast(this.describeMergeOutcome(data.mergeResult, '微信'))
-      void this.reload()
-    }
-  }
 
   aboutToAppear(): void {
     void this.bootstrap()
-    try {
-      AppContextHolder.getContext().eventHub.on(WECHAT_LOGIN_RESULT_EVENT, this.weChatBindResultCallback)
-    } catch (e) {
-      Logger.warn('Profile', `eventHub.on wechat bind failed: ${JSON.stringify(e)}`)
-    }
   }
-
-  aboutToDisappear(): void {
-    try {
-      AppContextHolder.getContext().eventHub.off(WECHAT_LOGIN_RESULT_EVENT, this.weChatBindResultCallback)
-    } catch (e) {
-      Logger.warn('Profile', `eventHub.off wechat bind failed: ${JSON.stringify(e)}`)
-    }
-  }
-
   private async bootstrap(): Promise<void> {
     const context = AppContextHolder.tryGetContext()
     if (context !== undefined) {
@@ -246,13 +194,6 @@ struct Profile {
     return true
   }
 
-  private async handleWeChatIdentityRebindPrompt(ticket: string): Promise<void> {
-    const ok = await this.confirmThirdPartyIdentityRebind('微信', ticket)
-    if (ok) {
-      await PreferencesService.getInstance().setWeChatLoggedIn(true)
-    }
-  }
-
   private async onTapBindHuawei(): Promise<void> {
     if (this.profile === null || !PROFILE_ACCOUNT_BIND_SUPPORTED_HUAWEI) {
       return
@@ -288,41 +229,6 @@ struct Profile {
       this.showToast(describeHuaweiLoginError(error as Object))
     } finally {
       this.bindBusy = false
-    }
-  }
-
-  private async onTapBindWeChat(): Promise<void> {
-    if (this.profile === null || !PROFILE_ACCOUNT_BIND_SUPPORTED_WECHAT) {
-      return
-    }
-    if (this.profile.wechat_linked === true || this.bindBusy) {
-      return
-    }
-    const wid = WECHAT_APP_ID.trim()
-    if (wid.length === 0 || wid === 'wx0000000000000000') {
-      this.showToast('请在 WeChatConstants 中配置微信开放平台移动应用 AppID')
-      return
-    }
-    if (!wxApi.isWXAppInstalled()) {
-      this.showToast('未安装微信，请先安装微信客户端')
-      return
-    }
-    const ctx = this.obtainUiAbilityContext()
-    if (ctx === undefined) {
-      this.showToast('无法获取界面上下文')
-      return
-    }
-    this.expectingWeChatBind = true
-    this.bindBusy = true
-    setWeChatOAuthIntent('profile_merge')
-    try {
-      await startWeChatLogin(ctx)
-    } catch (error) {
-      this.expectingWeChatBind = false
-      this.bindBusy = false
-      setWeChatOAuthIntent('login')
-      Logger.warn('Profile', `startWeChatLogin bind: ${JSON.stringify(error)}`)
-      this.showToast('无法拉起微信，请稍后重试')
     }
   }
 
@@ -1100,17 +1006,6 @@ struct Profile {
                   void this.onTapBindHuawei()
                 },
                 this.thirdPartyRowInteractive(PROFILE_ACCOUNT_BIND_SUPPORTED_HUAWEI, this.profile!.huawei_linked)
-              )
-              this.rowDivider()
-              this.kvRow(
-                '微信账号',
-                this.bindLabel(this.profile!.wechat_linked),
-                this.thirdPartyRowInteractive(PROFILE_ACCOUNT_BIND_SUPPORTED_WECHAT, this.profile!.wechat_linked),
-                false,
-                (): void => {
-                  void this.onTapBindWeChat()
-                },
-                this.thirdPartyRowInteractive(PROFILE_ACCOUNT_BIND_SUPPORTED_WECHAT, this.profile!.wechat_linked)
               )
             }
             .width('100%')

@@ -1,38 +1,66 @@
-import type common from '@ohos.app.ability.common'
 import { Want } from '@kit.AbilityKit'
-import * as wxopensdk from '@tencent/wechat_open_sdk'
+import type { WebDAVConfig } from '../common/model/Note'
 import { AppContextHolder } from '../services/AppContextHolder'
-import { NoteApiClient } from '../services/NoteApiClient'
 import { PreferencesService } from '../services/PreferencesService'
-import {
-  startWeChatAppPay,
-  WECHAT_PAY_RESULT_EVENT,
-  type WeChatPayResultPayload
-} from '../services/WeChatAuthService'
+import { Logger } from '../common/utils/Logger'
+import { NoteApiClient } from '../services/NoteApiClient'
+import { QingyuAlipayPayService } from '../services/QingyuAlipayPayService'
+import { QingyuHuaweiIapPayService } from '../services/QingyuHuaweiIapPayService'
+import { WebDAVClient } from '../services/WebDAVClient'
 import type { QingyuRechargePlanId } from '../common/constants/QingyuRechargePlans'
 import { QingyuRechargePlans } from '../common/constants/QingyuRechargePlans'
-import { Logger } from '../common/utils/Logger'
-
-function delayMs(ms: number): Promise<void> {
-  return new Promise<void>((resolve: () => void) => {
-    setTimeout(resolve, ms)
-  })
-}
+import { QingyuHuaweiIapProducts } from '../common/constants/QingyuHuaweiIapProducts'
 
 /**
- * 轻羽云服务 — 会员档位与微信支付入口。
- * 这个页面也叫会员充值页面。
+ * 轻羽云服务 — 会员档位；支持华为应用内支付（IAP）与支付宝 App 支付。
  */
 @Entry
 @Component
 struct QingyuCloudRecharge {
   @State selectedPlan: QingyuRechargePlanId = 'monthly'
   @State applying: boolean = false
+  /** 与 Flutter 充值页一致：`active` / `lifetime` 为「续期」，否则「开通」。 */
+  @State payPrimaryCtaLabel: string = '开  通'
 
   aboutToAppear(): void {
     const context = AppContextHolder.tryGetContext()
     if (context) {
       void PreferencesService.getInstance().init(context)
+    }
+    void this.refreshPayPrimaryCtaLabel()
+  }
+
+  onPageShow(): void {
+    void this.refreshPayPrimaryCtaLabel()
+  }
+
+  private async refreshPayPrimaryCtaLabel(): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+    if (await PreferencesService.getInstance().isGuestMode()) {
+      this.payPrimaryCtaLabel = '开  通'
+      return
+    }
+    try {
+      const previewQingyu: WebDAVConfig = {
+        baseUrl: '',
+        username: '',
+        encryptedPassword: '',
+        notesDir: '/qingyu-notes/',
+        enabled: true,
+        provider: 'qingyu_cloud'
+      }
+      const status =
+        await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus(previewQingyu)
+      if (status.kind === 'active' || status.kind === 'lifetime') {
+        this.payPrimaryCtaLabel = '续  期'
+      } else {
+        this.payPrimaryCtaLabel = '开  通'
+      }
+    } catch (_) {
+      this.payPrimaryCtaLabel = '开  通'
     }
   }
 
@@ -62,33 +90,41 @@ struct QingyuCloudRecharge {
     })
   }
 
-  /** 微信支付：服务端下单 → 调起微信 APP → 回调后轮询订单直至支付成功。 */
-  private async onWeChatPay(): Promise<void> {
-    await this.runConfirmedPurchase()
+  private huaweiVerifySucceeded(obj: Object | null): boolean {
+    if (obj === null) {
+      return false
+    }
+    const r = obj as Record<string, Object>
+    if (r['payment_verified'] === false) {
+      return false
+    }
+    const st = r['status']
+    if (typeof st !== 'string') {
+      return false
+    }
+    const s = st.trim()
+    return s === 'paid' || s === 'already_paid'
   }
 
-  private async waitForPayPayload(timeoutMs: number): Promise<WeChatPayResultPayload> {
-    return await new Promise<WeChatPayResultPayload>((resolve, reject) => {
-      const hub = AppContextHolder.getContext().eventHub
-      let timerId: number = -1
-      const handler = (payload: Object): void => {
-        hub.off(WECHAT_PAY_RESULT_EVENT, handler)
-        if (timerId >= 0) {
-          clearTimeout(timerId)
-        }
-        resolve(payload as WeChatPayResultPayload)
-      }
-      hub.on(WECHAT_PAY_RESULT_EVENT, handler)
-      timerId = setTimeout((): void => {
-        hub.off(WECHAT_PAY_RESULT_EVENT, handler)
-        reject(new Error('支付结果超时'))
-      }, timeoutMs)
-    })
+  private huaweiVerifyFailureMessage(obj: Object | null): string {
+    if (obj === null) {
+      return '网络异常，请稍后重试'
+    }
+    const r = obj as Record<string, Object>
+    const msg = r['message']
+    if (typeof msg === 'string' && msg.trim().length > 0) {
+      return msg.trim()
+    }
+    const err = r['error']
+    if (typeof err === 'string' && err.trim().length > 0) {
+      return err.trim()
+    }
+    return '支付校验未通过'
   }
 
-  private async pollOrderUntilPaid(orderId: number): Promise<boolean> {
+  private async pollOrderPaid(orderId: number): Promise<boolean> {
     for (let i = 0; i < 45; i++) {
-      await delayMs(2000)
+      await new Promise<void>((resolve) => setTimeout(resolve, 2000))
       const o = await NoteApiClient.getInstance().getOrder(orderId)
       if (o !== null && o.status === 'paid') {
         return true
@@ -97,84 +133,149 @@ struct QingyuCloudRecharge {
     return false
   }
 
-  private async runConfirmedPurchase(): Promise<void> {
+  private async createRechargeOrder(api: NoteApiClient): Promise<number | null> {
+    const order = await api.createOrder(this.selectedPlan)
+    const oid = order?.id
+    if (order === null || oid === undefined || oid <= 0) {
+      this.showToast('创建订单失败，请稍后重试')
+      return null
+    }
+    return oid
+  }
+
+  private async onHuaweiPayTap(): Promise<void> {
     if (this.applying) {
       return
     }
-    // 不在此用 getQingyuCloudConfigPreview：其依赖 /qingyu/webdav，仅订阅有效时才下发；
-    // 过期/未开通用户正是要充值，不能因拉不到 WebDAV 而拦截微信支付。
+    const ctx = AppContextHolder.tryGetContext()
+    if (ctx === undefined) {
+      this.showToast('请先登录账号')
+      return
+    }
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (tok === null || tok.length === 0) {
-      this.showToast('请先使用微信登录以开通支付')
+      this.showToast('请先登录账号')
       return
     }
     this.applying = true
     try {
-      const created = await NoteApiClient.getInstance().createOrder(this.selectedPlan)
-      if (created === null || created.id === undefined || created.id <= 0) {
-        this.showToast('创建订单失败，请稍后重试')
+      const api = NoteApiClient.getInstance()
+      const oid = await this.createRechargeOrder(api)
+      if (oid === null) {
         return
       }
-      const prepay = await NoteApiClient.getInstance().wechatPrepay(created.id)
-      if (prepay === null) {
-        this.showToast('暂无法拉起微信支付（服务端商户参数未就绪）')
+      const productId = QingyuHuaweiIapProducts.productId(this.selectedPlan)
+      const pay = await QingyuHuaweiIapPayService.createPurchase(ctx, productId)
+      if (pay === null) {
+        this.showToast('支付未完成')
         return
       }
-      const pid = prepay.prepay_id?.trim() ?? ''
-      if (pid.length === 0) {
-        this.showToast('获取支付参数失败')
+      const vr = await api.huaweiVerifyOrder(oid, pay.purchaseToken, pay.productId, pay.accountFlag)
+      if (vr.status === 0) {
+        this.showToast('网络异常，请稍后重试')
         return
       }
-      const host = this.getUIContext().getHostContext()
-      const ctx = host as common.UIAbilityContext
-      const req = new wxopensdk.PayReq()
-      req.appId = prepay.app_id ?? ''
-      req.partnerId = prepay.partner_id ?? ''
-      req.prepayId = pid
-      req.packageValue = prepay.package ?? 'Sign=WXPay'
-      req.nonceStr = prepay.nonce_str ?? ''
-      req.timeStamp = prepay.timestamp ?? ''
-      req.sign = prepay.sign ?? ''
-      req.signType = prepay.sign_type ?? 'RSA'
-      const sent = await startWeChatAppPay(ctx, req)
-      if (!sent) {
-        this.showToast('无法拉起微信支付')
+      if (!this.huaweiVerifySucceeded(vr.obj)) {
+        this.showToast(this.huaweiVerifyFailureMessage(vr.obj))
         return
       }
-      let payResult: WeChatPayResultPayload
-      try {
-        payResult = await this.waitForPayPayload(120000)
-      } catch (error) {
-        Logger.warn('QingyuCloudRecharge', `wait pay: ${JSON.stringify(error)}`)
-        this.showToast('未收到支付结果，请稍后在会员页刷新')
-        return
-      }
-      if (payResult.errCode !== wxopensdk.ErrCode.ERR_OK) {
-        if (payResult.errCode === wxopensdk.ErrCode.ERR_USER_CANCEL) {
-          this.showToast('已取消支付')
-        } else {
-          this.showToast(payResult.errStr ?? '支付未完成')
-        }
-        return
-      }
-      const ok = await this.pollOrderUntilPaid(created.id)
-      if (!ok) {
-        this.showToast('支付确认中，请稍后下拉刷新会员状态')
-        return
-      }
-      const sub = await NoteApiClient.getInstance().fetchSubscription()
-      const ymd = sub?.expires_at?.trim() ?? ''
-      if (ymd.length > 0) {
-        this.showToast(`支付成功，云服务有效期已更新至 ${ymd}`)
+      const confirmed = await this.pollOrderPaid(oid)
+      if (!confirmed) {
+        this.showToast('支付确认中，请稍后在会员中心刷新状态')
       } else {
         this.showToast('支付成功')
       }
-    } catch (error) {
-      Logger.warn('QingyuCloudRecharge', `purchase: ${JSON.stringify(error)}`)
-      const msg = error instanceof Error ? error.message : `${error}`
-      this.showToast(msg.length > 0 ? msg : '充值失败，请稍后重试')
+      void QingyuHuaweiIapPayService.finishPurchase(ctx, pay)
     } finally {
       this.applying = false
+      void this.refreshPayPrimaryCtaLabel()
+    }
+  }
+
+  private async onAlipayTap(): Promise<void> {
+    if (this.applying) {
+      return
+    }
+    if (AppContextHolder.tryGetContext() === undefined) {
+      this.showToast('请先登录账号')
+      return
+    }
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      this.showToast('请先登录账号')
+      return
+    }
+    this.applying = true
+    try {
+      const api = NoteApiClient.getInstance()
+      const oid = await this.createRechargeOrder(api)
+      if (oid === null) {
+        return
+      }
+      const pr = await api.alipayAppPayOrderStr(oid)
+      if (pr.status === 0) {
+        Logger.warn('QingyuCloudRecharge', `alipay app-pay network failure orderId=${oid}`)
+        this.showToast('网络异常，请稍后重试')
+        return
+      }
+      const body = pr.obj
+      if (body === null) {
+        Logger.warn('QingyuCloudRecharge', `alipay app-pay HTTP ${pr.status} empty json orderId=${oid}`)
+        this.showToast('获取支付参数失败，请稍后重试')
+        return
+      }
+      const rec = body as Record<string, Object>
+      const err = rec['error']
+      if (typeof err === 'string' && err.trim().length > 0) {
+        const code = err.trim()
+        let human = ''
+        const m = rec['message']
+        if (typeof m === 'string' && m.trim().length > 0) {
+          human = m.trim()
+        }
+        Logger.warn('QingyuCloudRecharge', `alipay app-pay orderId=${oid} error=${code} message=${human}`)
+        if (code === 'alipay_not_configured') {
+          this.showToast('暂未开通支付')
+        } else {
+          this.showToast(human.length > 0 ? human : '获取支付参数失败')
+        }
+        return
+      }
+      const orderStrRaw = rec['order_str']
+      const appIdRaw = rec['app_id']
+      const orderStr = typeof orderStrRaw === 'string' ? orderStrRaw.trim() : ''
+      const appId = typeof appIdRaw === 'string' ? appIdRaw.trim() : ''
+      if (orderStr.length === 0) {
+        Logger.warn('QingyuCloudRecharge', `alipay app-pay orderId=${oid} missing order_str`)
+        this.showToast('支付参数无效，请稍后重试')
+        return
+      }
+      const payResult =
+        await QingyuAlipayPayService.payOrderStr(orderStr, appId.length > 0 ? appId : undefined)
+      if (payResult === null) {
+        this.showToast('支付未完成')
+        return
+      }
+      const st = QingyuAlipayPayService.parseResultStatus(payResult)
+      if (st === 6001) {
+        this.showToast('已取消支付')
+        return
+      }
+      if (st !== undefined && st !== 9000 && st !== 8000) {
+        const memo = (payResult.get('memo') ?? '').trim()
+        Logger.warn('QingyuCloudRecharge', `alipay sdk orderId=${oid} resultStatus=${st} memo=${memo}`)
+        this.showToast(memo.length > 0 ? `支付未完成：${memo}` : '支付未完成')
+        return
+      }
+      const confirmed = await this.pollOrderPaid(oid)
+      if (!confirmed) {
+        this.showToast('支付确认中，请稍后在会员中心刷新状态')
+      } else {
+        this.showToast('支付成功')
+      }
+    } finally {
+      this.applying = false
+      void this.refreshPayPrimaryCtaLabel()
     }
   }
 
@@ -372,25 +473,35 @@ struct QingyuCloudRecharge {
             offsetY: 4
           })
 
-          Text('支付方式')
-            .fontSize(12)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.tertiary_text'))
-            .width('100%')
-            .margin({ left: 4, top: 20, bottom: 8 })
-
-          Button(this.applying ? '…' : '微信支付')
-            .width('100%')
-            .height(48)
-            .fontSize($r('app.float.body_font_size'))
-            .fontWeight(FontWeight.Medium)
-            .fontColor(Color.White)
-            .backgroundColor($r('app.color.accent'))
-            .borderRadius($r('app.float.pill_radius'))
-            .enabled(!this.applying)
-            .onClick(() => {
-              void this.onWeChatPay()
-            })
+          Column({ space: 10 }) {
+            Button(this.applying ? '处理中…' : `华为 · ${this.payPrimaryCtaLabel}`)
+              .width('100%')
+              .height(48)
+              .fontSize($r('app.float.body_font_size'))
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White)
+              .backgroundColor($r('app.color.accent'))
+              .borderRadius($r('app.float.pill_radius'))
+              .enabled(!this.applying)
+              .visibility(Visibility.None)
+              .onClick(() => {
+                void this.onHuaweiPayTap()
+              })
+            Button(this.applying ? '处理中…' : this.payPrimaryCtaLabel)
+              .width('100%')
+              .height(48)
+              .fontSize($r('app.float.body_font_size'))
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White)
+              .backgroundColor($r('app.color.accent'))
+              .borderRadius($r('app.float.pill_radius'))
+              .enabled(!this.applying)
+              .onClick(() => {
+                void this.onAlipayTap()
+              })
+          }
+          .width('100%')
+          .margin({ top: 20 })
 
           Column({ space: 8 }) {
             Text($r('app.string.qingyu_recharge_footer_note'))

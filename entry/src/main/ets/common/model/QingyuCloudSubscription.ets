@@ -13,9 +13,9 @@ export interface QingyuCloudStatusNotPurchased {
   kind: 'not_purchased'
 }
 
-/** 已选轻羽云但未完成服务端微信换票（例如仅华为账号登录）。 */
-export interface QingyuCloudStatusNeedWechatLogin {
-  kind: 'need_wechat_login'
+/** 已选轻羽云但当前无有效 Note API 会话（未登录或 token 过期）。 */
+export interface QingyuCloudStatusNeedNoteApiSession {
+  kind: 'need_note_api_session'
 }
 
 export interface QingyuCloudStatusFetchFailed {
@@ -44,7 +44,7 @@ export type QingyuCloudSubscriptionStatus =
   | QingyuCloudStatusNotConfigured
   | QingyuCloudStatusNotQingyu
   | QingyuCloudStatusNotPurchased
-  | QingyuCloudStatusNeedWechatLogin
+  | QingyuCloudStatusNeedNoteApiSession
   | QingyuCloudStatusFetchFailed
   | QingyuCloudStatusMalformed
   | QingyuCloudStatusLifetime

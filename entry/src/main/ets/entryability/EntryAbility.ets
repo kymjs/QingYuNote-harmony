@@ -8,7 +8,6 @@ import { NoteRepository } from '../services/NoteRepository'
 import { SyncService } from '../services/SyncService'
 import { AppScheduler } from '../services/AppScheduler'
 import { AppContextHolder } from '../services/AppContextHolder'
-import { handleWeChatWant } from '../services/WeChatAuthService'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 
 const DOMAIN = 0x0000
@@ -30,15 +29,13 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, 'noteTag', 'Failed to prepare critical services. Cause: %{public}s', JSON.stringify(error))
     })
     hilog.info(DOMAIN, 'noteTag', '%{public}s', 'Ability onCreate')
-    handleWeChatWant(want)
   }
 
   onDestroy(): void {
     hilog.info(DOMAIN, 'noteTag', '%{public}s', 'Ability onDestroy')
   }
 
-  onNewWant(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
-    handleWeChatWant(want)
+  onNewWant(_want: Want, _launchParam: AbilityConstant.LaunchParam): void {
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {

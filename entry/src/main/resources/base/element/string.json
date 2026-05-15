@@ -182,7 +182,7 @@
     },
     {
       "name": "login_options_hint",
-      "value": "使用微信或手机号登录"
+      "value": "使用华为账号或手机号登录"
     },
     {
       "name": "login_account_placeholder",
@@ -207,10 +207,6 @@
     {
       "name": "login_with_huawei",
       "value": "华为账号登录"
-    },
-    {
-      "name": "login_with_wechat",
-      "value": "微信登录"
     },
     {
       "name": "login_with_phone",

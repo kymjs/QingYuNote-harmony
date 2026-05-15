@@ -20,10 +20,7 @@ struct TagManage {
     this.activeNotes = await NoteRepository.getInstance().listNotes()
     await this.ensurePreferencesInitialized()
     const storedTags = await PreferencesService.getInstance().getNoteTags()
-    const mergedTags = this.normalizeTags([
-      ...this.extractTagsFromNotes(this.activeNotes),
-      ...storedTags
-    ])
+    const mergedTags = this.normalizeTags(this.extractTagsFromNotes(this.activeNotes).concat(storedTags))
     this.tags = mergedTags
   }
 
