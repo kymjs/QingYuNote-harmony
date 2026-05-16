@@ -46,4 +46,38 @@ export class RemoteAppConfigService {
       req.destroy()
     }
   }
+
+  static async readPayConfigFromCache(filesDir: string): Promise<boolean> {
+    if (filesDir.length === 0) {
+      return false
+    }
+    const path = `${filesDir}/${REMOTE_APP_CONFIG_CACHE_FILE}`
+    try {
+      if (!fs.accessSync(path)) {
+        return false
+      }
+      const stat = fs.statSync(path)
+      if (stat.size <= 0) {
+        return false
+      }
+      const content = fs.readTextSync(path, { encoding: 'utf-8' })
+      const config = JSON.parse(content) as Record<string, Object>
+      const pay = config['pay']
+      return pay === true
+    } catch (_) {
+      return false
+    }
+  }
+
+  static isCacheFileExists(filesDir: string): boolean {
+    if (filesDir.length === 0) {
+      return false
+    }
+    const path = `${filesDir}/${REMOTE_APP_CONFIG_CACHE_FILE}`
+    try {
+      return fs.accessSync(path)
+    } catch (_) {
+      return false
+    }
+  }
 }

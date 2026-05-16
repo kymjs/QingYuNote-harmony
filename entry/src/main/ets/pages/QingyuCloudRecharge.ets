@@ -10,6 +10,7 @@ import { WebDAVClient } from '../services/WebDAVClient'
 import type { QingyuRechargePlanId } from '../common/constants/QingyuRechargePlans'
 import { QingyuRechargePlans } from '../common/constants/QingyuRechargePlans'
 import { QingyuHuaweiIapProducts } from '../common/constants/QingyuHuaweiIapProducts'
+import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 
 /**
  * 轻羽云服务 — 会员档位；支持华为应用内支付（IAP）与支付宝 App 支付。
@@ -152,6 +153,12 @@ struct QingyuCloudRecharge {
       this.showToast('请先登录账号')
       return
     }
+    const filesDir = ctx.filesDir ?? ''
+    const payEnabled = await RemoteAppConfigService.readPayConfigFromCache(filesDir)
+    if (!payEnabled) {
+      this.showToast('受应用市场影响，华为设备禁止支付，请使用其他设备支付')
+      return
+    }
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (tok === null || tok.length === 0) {
       this.showToast('请先登录账号')
@@ -196,8 +203,15 @@ struct QingyuCloudRecharge {
     if (this.applying) {
       return
     }
-    if (AppContextHolder.tryGetContext() === undefined) {
+    const ctx = AppContextHolder.tryGetContext()
+    if (ctx === undefined) {
       this.showToast('请先登录账号')
+      return
+    }
+    const filesDir = ctx.filesDir ?? ''
+    const payEnabled = await RemoteAppConfigService.readPayConfigFromCache(filesDir)
+    if (!payEnabled) {
+      this.showToast('受应用市场影响，华为设备禁止支付，请使用其他设备支付')
       return
     }
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
