@@ -145,10 +145,10 @@ struct BindPhone {
       return
     }
     this.submitting = true
-    const err = await NoteApiClient.getInstance().patchProfile({
-      phone: p,
-      sms_verify_code: c
-    })
+    const body: Record<string, Object> = {}
+    body['phone'] = p
+    body['sms_verify_code'] = c
+    const err = await NoteApiClient.getInstance().patchProfile(body)
     this.submitting = false
     if (err !== null) {
       this.showToast(err)

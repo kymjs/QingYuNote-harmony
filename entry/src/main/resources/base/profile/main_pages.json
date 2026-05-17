@@ -3,6 +3,7 @@
     "pages/Login",
     "pages/Register",
     "pages/ChangePassword",
+    "pages/BindPhone",
     "pages/Index",
     "pages/NoteEdit",
     "pages/Settings",
