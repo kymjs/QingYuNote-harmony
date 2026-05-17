@@ -30,6 +30,7 @@ import {
   AvatarCropEmitCancel,
   AvatarCropEmitPath
 } from '../common/constants/AvatarCropConstants'
+import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 
 /** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展 */
 interface RouterWithOptionalClear {
@@ -49,6 +50,8 @@ struct Profile {
   @State noteApiUserId: string = ''
   /** 正在拉起华为 OAuth，用于禁用行重复点击。 */
   @State bindBusy: boolean = false
+  /** 本地缓存的远程配置中 pay 字段为 true */
+  @State payConfigReady: boolean = false
 
   aboutToAppear(): void {
     void this.bootstrap()
@@ -58,6 +61,8 @@ struct Profile {
     if (context !== undefined) {
       await PreferencesService.getInstance().init(context)
     }
+    const filesDir = context?.filesDir ?? ''
+    this.payConfigReady = await RemoteAppConfigService.readPayConfigFromCache(filesDir)
     await this.reload()
   }
 
@@ -955,10 +960,15 @@ struct Profile {
                 !this.isLifetimeVip(this.profile!)
               )
             }
+            .visibility(this.payConfigReady?Visibility.Visible:Visibility.None)
             .width('100%')
             .backgroundColor($r('app.color.card_background'))
 
-            this.groupGap()
+            // this.groupGap()
+            Column()
+              .width('100%')
+              .height(8)
+              .visibility(this.payConfigReady?Visibility.Visible:Visibility.None)
 
             Column() {
               this.kvRow(

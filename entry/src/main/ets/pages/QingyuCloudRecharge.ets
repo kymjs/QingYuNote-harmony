@@ -153,12 +153,6 @@ struct QingyuCloudRecharge {
       this.showToast('请先登录账号')
       return
     }
-    const filesDir = ctx.filesDir ?? ''
-    const payEnabled = await RemoteAppConfigService.readPayConfigFromCache(filesDir)
-    if (!payEnabled) {
-      this.showToast('受应用市场影响，华为设备禁止支付，请使用其他设备支付')
-      return
-    }
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (tok === null || tok.length === 0) {
       this.showToast('请先登录账号')
@@ -206,12 +200,6 @@ struct QingyuCloudRecharge {
     const ctx = AppContextHolder.tryGetContext()
     if (ctx === undefined) {
       this.showToast('请先登录账号')
-      return
-    }
-    const filesDir = ctx.filesDir ?? ''
-    const payEnabled = await RemoteAppConfigService.readPayConfigFromCache(filesDir)
-    if (!payEnabled) {
-      this.showToast('受应用市场影响，华为设备禁止支付，请使用其他设备支付')
       return
     }
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
