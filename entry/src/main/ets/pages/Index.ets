@@ -12,6 +12,7 @@ import {
   tryAutoProvisionQingyuCloudOnHomeEntry
 } from '../services/QingyuCloudAutoProvision'
 import { WebDAVClient } from '../services/WebDAVClient'
+import { NoteApiClient } from '../services/NoteApiClient'
 import { Logger } from '../common/utils/Logger'
 import { SyncConstants } from '../common/constants/SyncConstants'
 
@@ -151,6 +152,32 @@ struct Index {
     /** 与版本检查并行启动同步，避免「检查更新」阻塞云同步开始时间。 */
     void this.startStartupSyncIfNeeded()
     await runAppUpdateCheckOnLaunch(this.getUIContext())
+    void this.checkPhoneBindingAndPrompt()
+  }
+
+  private async checkPhoneBindingAndPrompt(): Promise<void> {
+    try {
+      const profile = await NoteApiClient.getInstance().fetchProfile()
+      if (profile !== null) {
+        const phone = (profile.phone ?? '').trim()
+        if (phone.length === 0) {
+          const result = await this.getUIContext().getPromptAction().showDialog({
+            title: '提示',
+            message: '请先绑定手机号',
+            buttons: [
+              { text: '确定', color: '#0DAA4A' }
+            ]
+          })
+          if (result.index === 0) {
+            this.getUIContext().getRouter().pushUrl({ url: 'pages/Profile' }).catch((err: Error) => {
+              console.error(`push Profile: ${JSON.stringify(err)}`)
+            })
+          }
+        }
+      }
+    } catch (_) {
+      // Silently ignore profile fetch errors
+    }
   }
 
   private async startStartupSyncIfNeeded(): Promise<void> {

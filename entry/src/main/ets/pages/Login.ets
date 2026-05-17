@@ -194,6 +194,21 @@ struct Login {
     }
     try {
       await startHuaweiLogin(ctx)
+      // 检查是否已绑定手机号
+      const profile = await NoteApiClient.getInstance().fetchProfile()
+      if (profile !== null) {
+        const phone = (profile.phone ?? '').trim()
+        if (phone.length === 0) {
+          // 未绑定手机号，跳转到绑定页面
+          try {
+            this.getUIContext().getRouter().pushUrl({ url: 'pages/BindPhone' })
+          } catch (e) {
+            console.error(`pushUrl BindPhone failed: ${JSON.stringify(e)}`)
+            void this.navigateAfterLogin()
+          }
+          return
+        }
+      }
       void this.navigateAfterLogin()
     } catch (error) {
       const message = describeHuaweiLoginError(error as Object)

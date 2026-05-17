@@ -140,16 +140,31 @@ export class NoteApiClient {
     return ''
   }
 
+  /** 构建通用请求头，包含 X-Platform 和 X-Device-Id。 */
+  private async buildCommonHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = {
+      'Accept': 'application/json',
+      'X-Platform': 'harmony'
+    }
+    let devId = ''
+    try {
+      devId = await PreferencesService.getInstance().getOrCreateSmsDeviceId()
+    } catch (_) {}
+    if (devId.trim().length > 0) {
+      headers['X-Device-Id'] = devId.trim()
+    }
+    return headers
+  }
+
   private async postAuthJsonStatus(path: string, bodyJson: string, bearer: string): Promise<PostAuthJsonStatusResult> {
     const req = http.createHttp()
     try {
+      const headers = await this.buildCommonHeaders()
+      headers['Content-Type'] = 'application/json; charset=utf-8'
+      headers['Authorization'] = `Bearer ${bearer}`
       const resp = await req.request(this.joinUrl(path), {
         method: http.RequestMethod.POST,
-        header: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json; charset=utf-8',
-          'Authorization': `Bearer ${bearer}`
-        },
+        header: headers,
         extraData: bodyJson,
         expectDataType: http.HttpDataType.STRING,
         connectTimeout: 15000,
@@ -177,16 +192,23 @@ export class NoteApiClient {
   }
 
   private async requestJson(method: http.RequestMethod, path: string, body?: string, bearer?: string): Promise<Object | null> {
+    return this.requestJsonWithHeaders(method, path, body, bearer, undefined)
+  }
+
+  private async requestJsonWithHeaders(method: http.RequestMethod, path: string, body: string | undefined, bearer: string | undefined, extraHeaders: Record<string, string> | undefined): Promise<Object | null> {
     const req = http.createHttp()
     try {
-      const headers: Record<string, string> = {
-        'Accept': 'application/json'
-      }
+      const headers = await this.buildCommonHeaders()
       if (body !== undefined) {
         headers['Content-Type'] = 'application/json; charset=utf-8'
       }
       if (bearer !== undefined && bearer.length > 0) {
         headers['Authorization'] = `Bearer ${bearer}`
+      }
+      if (extraHeaders !== undefined) {
+        for (const key of Object.keys(extraHeaders)) {
+          headers[key] = extraHeaders[key]
+        }
       }
       const resp = await req.request(this.joinUrl(path), {
         method,
@@ -223,6 +245,10 @@ export class NoteApiClient {
     if (trimmed.length === 0) {
       return false
     }
+    let devId = ''
+    try {
+      devId = await PreferencesService.getInstance().getOrCreateSmsDeviceId()
+    } catch (_) {}
     const body: Record<string, string> = {
       'authorization_code': trimmed
     }
@@ -231,7 +257,9 @@ export class NoteApiClient {
       body['redirect_uri'] = redir
     }
     const payload = JSON.stringify(body)
-    const obj = await this.requestJson(http.RequestMethod.POST, '/api/v1/auth/huawei', payload, undefined)
+    const headers = await this.buildCommonHeaders()
+    headers['Content-Type'] = 'application/json; charset=utf-8'
+    const obj = await this.requestJsonWithHeaders(http.RequestMethod.POST, '/api/v1/auth/huawei', payload, undefined, headers)
     if (obj === null) {
       return false
     }
@@ -257,14 +285,17 @@ export class NoteApiClient {
     if (pPhone.length === 0 || pPwd.length === 0) {
       return 'invalid_body'
     }
+    let devId = ''
+    try {
+      devId = await PreferencesService.getInstance().getOrCreateSmsDeviceId()
+    } catch (_) {}
     const req = http.createHttp()
     try {
+      const headers = await this.buildCommonHeaders()
+      headers['Content-Type'] = 'application/json; charset=utf-8'
       const resp = await req.request(this.joinUrl('/api/v1/auth/phone'), {
         method: http.RequestMethod.POST,
-        header: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json; charset=utf-8'
-        },
+        header: headers,
         extraData: JSON.stringify({ phone: pPhone, password: pPwd }),
         expectDataType: http.HttpDataType.STRING,
         connectTimeout: 15000,
@@ -323,10 +354,8 @@ export class NoteApiClient {
       }
       const req = http.createHttp()
       try {
-        const headers: Record<string, string> = {
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${tok}`
-        }
+        const headers = await this.buildCommonHeaders()
+        headers['Authorization'] = `Bearer ${tok}`
         const resp = await req.request(this.joinUrl('/api/v1/qingyu/webdav'), {
           method: http.RequestMethod.GET,
           header: headers,
@@ -664,13 +693,8 @@ export class NoteApiClient {
     }
     const req = http.createHttp()
     try {
-      const headers: Record<string, string> = {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json; charset=utf-8'
-      }
-      if (dev.trim().length > 0) {
-        headers['X-Device-Id'] = dev.trim()
-      }
+      const headers = await this.buildCommonHeaders()
+      headers['Content-Type'] = 'application/json; charset=utf-8'
       const resp = await req.request(this.joinUrl('/api/v1/password/reset/sms/send'), {
         method: http.RequestMethod.POST,
         header: headers,
@@ -798,13 +822,8 @@ export class NoteApiClient {
     }
     const req = http.createHttp()
     try {
-      const headers: Record<string, string> = {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json; charset=utf-8'
-      }
-      if (dev.trim().length > 0) {
-        headers['X-Device-Id'] = dev.trim()
-      }
+      const headers = await this.buildCommonHeaders()
+      headers['Content-Type'] = 'application/json; charset=utf-8'
       const resp = await req.request(this.joinUrl('/api/v1/register/sms/send'), {
         method: http.RequestMethod.POST,
         header: headers,
@@ -843,14 +862,17 @@ export class NoteApiClient {
     if (pPhone.length === 0 || pCode.length === 0 || pPwd.length === 0) {
       return 'invalid_body'
     }
+    let devId = ''
+    try {
+      devId = await PreferencesService.getInstance().getOrCreateSmsDeviceId()
+    } catch (_) {}
     const req = http.createHttp()
     try {
+      const headers = await this.buildCommonHeaders()
+      headers['Content-Type'] = 'application/json; charset=utf-8'
       const resp = await req.request(this.joinUrl('/api/v1/register'), {
         method: http.RequestMethod.POST,
-        header: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json; charset=utf-8'
-        },
+        header: headers,
         extraData: JSON.stringify({
           phone: pPhone,
           sms_verify_code: pCode,
