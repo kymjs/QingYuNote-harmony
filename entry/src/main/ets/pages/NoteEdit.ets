@@ -81,6 +81,8 @@ struct NoteEdit {
     '轻羽云笔记是一款云笔记应用，同时支持手机与电脑全平台，无论你正在使用哪台设备，笔记都在手边。'
   private static readonly SHARE_HEADER_TO_CONTENT_GAP: number = 30
   private static readonly SHARE_AVATAR_SIZE: number = 48
+  private static readonly SHARE_QR_SIZE: number = 72
+  private static readonly SHARE_FOOTER_QR_GAP: number = 12
 
   /** 使用 UIContext.getHostContext，替代已废弃的全局 getContext。 */
   private obtainUiAbilityContext(): common.UIAbilityContext | undefined {
@@ -618,6 +620,94 @@ struct NoteEdit {
   }
 
   /**
+   * 单屏分享截图：裁掉上下透明留白（Scroll 视口高于卡片内容时常见）。
+   * 优先按 alpha 检测内容边界；辅以 shareExportColumnVp 限制高度。
+   */
+  private async trimTransparentVerticalEdges(pm: image.PixelMap): Promise<image.PixelMap | null> {
+    try {
+      const info = pm.getImageInfoSync()
+      const widthPx = info.size.width
+      const srcH = info.size.height
+      if (srcH <= 1) {
+        return pm
+      }
+      const stride = info.stride
+      const srcBuf = new ArrayBuffer(pm.getPixelBytesNumber())
+      pm.readPixelsToBufferSync(srcBuf)
+      const srcView = new Uint8Array(srcBuf)
+      const alphaThreshold = 8
+      let top = -1
+      let bottom = -1
+      for (let r = 0; r < srcH; r++) {
+        const rowStart = r * stride
+        let rowOpaque = false
+        for (let x = 0; x < widthPx; x++) {
+          const si = rowStart + x * 4
+          if (srcView[si + 3] > alphaThreshold) {
+            rowOpaque = true
+            break
+          }
+        }
+        if (rowOpaque) {
+          if (top < 0) {
+            top = r
+          }
+          bottom = r
+        }
+      }
+      const ui = this.getUIContext()
+      const contentPx = this.shareExportColumnVp > 0
+        ? Math.max(1, Math.round(ui.vp2px(this.shareExportColumnVp)))
+        : 0
+      if (top < 0) {
+        if (contentPx > 0 && contentPx < srcH) {
+          top = 0
+          bottom = contentPx - 1
+        } else {
+          return pm
+        }
+      } else if (contentPx > 0) {
+        const contentBottom = top + contentPx - 1
+        if (contentBottom < bottom) {
+          bottom = contentBottom
+        }
+      }
+      const cropH = bottom - top + 1
+      if (cropH <= 0 || cropH >= srcH) {
+        return pm
+      }
+      const headAlpha = info.alphaType
+      const mergeAlphaType =
+        headAlpha === image.AlphaType.UNKNOWN ? image.AlphaType.PREMUL : headAlpha
+      const rowBytes = widthPx * 4
+      const dstBuf = new ArrayBuffer(rowBytes * cropH)
+      const dstView = new Uint8Array(dstBuf)
+      for (let r = 0; r < cropH; r++) {
+        const srcRow = top + r
+        const srcLineStart = srcRow * stride
+        const dstLineStart = r * rowBytes
+        for (let x = 0; x < widthPx; x++) {
+          const si = srcLineStart + x * 4
+          const di = dstLineStart + x * 4
+          dstView[di] = srcView[si + 2]
+          dstView[di + 1] = srcView[si + 1]
+          dstView[di + 2] = srcView[si]
+          dstView[di + 3] = srcView[si + 3]
+        }
+      }
+      await pm.release()
+      return await image.createPixelMap(dstBuf, {
+        size: { width: widthPx, height: cropH },
+        pixelFormat: image.PixelMapFormat.RGBA_8888,
+        alphaType: mergeAlphaType
+      })
+    } catch (err) {
+      Logger.error('NoteEdit', `trimTransparentVerticalEdges failed: ${JSON.stringify(err)}`)
+      return null
+    }
+  }
+
+  /**
    * 将多张纵向分段截图合并为一张 PixelMap。
    * - rowStepPx：单屏在物理像素上的高度上限，用于裁掉比视口「更高」的截图底部。
    * - sliceSkipTopPx：每张切片从像素矩阵顶部跳过的行数；除首张外一般为「视口高度 − 与上一张之间的滚动增量(px)」，
@@ -773,7 +863,11 @@ struct NoteEdit {
     const singleScreen = totalVp <= stepVp + vpEps
 
     if (singleScreen) {
-      return await this.packPixelMapToPng(firstPm)
+      const trimmed = await this.trimTransparentVerticalEdges(firstPm)
+      if (!trimmed) {
+        return null
+      }
+      return await this.packPixelMapToPng(trimmed)
     }
 
     const slices: image.PixelMap[] = [firstPm]
@@ -839,7 +933,11 @@ struct NoteEdit {
       }
     }
     if (slices.length === 1) {
-      return await this.packPixelMapToPng(slices[0])
+      const trimmed = await this.trimTransparentVerticalEdges(slices[0])
+      if (!trimmed) {
+        return null
+      }
+      return await this.packPixelMapToPng(trimmed)
     }
 
     const normalized = await this.normalizeAllSlicesForMerge(slices)
@@ -948,20 +1046,29 @@ struct NoteEdit {
         .strokeWidth(1)
         .color($r('app.color.share_divider'))
         .margin({ top: 24, bottom: 16 })
-      Column({ space: 10 }) {
-        Text(NoteEdit.SHARE_SLOGAN)
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.share_text'))
-          .lineHeight(20)
-          .width('100%')
-        Text(NoteEdit.SHARE_INTRO)
-          .fontSize(12)
-          .fontColor($r('app.color.share_text'))
-          .lineHeight(18)
-          .width('100%')
+      Row({ space: NoteEdit.SHARE_FOOTER_QR_GAP }) {
+        Image($r('app.media.website_qrcode'))
+          .width(NoteEdit.SHARE_QR_SIZE)
+          .height(NoteEdit.SHARE_QR_SIZE)
+          .objectFit(ImageFit.Contain)
+        Column({ space: 10 }) {
+          Text(NoteEdit.SHARE_SLOGAN)
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.share_text'))
+            .lineHeight(20)
+            .width('100%')
+          Text(NoteEdit.SHARE_INTRO)
+            .fontSize(12)
+            .fontColor($r('app.color.share_text'))
+            .lineHeight(18)
+            .width('100%')
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
+      .alignItems(VerticalAlign.Top)
     }
     .width('100%')
     .padding(18)
