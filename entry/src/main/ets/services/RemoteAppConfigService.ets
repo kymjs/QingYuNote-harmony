@@ -1,6 +1,38 @@
 import fs from '@ohos.file.fs'
 import http from '@ohos.net.http'
 import { Logger } from '../common/utils/Logger'
+import { compareSemanticVersions, getAppVersionName } from './AppUpdateService'
+
+interface VersionRangeBounds {
+  min: string
+  max: string
+}
+
+/** 解析版本闭区间字符串，如 `"1.0.0-1.0.83"`。 */
+function parseVersionRangeBounds(raw: Object | undefined): VersionRangeBounds | null {
+  if (raw === undefined || raw === null) {
+    return null
+  }
+  const s = String(raw).trim()
+  if (s.length === 0) {
+    return null
+  }
+  const dash = s.indexOf('-')
+  if (dash <= 0 || dash >= s.length - 1) {
+    return null
+  }
+  const min = s.substring(0, dash).trim()
+  const max = s.substring(dash + 1).trim()
+  if (min.length === 0 || max.length === 0) {
+    return null
+  }
+  return { min, max }
+}
+
+function isVersionInClosedInterval(current: string, min: string, max: string): boolean {
+  return compareSemanticVersions(current, min) >= 0 &&
+    compareSemanticVersions(current, max) <= 0
+}
 
 /** 与 Flutter `RemoteAppConfigService.configUrl` 一致。 */
 const REMOTE_APP_CONFIG_URL = 'https://cdn.kymjs.com:8843/note/config.json'
@@ -62,6 +94,17 @@ export class RemoteAppConfigService {
       }
       const content = fs.readTextSync(path, { encoding: 'utf-8' })
       const config = JSON.parse(content) as Record<string, Object>
+      const bounds = parseVersionRangeBounds(config['pay_version'])
+      if (bounds === null) {
+        return false
+      }
+      const current = (await getAppVersionName()).trim()
+      if (current.length === 0) {
+        return false
+      }
+      if (!isVersionInClosedInterval(current, bounds.min, bounds.max)) {
+        return false
+      }
       const pay = config['pay']
       return pay === true
     } catch (_) {
