@@ -6,7 +6,37 @@ import { fileUri } from '@kit.CoreFileKit'
 export struct NoteEditMarkdownBlocksView {
   @Prop blocks: MarkdownBlock[] = []
   @Prop filesDirCache: string = ''
+  /** 分享长图导出：深色底 + 金色文字，与 NoteEdit 分享卡片一致。 */
+  @Prop forShareExport: boolean = false
   onLinkToast: (href: string) => void = (_href: string) => {
+  }
+
+  private primaryTextColor(): ResourceColor {
+    return this.forShareExport ? $r('app.color.share_text') : $r('app.color.primary_text')
+  }
+
+  private secondaryTextColor(): ResourceColor {
+    return this.forShareExport ? $r('app.color.share_text') : $r('app.color.secondary_text')
+  }
+
+  private accentTextColor(): ResourceColor {
+    return this.forShareExport ? $r('app.color.share_text') : $r('app.color.accent')
+  }
+
+  private codeBackgroundColor(): ResourceColor {
+    return this.forShareExport ? $r('app.color.share_code_background') : $r('app.color.surface_muted')
+  }
+
+  private dividerColor(): ResourceColor {
+    return this.forShareExport ? $r('app.color.share_divider') : $r('app.color.divider')
+  }
+
+  private cardBorderColor(): ResourceColor {
+    return this.forShareExport ? $r('app.color.share_divider') : $r('app.color.card_border')
+  }
+
+  private tertiaryTextColor(): ResourceColor {
+    return this.forShareExport ? $r('app.color.share_text') : $r('app.color.tertiary_text')
   }
 
   private resolveImageSrc(src: string): string {
@@ -74,11 +104,11 @@ export struct NoteEditMarkdownBlocksView {
     } else if (inline.type === 'inline_code') {
       Span(inline.content)
         .fontFamily('monospace')
-        .fontColor($r('app.color.primary_text'))
-        .backgroundColor($r('app.color.surface_muted'))
+        .fontColor(defaultColor)
+        .backgroundColor(this.codeBackgroundColor())
     } else if (inline.type === 'link') {
       Span(inline.content)
-        .fontColor($r('app.color.accent'))
+        .fontColor(this.accentTextColor())
         .decoration({ type: TextDecorationType.Underline })
         .onClick(() => {
           this.onLinkToast(inline.href)
@@ -97,11 +127,11 @@ export struct NoteEditMarkdownBlocksView {
           Text(ordered ? `${index + 1}.` : '•')
             .fontSize($r('app.float.body_font_size'))
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.primary_text'))
+            .fontColor(this.primaryTextColor())
             .copyOption(CopyOptions.LocalDevice)
             .margin({ top: 1 })
           Column() {
-            this.buildInlineText(item, $r('app.float.body_font_size'), $r('app.color.primary_text'), 24)
+            this.buildInlineText(item, $r('app.float.body_font_size'), this.primaryTextColor(), 24)
           }
           .layoutWeight(1)
         }
@@ -116,18 +146,18 @@ export struct NoteEditMarkdownBlocksView {
   @Builder
   private buildPreviewBlock(block: MarkdownBlock) {
     if (block.type === 'heading1') {
-      this.buildInlineText(block.inlines, 24, $r('app.color.primary_text'), 32, FontWeight.Bold)
+      this.buildInlineText(block.inlines, 24, this.primaryTextColor(), 32, FontWeight.Bold)
     } else if (block.type === 'heading2') {
-      this.buildInlineText(block.inlines, 20, $r('app.color.primary_text'), 28, FontWeight.Medium)
+      this.buildInlineText(block.inlines, 20, this.primaryTextColor(), 28, FontWeight.Medium)
     } else if (block.type === 'heading3') {
-      this.buildInlineText(block.inlines, 17, $r('app.color.primary_text'), 24, FontWeight.Medium)
+      this.buildInlineText(block.inlines, 17, this.primaryTextColor(), 24, FontWeight.Medium)
     } else if (block.type === 'quote') {
       Column() {
-        this.buildInlineText(block.inlines, $r('app.float.body_font_size'), $r('app.color.secondary_text'), 24)
+        this.buildInlineText(block.inlines, $r('app.float.body_font_size'), this.secondaryTextColor(), 24)
       }
       .width('100%')
         .padding({ left: 14, top: 8, bottom: 8 })
-        .border({ width: { left: 3 }, color: $r('app.color.accent') })
+        .border({ width: { left: 3 }, color: this.accentTextColor() })
     } else if (block.type === 'unordered_list') {
       this.buildListBlock(block, false)
     } else if (block.type === 'ordered_list') {
@@ -137,12 +167,12 @@ export struct NoteEditMarkdownBlocksView {
         if (block.language.length > 0) {
           Text(block.language.toLowerCase())
             .fontSize(11)
-            .fontColor($r('app.color.tertiary_text'))
+            .fontColor(this.tertiaryTextColor())
             .copyOption(CopyOptions.LocalDevice)
         }
         Text(block.content)
           .fontSize($r('app.float.caption_font_size'))
-          .fontColor($r('app.color.primary_text'))
+          .fontColor(this.primaryTextColor())
           .fontFamily('monospace')
           .lineHeight(22)
           .copyOption(CopyOptions.LocalDevice)
@@ -150,13 +180,13 @@ export struct NoteEditMarkdownBlocksView {
       }
       .width('100%')
       .padding(14)
-      .backgroundColor($r('app.color.surface_muted'))
+      .backgroundColor(this.codeBackgroundColor())
       .borderRadius(12)
-      .border({ width: 1, color: $r('app.color.card_border') })
+      .border({ width: 1, color: this.cardBorderColor() })
     } else if (block.type === 'divider') {
       Divider()
         .strokeWidth(1)
-        .color($r('app.color.divider'))
+        .color(this.dividerColor())
     } else if (block.type === 'image') {
       Image(this.resolveImageSrc(block.language))
         .width('100%')
@@ -164,7 +194,7 @@ export struct NoteEditMarkdownBlocksView {
         .borderRadius(12)
         .alt(block.content)
     } else {
-      this.buildInlineText(block.inlines, $r('app.float.body_font_size'), $r('app.color.primary_text'), 24)
+      this.buildInlineText(block.inlines, $r('app.float.body_font_size'), this.primaryTextColor(), 24)
     }
   }
 

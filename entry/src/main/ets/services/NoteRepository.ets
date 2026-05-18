@@ -82,7 +82,10 @@ export class NoteRepository {
     const now = Date.now()
     const id = IdUtils.uuid()
     const trimmedContent = input.content
-    const resolvedTitle = input.title.trim().length > 0 ? input.title.trim() : MarkdownUtils.extractTitle(trimmedContent)
+    const trimmedTitle = input.title.trim()
+    const resolvedTitle =
+      input.skipTitleAutoFill === true && trimmedTitle.length === 0 ? '' :
+        trimmedTitle.length > 0 ? trimmedTitle : MarkdownUtils.extractTitle(trimmedContent)
     const state = NoteStateCodec.createDefaultState(id, resolvedTitle, now)
     const note = this.createNoteFromState(state, trimmedContent, {
       noteId: id,
@@ -285,7 +288,9 @@ export class NoteRepository {
     const nextContent = patch.content ?? existing.content
     const nextTitle = (patch.title ?? existing.title).trim()
     const nextTags = patch.tags ?? existing.tags
-    const resolvedTitle = nextTitle.length > 0 ? nextTitle : MarkdownUtils.extractTitle(nextContent)
+    const resolvedTitle =
+      patch.skipTitleAutoFill === true && nextTitle.length === 0 ? '' :
+        nextTitle.length > 0 ? nextTitle : MarkdownUtils.extractTitle(nextContent)
     const nextSummary = MarkdownUtils.summary(nextContent)
     const contentChanged = nextContent !== existing.content
     const titleChanged = resolvedTitle !== existing.title

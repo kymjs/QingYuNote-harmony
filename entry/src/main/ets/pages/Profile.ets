@@ -43,7 +43,7 @@ struct Profile {
   @State loading: boolean = true
   @State loadError: string = ''
   @State avatarUploading: boolean = false
-  /** 网络头像加载失败（含明文 HTTP 被拦截）时回退到首字母占位 */
+  /** 网络头像加载失败（含明文 HTTP 被拦截）时回退到应用图标 */
   @State avatarNetworkLoadFailed: boolean = false
   @State profile: ProfileBody | null = null
   /** 登录会话写入的 Note API `users.id`，用于「第 xx 名用户」。 */
@@ -354,14 +354,6 @@ struct Profile {
       return ''
     }
     return (this.profile.avatar_url ?? '').trim()
-  }
-
-  private avatarInitial(): string {
-    const u = (this.profile?.username ?? '').trim()
-    if (u.length > 0) {
-      return u.substring(0, 1).toUpperCase()
-    }
-    return '?'
   }
 
   private showToast(message: string): void {
@@ -903,17 +895,11 @@ struct Profile {
                       this.avatarNetworkLoadFailed = true
                     })
                 } else {
-                  Column() {
-                    Text(this.avatarInitial())
-                      .fontSize(22)
-                      .fontWeight(FontWeight.Medium)
-                      .fontColor($r('app.color.secondary_text'))
-                  }
-                  .width(56)
-                  .height(56)
-                  .borderRadius(28)
-                  .backgroundColor($r('app.color.surface_muted'))
-                  .justifyContent(FlexAlign.Center)
+                  Image($r('app.media.icon_app'))
+                    .width(56)
+                    .height(56)
+                    .borderRadius(28)
+                    .objectFit(ImageFit.Cover)
                 }
                 Blank().layoutWeight(1)
                 Text(this.avatarUploading ? '上传中…' : '更换头像')

@@ -26,6 +26,15 @@ interface MarkdownToken {
 }
 
 export class MarkdownUtils {
+  /** 编辑页自动标题：正文 trim 后取前 5 个字符（与 Flutter `editorAutoTitle` 对齐）。 */
+  static editorAutoTitle(content: string): string {
+    const trimmed = content.trim()
+    if (trimmed.length === 0) {
+      return ''
+    }
+    return trimmed.length <= 5 ? trimmed : trimmed.slice(0, 5)
+  }
+
   static extractTitle(content: string): string {
     const lines = content.split('\n')
     for (const line of lines) {

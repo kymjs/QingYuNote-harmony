@@ -114,12 +114,16 @@ export interface CreateNoteInput {
   title: string
   content: string
   tags: string[]
+  /** 为 true 且 title 为空时，不调用 MarkdownUtils.extractTitle。 */
+  skipTitleAutoFill?: boolean
 }
 
 export interface UpdateNoteInput {
   title?: string
   content?: string
   tags?: string[]
+  /** 为 true 且 title 为空时，不调用 MarkdownUtils.extractTitle。 */
+  skipTitleAutoFill?: boolean
 }
 
 /** 回收站列表加载结果（含仅存在于远端、尚未写入本地的条目 id）。 */

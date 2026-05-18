@@ -6,6 +6,10 @@ export struct NoteEditEditorPane {
   textAreaController: TextAreaController = new TextAreaController()
   onTitleChange: () => void = () => {
   }
+  onTitleFocus: () => void = () => {
+  }
+  onTitleBlur: () => void = () => {
+  }
   onContentChange: () => void = () => {
   }
 
@@ -19,6 +23,13 @@ export struct NoteEditEditorPane {
         .backgroundColor($r('app.color.editor_background'))
         .borderRadius(12)
         .padding({ bottom: 0 })
+        .focusOnTouch(true)
+        .onFocus(() => {
+          this.onTitleFocus()
+        })
+        .onBlur(() => {
+          this.onTitleBlur()
+        })
         .onChange((_value: string) => {
           this.onTitleChange()
         })

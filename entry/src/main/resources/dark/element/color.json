@@ -111,6 +111,22 @@
     {
       "name": "link_text",
       "value": "#FF60A5FA"
+    },
+    {
+      "name": "share_background",
+      "value": "#FF1A1A1C"
+    },
+    {
+      "name": "share_text",
+      "value": "#FFD4C39E"
+    },
+    {
+      "name": "share_divider",
+      "value": "#4DD4C39E"
+    },
+    {
+      "name": "share_code_background",
+      "value": "#FF252528"
     }
   ]
 }

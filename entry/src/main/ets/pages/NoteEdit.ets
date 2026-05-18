@@ -14,11 +14,17 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import { NoteEditEditorPane } from './NoteEditEditorPane'
 import { NoteEditPreviewPane } from './NoteEditPreviewPane'
 import { NoteEditMarkdownBlocksView } from './NoteEditMarkdownBlocksView'
+import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
 
 interface NoteEditParams {
   noteId?: string
   /** 从首页点入且正文非空时置为 true，与 Flutter `openWithPreview` 对齐。 */
   openWithPreview?: boolean
+}
+
+interface TitleSaveResolution {
+  title: string
+  skipTitleAutoFill: boolean
 }
 
 /** 仅当标题和正文至少有一个非空时为 true（与 Flutter `_hasEditorTitleOrBody` 对齐）。 */
@@ -36,6 +42,9 @@ struct NoteEdit {
   @State previewMode: string = 'split'
   @State pageWidth: number = 360
   @State lastSavedAt: number = 0
+  @State noteCreatedAt: number = 0
+  @State shareProfile: ProfileBody | null = null
+  @State shareAvatarNetworkFailed: boolean = false
   @State previewBlocksState: MarkdownBlock[] = []
   @State previewSource: string = ''
   @State noteTags: string[] = []
@@ -48,6 +57,8 @@ struct NoteEdit {
   @State tagBarHeight: number = 32
   @State lastPanOffsetX: number = 0
   @State lastPanOffsetY: number = 0
+  /** 标题输入框是否处于焦点（编辑）状态。 */
+  @State titleFieldFocused: boolean = false
   private textAreaController: TextAreaController = new TextAreaController()
   private shareScroller: Scroller = new Scroller()
   /** 分享卡片内 Column 总高度（vp），用于长截图分段滚动。 */
@@ -68,6 +79,8 @@ struct NoteEdit {
   private static readonly SHARE_SLOGAN: string = '记录本身，就是意义。   ——轻羽云笔记'
   private static readonly SHARE_INTRO: string =
     '轻羽云笔记是一款云笔记应用，同时支持手机与电脑全平台，无论你正在使用哪台设备，笔记都在手边。'
+  private static readonly SHARE_HEADER_TO_CONTENT_GAP: number = 30
+  private static readonly SHARE_AVATAR_SIZE: number = 48
 
   /** 使用 UIContext.getHostContext，替代已废弃的全局 getContext。 */
   private obtainUiAbilityContext(): common.UIAbilityContext | undefined {
@@ -142,12 +155,39 @@ struct NoteEdit {
     await this.persistTagsToRepository()
   }
 
+  private resolveTitleForSave(rawTitle: string, content: string): TitleSaveResolution {
+    const trimmedTitle = rawTitle.trim()
+    if (trimmedTitle.length > 0) {
+      return { title: trimmedTitle, skipTitleAutoFill: false }
+    }
+    if (this.titleFieldFocused) {
+      return { title: '', skipTitleAutoFill: true }
+    }
+    if (content.trim().length === 0) {
+      return { title: '', skipTitleAutoFill: false }
+    }
+    return { title: MarkdownUtils.editorAutoTitle(content), skipTitleAutoFill: false }
+  }
+
+  private onTitleFieldFocus(): void {
+    this.titleFieldFocused = true
+  }
+
+  private onTitleFieldBlur(): void {
+    this.titleFieldFocused = false
+    if (this.title.trim().length === 0 && this.content.trim().length > 0) {
+      this.scheduleSave()
+    }
+  }
+
   private async persistTagsToRepository(): Promise<void> {
     try {
+      const resolved = this.resolveTitleForSave(this.title, this.content)
       const note = await NoteRepository.getInstance().saveDraft(this.noteId, {
-        title: this.title,
+        title: resolved.title,
         content: this.content,
-        tags: this.noteTags
+        tags: this.noteTags,
+        skipTitleAutoFill: resolved.skipTitleAutoFill
       })
       this.lastSavedAt = note.updatedAt
       this.saveStatus = '已保存'
@@ -195,6 +235,7 @@ struct NoteEdit {
     this.title = note.title
     this.content = note.content
     this.lastSavedAt = note.updatedAt
+    this.noteCreatedAt = note.createdAt
     this.saveStatus = '已保存'
     this.noteTags = this.normalizeTags(note.tags)
     const hasBody = note.content.trim().length > 0
@@ -256,29 +297,36 @@ struct NoteEdit {
     try {
       Logger.info('NoteEdit',
         `handleAutoSave start: noteId=${this.noteId || 'new'}, titleLength=${this.title.length}, contentLength=${this.content.length}`)
-      if (this.title.trim().length === 0 && this.content.trim().length === 0) {
+      const rawTitle = this.title
+      if (rawTitle.trim().length === 0 && this.content.trim().length === 0) {
         this.saveStatus = '未保存'
         Logger.info('NoteEdit', 'handleAutoSave skipped: title and content are empty')
         return
       }
+      const resolved = this.resolveTitleForSave(rawTitle, this.content)
       let note: Note | null = null
       if (!this.noteId) {
         note = await NoteRepository.getInstance().createNote({
-          title: this.title,
+          title: resolved.title,
           content: this.content,
-          tags: this.normalizeTags(this.noteTags)
+          tags: this.normalizeTags(this.noteTags),
+          skipTitleAutoFill: resolved.skipTitleAutoFill
         })
         this.noteId = note.id
       } else {
         note = await NoteRepository.getInstance().saveDraft(this.noteId, {
-          title: this.title,
+          title: resolved.title,
           content: this.content,
-          tags: this.normalizeTags(this.noteTags)
+          tags: this.normalizeTags(this.noteTags),
+          skipTitleAutoFill: resolved.skipTitleAutoFill
         })
       }
-      this.title = note.title
+      if (!this.titleFieldFocused) {
+        this.title = note.title
+      }
       this.noteTags = this.normalizeTags(note.tags)
       this.lastSavedAt = note.updatedAt
+      this.noteCreatedAt = note.createdAt
       this.saveStatus = '已保存'
       Logger.info('NoteEdit',
         `handleAutoSave success: noteId=${this.noteId}, titleLength=${this.title.length}, contentLength=${this.content.length}`)
@@ -808,9 +856,49 @@ struct NoteEdit {
     return await this.packPixelMapToPng(merged)
   }
 
+  private formatShareCreatedAt(timestamp: number): string {
+    const ms = timestamp > 0 ? timestamp : Date.now()
+    const date = new Date(ms)
+    return `创作于${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
+  }
+
+  private shareDisplayName(): string {
+    const name = (this.shareProfile?.username ?? '').trim()
+    return name.length > 0 ? name : '未设置'
+  }
+
+  private shareAvatarUrlTrim(): string {
+    return (this.shareProfile?.avatar_url ?? '').trim()
+  }
+
+  @Builder
+  private buildShareAvatar() {
+    if (this.shareAvatarUrlTrim().length > 0 && !this.shareAvatarNetworkFailed) {
+      Image(this.shareAvatarUrlTrim())
+        .width(NoteEdit.SHARE_AVATAR_SIZE)
+        .height(NoteEdit.SHARE_AVATAR_SIZE)
+        .borderRadius(NoteEdit.SHARE_AVATAR_SIZE / 2)
+        .objectFit(ImageFit.Cover)
+        .onError(() => {
+          this.shareAvatarNetworkFailed = true
+        })
+    } else {
+      Image($r('app.media.icon_app'))
+        .width(NoteEdit.SHARE_AVATAR_SIZE)
+        .height(NoteEdit.SHARE_AVATAR_SIZE)
+        .borderRadius(NoteEdit.SHARE_AVATAR_SIZE / 2)
+        .objectFit(ImageFit.Cover)
+    }
+  }
+
   /** 通过弹窗授权保存长图到相册（无需 WRITE_IMAGEVIDEO 权限）。 */
   private async runSaveLongImageToGallery(): Promise<void> {
     this.showPreviewMessage('正在生成长图…')
+    this.shareAvatarNetworkFailed = false
+    this.shareProfile = await NoteApiClient.getInstance().fetchProfile()
+    if (this.shareAvatarUrlTrim().length > 0) {
+      await NoteEdit.delayMs(220)
+    }
     const path = await this.exportShareImageToCache()
     if (!path || path.length === 0) {
       this.showPreviewMessage('生成长图失败')
@@ -822,39 +910,63 @@ struct NoteEdit {
 
   @Builder
   private buildShareExportCard() {
-    Column({ space: 14 }) {
-      Text(this.title.trim().length > 0 ? this.title : '无标题')
-        .fontSize(22)
+    Column({ space: 0 }) {
+      this.buildShareAvatar()
+      Text(this.shareDisplayName())
+        .fontSize(16)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.primary_text'))
+        .fontColor($r('app.color.share_text'))
+        .lineHeight(22)
         .width('100%')
-      NoteEditMarkdownBlocksView({
-        blocks: this.previewBlocksState,
-        filesDirCache: this.filesDirCache,
-        onLinkToast: (href: string): void => {
-          this.showPreviewMessage(href)
-        }
-      })
+        .margin({ top: 10 })
+      Text(this.formatShareCreatedAt(this.noteCreatedAt))
+        .fontSize(13)
+        .fontWeight(FontWeight.Regular)
+        .fontColor($r('app.color.share_text'))
+        .lineHeight(18)
+        .width('100%')
+        .margin({ top: 4 })
+      Column({ space: 14 }) {
+        Text(this.title.trim().length > 0 ? this.title : '无标题')
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.share_text'))
+          .fontFamily('serif')
+          .width('100%')
+        NoteEditMarkdownBlocksView({
+          blocks: this.previewBlocksState,
+          filesDirCache: this.filesDirCache,
+          forShareExport: true,
+          onLinkToast: (href: string): void => {
+            this.showPreviewMessage(href)
+          }
+        })
+      }
+      .width('100%')
+      .margin({ top: NoteEdit.SHARE_HEADER_TO_CONTENT_GAP })
+      Divider()
+        .strokeWidth(1)
+        .color($r('app.color.share_divider'))
+        .margin({ top: 24, bottom: 16 })
       Column({ space: 10 }) {
         Text(NoteEdit.SHARE_SLOGAN)
-          .fontSize(16)
+          .fontSize(14)
           .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.primary_text'))
-          .lineHeight(22)
+          .fontColor($r('app.color.share_text'))
+          .lineHeight(20)
           .width('100%')
         Text(NoteEdit.SHARE_INTRO)
           .fontSize(12)
-          .fontColor($r('app.color.secondary_text'))
+          .fontColor($r('app.color.share_text'))
           .lineHeight(18)
           .width('100%')
       }
       .width('100%')
-      .margin({ top: 8 })
     }
     .width('100%')
     .padding(18)
     .alignItems(HorizontalAlign.Start)
-    .backgroundColor($r('app.color.preview_background'))
+    .backgroundColor($r('app.color.share_background'))
     .onAreaChange((_: Area, area: Area) => {
       const h = Number.parseFloat(`${area.height}`)
       if (h > 0) {
@@ -1220,6 +1332,12 @@ struct NoteEdit {
               title: $title,
               content: $content,
               textAreaController: this.textAreaController,
+              onTitleFocus: (): void => {
+                this.onTitleFieldFocus()
+              },
+              onTitleBlur: (): void => {
+                this.onTitleFieldBlur()
+              },
               onTitleChange: (): void => {
                 this.scheduleSave()
               },
@@ -1273,6 +1391,12 @@ struct NoteEdit {
             title: $title,
             content: $content,
             textAreaController: this.textAreaController,
+            onTitleFocus: (): void => {
+              this.onTitleFieldFocus()
+            },
+            onTitleBlur: (): void => {
+              this.onTitleFieldBlur()
+            },
             onTitleChange: (): void => {
               this.scheduleSave()
             },

@@ -30,6 +30,7 @@ struct Register {
   @State code: string = ''
   @State newPassword: string = ''
   @State submitting: boolean = false
+  @State agreeToTerms: boolean = false
   @State cooldownSec: number = 0
   /** 当前 11 位号校验为「未注册」后可发码 */
   @State phoneGateOk: boolean = false
@@ -558,11 +559,22 @@ struct Register {
             .margin({ top: 10 })
             .enabled(!this.submitting)
             .onClick((): void => {
+              if (!this.agreeToTerms) {
+                this.showToast('请先同意用户协议')
+                return
+              }
               void this.onSubmit()
             })
 
           Row() {
-            Text('注册即表示您已阅读并同意')
+            Checkbox()
+              .select(this.agreeToTerms)
+              .width(16)
+              .height(16)
+              .onChange((isChecked: boolean) => {
+                this.agreeToTerms = isChecked
+              })
+            Text('我已阅读并同意')
               .fontSize(12)
               .fontColor($r('app.color.tertiary_text'))
             Text('《隐私政策》')
@@ -583,6 +595,7 @@ struct Register {
           }
           .width('100%')
           .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
           .margin({ top: 12 })
         }
         .width('100%')
