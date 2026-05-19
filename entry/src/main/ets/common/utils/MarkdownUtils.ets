@@ -1,4 +1,4 @@
-export type MarkdownInlineType = 'text' | 'bold' | 'italic' | 'inline_code' | 'link'
+export type MarkdownInlineType = 'text' | 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link'
 
 export interface MarkdownInline {
   type: MarkdownInlineType
@@ -20,7 +20,7 @@ export interface MarkdownBlock {
 }
 
 interface MarkdownToken {
-  type: 'bold' | 'italic' | 'inline_code' | 'link'
+  type: 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link'
   index: number
   marker: string
 }
@@ -64,6 +64,7 @@ export class MarkdownUtils {
       .replace(/__([^_]+)__/g, '$1')
       .replace(/\*([^*]+)\*/g, '$1')
       .replace(/_([^_]+)_/g, '$1')
+      .replace(/~~([^~]+)~~/g, '$1')
       .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
       .replace(/^[-*+]\s+/gm, '')
@@ -367,7 +368,12 @@ export class MarkdownUtils {
         cursor = nextToken.index + marker.length
         continue
       }
-      const inlineType: MarkdownInlineType = nextToken.type === 'bold' ? 'bold' : 'italic'
+      let inlineType: MarkdownInlineType = 'italic'
+      if (nextToken.type === 'bold') {
+        inlineType = 'bold'
+      } else if (nextToken.type === 'strikethrough') {
+        inlineType = 'strikethrough'
+      }
       MarkdownUtils.pushInline(inlines, {
         type: inlineType,
         content: content.slice(nextToken.index + marker.length, closingIndex),
@@ -384,7 +390,8 @@ export class MarkdownUtils {
   private static findNextToken(content: string, from: number): MarkdownToken | null {
     let nextToken: MarkdownToken | null = null
 
-    const updateCandidate = (type: 'bold' | 'italic' | 'inline_code' | 'link', index: number, marker: string): void => {
+    const updateCandidate = (type: 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link', index: number,
+      marker: string): void => {
       if (index === -1) {
         return
       }
@@ -397,6 +404,7 @@ export class MarkdownUtils {
     updateCandidate('link', content.indexOf('[', from), '[')
     updateCandidate('bold', content.indexOf('**', from), '**')
     updateCandidate('bold', content.indexOf('__', from), '__')
+    updateCandidate('strikethrough', content.indexOf('~~', from), '~~')
 
     const italicMarkers = ['*', '_']
     for (const marker of italicMarkers) {
@@ -442,11 +450,13 @@ export class MarkdownUtils {
 
   private static containsInlineMarkers(content: string): boolean {
     return content.includes('`') || content.includes('[') || content.includes('*') || content.includes('_')
+      || content.includes('~')
   }
 
   private static containsMarkdownMarkers(content: string): boolean {
     return content.includes('`') || content.includes('#') || content.includes('>') || content.includes('[')
-      || content.includes('*') || content.includes('_') || content.includes('-') || content.includes('!')
+      || content.includes('*') || content.includes('_') || content.includes('~') || content.includes('-')
+      || content.includes('!')
   }
 
   private static normalizeWhitespace(content: string): string {

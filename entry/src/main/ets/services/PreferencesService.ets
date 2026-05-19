@@ -23,6 +23,8 @@ const NOTE_API_EXPIRES_AT_MS_KEY = 'note_api_expires_at_ms'
 const NOTE_SMS_DEVICE_ID_KEY = 'note_api_sms_device_id'
 /** 与 Flutter `prefGuestModeKey` 对齐：未绑定 Note API 亦可进入首页 */
 const GUEST_MODE_KEY = 'guest_mode'
+/** 与 Flutter `prefNoteQuickActionBarEnabledKey` 一致 */
+const NOTE_QUICK_ACTION_BAR_ENABLED_KEY = 'note_quick_action_bar_enabled'
 /** 登录成功后导航：`Login` 消费并清空（OAuth 返回后 router params 可能丢失） */
 const LOGIN_RETURN_TARGET_KEY = 'login_return_target'
 
@@ -594,6 +596,33 @@ export class PreferencesService {
       await store.flush()
     } catch (error) {
       Logger.warn('PreferencesService', `saveNoteTags failed: ${this.describeError(error as Object)}`)
+      throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  async getNoteQuickActionBarEnabled(): Promise<boolean> {
+    try {
+      const store = this.ensureStore()
+      return store.getSync(NOTE_QUICK_ACTION_BAR_ENABLED_KEY, true) as boolean
+    } catch (error) {
+      Logger.warn(
+        'PreferencesService',
+        `getNoteQuickActionBarEnabled failed: ${this.describeError(error as Object)}`
+      )
+      return true
+    }
+  }
+
+  async setNoteQuickActionBarEnabled(enabled: boolean): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(NOTE_QUICK_ACTION_BAR_ENABLED_KEY, enabled)
+      await store.flush()
+    } catch (error) {
+      Logger.warn(
+        'PreferencesService',
+        `setNoteQuickActionBarEnabled failed: ${this.describeError(error as Object)}`
+      )
       throw this.toRuntimeError(error as Object)
     }
   }

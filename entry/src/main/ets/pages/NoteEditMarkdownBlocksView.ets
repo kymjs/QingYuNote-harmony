@@ -111,6 +111,10 @@ export struct NoteEditMarkdownBlocksView {
         .fontFamily('monospace')
         .fontColor(defaultColor)
         .backgroundColor(this.codeBackgroundColor())
+    } else if (inline.type === 'strikethrough') {
+      Span(inline.content)
+        .fontColor(defaultColor)
+        .decoration({ type: TextDecorationType.LineThrough })
     } else if (inline.type === 'link') {
       Span(inline.content)
         .fontColor(this.accentTextColor())

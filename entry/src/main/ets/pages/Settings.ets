@@ -229,6 +229,34 @@ struct Settings {
               .strokeWidth(1)
 
             Row() {
+              Text($r('app.string.note_settings_hub'))
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor($r('app.color.primary_text'))
+                .layoutWeight(1)
+              Text('›')
+                .fontSize(22)
+                .fontColor($r('app.color.tertiary_text'))
+            }
+            .width('100%')
+            .padding({
+              left: 20,
+              right: 16,
+              top: 14,
+              bottom: 14
+            })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              this.getUIContext().getRouter().pushUrl({ url: 'pages/NoteSettings' }).catch((err: Error) => {
+                console.error(`openNoteSettings: ${JSON.stringify(err)}`)
+              })
+            })
+
+            Divider()
+              .color($r('app.color.divider'))
+              .strokeWidth(1)
+
+            Row() {
               Text($r('app.string.feedback_title'))
                 .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.primary_text'))

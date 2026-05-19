@@ -1,5 +1,16 @@
+import { ComponentContent, window } from '@kit.ArkUI'
 import type { MarkdownBlock } from '../common/utils/MarkdownUtils'
 import { MarkdownUtils } from '../common/utils/MarkdownUtils'
+import {
+  EditorMarkdownInsert,
+  type EditorInsertResult,
+  type EditorTextDiff
+} from '../common/utils/EditorMarkdownInsert'
+import { EditorQuickActionBar, type EditorQuickActionType } from '../components/EditorQuickActionBar'
+import {
+  buildEditorLinkInsertDialogContent,
+  type EditorLinkInsertDialogParams
+} from '../dialogs/EditorLinkInsertDialog'
 import type { Note } from '../common/model/Note'
 import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
@@ -59,7 +70,22 @@ struct NoteEdit {
   @State lastPanOffsetY: number = 0
   /** 标题输入框是否处于焦点（编辑）状态。 */
   @State titleFieldFocused: boolean = false
+  /** 笔记设置：是否展示输入法上方快捷操作栏。 */
+  @State quickActionBarEnabled: boolean = true
+  /** 软键盘占用高度（vp），用于快捷栏贴键盘定位。 */
+  @State keyboardHeightVp: number = 0
+  /** 正文上次已知光标位置；点击快捷栏时 TextArea 失焦，getCaretOffset 常误报文末。 */
+  private contentCaretIndex: number = 0
+  /** 程序化插入期间勿用控制器同步光标（避免把缓存覆盖成文末）。 */
+  private suppressContentCaretSync: boolean = false
+  private pendingInsertCaret: number = -1
+  private caretRestoreTimer: number = -1
   private textAreaController: TextAreaController = new TextAreaController()
+  private keyboardWindow?: window.Window
+  /** 软键盘真实高度回调（px），与 caret 滚动导致的 avoidArea 膨胀解耦。 */
+  private readonly onKeyboardHeightChange = (heightPx: number): void => {
+    this.keyboardHeightVp = heightPx > 0 ? this.getUIContext().px2vp(heightPx) : 0
+  }
   private shareScroller: Scroller = new Scroller()
   /** 分享卡片内 Column 总高度（vp），用于长截图分段滚动。 */
   @State shareExportColumnVp: number = 0
@@ -93,6 +119,10 @@ struct NoteEdit {
     return AppContextHolder.tryGetContext()
   }
 
+  onPageShow(): void {
+    void this.loadQuickActionBarPref()
+  }
+
   aboutToAppear(): void {
     const ctx = this.obtainUiAbilityContext()
     if (ctx !== undefined) {
@@ -102,6 +132,282 @@ struct NoteEdit {
     this.noteId = params?.noteId ?? ''
     this.preferPreviewOnOpen = params?.openWithPreview === true
     void this.loadNote()
+    void this.loadQuickActionBarPref()
+    void this.initKeyboardAvoidArea()
+  }
+
+  aboutToDisappear(): void {
+    if (this.keyboardWindow !== undefined) {
+      try {
+        this.keyboardWindow.off('keyboardHeightChange', this.onKeyboardHeightChange)
+      } catch (_) {
+        // ignore
+      }
+      this.keyboardWindow = undefined
+    }
+    if (this.saveTimer !== -1) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = -1
+    }
+    if (this.previewTimer !== -1) {
+      clearTimeout(this.previewTimer)
+      this.previewTimer = -1
+    }
+  }
+
+  private async loadQuickActionBarPref(): Promise<void> {
+    await this.ensurePreferencesInitialized()
+    this.quickActionBarEnabled =
+      await PreferencesService.getInstance().getNoteQuickActionBarEnabled()
+  }
+
+  private async initKeyboardAvoidArea(): Promise<void> {
+    const host = this.obtainUiAbilityContext()
+    if (host === undefined) {
+      return
+    }
+    try {
+      const win = await window.getLastWindow(host)
+      this.keyboardWindow = win
+      win.on('keyboardHeightChange', this.onKeyboardHeightChange)
+    } catch (error) {
+      Logger.warn('NoteEdit', `initKeyboardHeightListener: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private shouldShowQuickActionBar(): boolean {
+    return this.quickActionBarEnabled &&
+      !this.isSplitMode() &&
+      this.previewMode !== 'preview' &&
+      this.keyboardHeightVp > 0
+  }
+
+  private rememberContentCaret(selectionStart: number, selectionEnd: number): void {
+    const end = selectionEnd >= 0 ? selectionEnd : selectionStart
+    const start = selectionStart >= 0 ? selectionStart : end
+    const index = end >= start ? end : start
+    this.contentCaretIndex = Math.max(0, Math.min(index, this.content.length))
+  }
+
+  /** 在快捷栏 TouchDown 或插入前抓取选区（失焦后 getCaretOffset 不可靠）。 */
+  private captureContentCaretFromSelection(): void {
+    try {
+      const range = this.textAreaController.getSelection()
+      const start = range.start !== undefined && range.start >= 0 ? range.start : 0
+      const end = range.end !== undefined && range.end >= 0 ? range.end : start
+      this.rememberContentCaret(start, end)
+    } catch (_) {
+      // 保留 contentCaretIndex
+    }
+  }
+
+  private currentContentCaret(): number {
+    return Math.max(0, Math.min(this.contentCaretIndex, this.content.length))
+  }
+
+  private scheduleApplyCaret(caret: number, textLength?: number): void {
+    const len = textLength !== undefined ? textLength : this.content.length
+    const pos = Math.max(0, Math.min(caret, len))
+    this.pendingInsertCaret = pos
+    this.contentCaretIndex = pos
+    const apply = (): void => {
+      const maxLen = textLength !== undefined ? textLength : this.content.length
+      const target = Math.max(0, Math.min(this.pendingInsertCaret, maxLen))
+      try {
+        this.textAreaController.setTextSelection(target, target)
+      } catch (_) {
+        try {
+          this.textAreaController.caretPosition(target)
+        } catch (_2) {
+          // ignore
+        }
+      }
+      this.contentCaretIndex = target
+    }
+    if (this.caretRestoreTimer >= 0) {
+      clearTimeout(this.caretRestoreTimer)
+    }
+    apply()
+    setTimeout(apply, 0)
+    setTimeout(apply, 50)
+    this.caretRestoreTimer = setTimeout(() => {
+      apply()
+      this.suppressContentCaretSync = false
+      this.pendingInsertCaret = -1
+      this.caretRestoreTimer = -1
+    }, 120) as number
+  }
+
+  private applyContentInsertViaController(diff: EditorTextDiff): boolean {
+    if (diff.end > diff.start) {
+      this.textAreaController.deleteText({ start: diff.start, end: diff.end })
+    }
+    if (diff.insert.length > 0) {
+      this.textAreaController.addText(diff.insert, { offset: diff.start })
+    }
+    return true
+  }
+
+  private applyContentInsert(result: EditorInsertResult): void {
+    const oldText = this.content
+    const newText = result.text
+    const caret = Math.max(0, Math.min(result.caret, newText.length))
+    if (oldText === newText) {
+      this.scheduleApplyCaret(caret, newText.length)
+      return
+    }
+
+    const diff = EditorMarkdownInsert.computeTextDiff(oldText, newText)
+    this.suppressContentCaretSync = true
+    this.contentCaretIndex = caret
+    let appliedByController = false
+    try {
+      appliedByController = this.applyContentInsertViaController(diff)
+    } catch (_) {
+      appliedByController = false
+    }
+
+    if (!appliedByController) {
+      this.content = newText
+    } else {
+      setTimeout(() => {
+        if (this.content !== newText) {
+          this.suppressContentCaretSync = true
+          this.content = newText
+          this.scheduleApplyCaret(caret, newText.length)
+        }
+      }, 0)
+    }
+    this.scheduleApplyCaret(caret, newText.length)
+    this.scheduleSave()
+    if (this.shouldRenderPreview()) {
+      this.schedulePreviewRefresh()
+    } else {
+      this.previewDirty = true
+    }
+  }
+
+  private handleContentChange(): void {
+    if (this.suppressContentCaretSync) {
+      if (this.pendingInsertCaret >= 0) {
+        this.scheduleApplyCaret(this.pendingInsertCaret)
+      }
+    } else {
+      this.captureContentCaretFromSelection()
+    }
+    if (this.shouldRenderPreview()) {
+      this.schedulePreviewRefresh()
+    } else {
+      this.previewDirty = true
+    }
+    this.scheduleSave()
+  }
+
+  private openLinkInsertDialog(): void {
+    const ui = this.getUIContext()
+    let holder: ComponentContent<EditorLinkInsertDialogParams> | undefined = undefined
+    const params: EditorLinkInsertDialogParams = {
+      onCancel: (): void => {
+        if (holder !== undefined) {
+          try {
+            ui.getPromptAction().closeCustomDialog(holder)
+          } catch (_) {
+            // ignore
+          }
+        }
+      },
+      onConfirm: (label: string, url: string): void => {
+        if (holder !== undefined) {
+          try {
+            ui.getPromptAction().closeCustomDialog(holder)
+          } catch (_) {
+            // ignore
+          }
+        }
+        if (label.length === 0 || url.length === 0) {
+          return
+        }
+        this.captureContentCaretFromSelection()
+        const caret = this.currentContentCaret()
+        const result = EditorMarkdownInsert.insertLink(
+          this.content,
+          caret,
+          caret,
+          label,
+          url
+        )
+        this.applyContentInsert(result)
+      }
+    }
+    holder = new ComponentContent(ui, wrapBuilder(buildEditorLinkInsertDialogContent), params)
+    try {
+      ui.getPromptAction().openCustomDialog(holder, {
+        alignment: DialogAlignment.Center,
+        autoCancel: false
+      })
+    } catch (error) {
+      Logger.warn('NoteEdit', `openLinkInsertDialog: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private handleQuickAction(action: EditorQuickActionType): void {
+    this.captureContentCaretFromSelection()
+    if (action === 'link') {
+      this.openLinkInsertDialog()
+      return
+    }
+    const caret = this.currentContentCaret()
+    let result: EditorInsertResult
+    switch (action) {
+      case 'quote':
+        result = EditorMarkdownInsert.insertBlockPrefix(this.content, caret, '>')
+        break
+      case 'hr':
+        result = EditorMarkdownInsert.insertBlockPrefix(this.content, caret, '---')
+        break
+      case 'orderedList':
+        result = EditorMarkdownInsert.insertOrderedListItem(this.content, caret)
+        break
+      case 'bulletList':
+        result = EditorMarkdownInsert.insertBlockPrefix(this.content, caret, '* ')
+        break
+      case 'bold':
+        result = EditorMarkdownInsert.wrapPlaceholder(
+          this.content,
+          caret,
+          caret,
+          '**',
+          '**',
+          '文字',
+          2
+        )
+        break
+      case 'strike':
+        result = EditorMarkdownInsert.wrapPlaceholder(
+          this.content,
+          caret,
+          caret,
+          '~~',
+          '~~',
+          '文字',
+          2
+        )
+        break
+      case 'italic':
+        result = EditorMarkdownInsert.wrapPlaceholder(
+          this.content,
+          caret,
+          caret,
+          '*',
+          '*',
+          '文字',
+          1
+        )
+        break
+      default:
+        return
+    }
+    this.applyContentInsert(result)
   }
 
   private async ensurePreferencesInitialized(): Promise<void> {
@@ -211,17 +517,6 @@ struct NoteEdit {
     }
   }
 
-  aboutToDisappear(): void {
-    if (this.saveTimer !== -1) {
-      clearTimeout(this.saveTimer)
-      this.saveTimer = -1
-    }
-    if (this.previewTimer !== -1) {
-      clearTimeout(this.previewTimer)
-      this.previewTimer = -1
-    }
-  }
-
   private async loadNote(): Promise<void> {
     await NoteRepository.getInstance().init()
     if (!this.noteId) {
@@ -236,6 +531,7 @@ struct NoteEdit {
     }
     this.title = note.title
     this.content = note.content
+    this.contentCaretIndex = note.content.length
     this.lastSavedAt = note.updatedAt
     this.noteCreatedAt = note.createdAt
     this.saveStatus = '已保存'
@@ -370,6 +666,8 @@ struct NoteEdit {
     this.previewMode = mode
     if (mode === 'preview') {
       this.preparePreviewForCurrentMode(this.content, true)
+    } else if (mode === 'edit') {
+      this.tagMenuVisible = false
     }
   }
 
@@ -453,7 +751,8 @@ struct NoteEdit {
       } else {
         this.content = `${text}${imageMarkdown}\n`
       }
-      this.textAreaController.caretPosition(this.content.length)
+      this.suppressContentCaretSync = true
+      this.scheduleApplyCaret(this.content.length)
       this.scheduleSave()
       if (this.shouldRenderPreview()) {
         this.schedulePreviewRefresh()
@@ -1277,7 +1576,7 @@ struct NoteEdit {
           const safeAreaTop = 44
           const defaultRight = 8
           this.tagBarX = this.pageWidth - this.tagBarWidth - cardPadding - defaultRight
-          this.tagBarY = toolbarHeight + safeAreaTop
+          this.tagBarY = toolbarHeight + safeAreaTop - 1.5 * this.tagBarHeight
           this.tagBarInitialized = true
         }
       })
@@ -1324,7 +1623,7 @@ struct NoteEdit {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      Column({ space: $r('app.float.toolbar_spacing_content') }) {
+      Column({ space: 0 }) {
         Row() {
           Row() {
             Image($r('app.media.ic_back'))
@@ -1440,7 +1739,24 @@ struct NoteEdit {
         .width('100%')
         .height($r('app.float.edit_note_toolbar_height'))
         .alignItems(VerticalAlign.Center)
+        .padding({
+          left: this.pageWidth >= 600 ? 24 : 6,
+          right: this.pageWidth >= 600 ? 24 : 6
+        })
 
+        if (this.shouldShowQuickActionBar()) {
+          EditorQuickActionBar({
+            barWidthVp: this.pageWidth,
+            onBeforeAction: (): void => {
+              this.captureContentCaretFromSelection()
+            },
+            onAction: (action: EditorQuickActionType): void => {
+              this.handleQuickAction(action)
+            }
+          })
+        }
+
+        Column({ space: $r('app.float.toolbar_spacing_content') }) {
         if (this.isSplitMode()) {
           Row({ space: 14 }) {
             NoteEditEditorPane({
@@ -1456,13 +1772,11 @@ struct NoteEdit {
               onTitleChange: (): void => {
                 this.scheduleSave()
               },
+              onContentSelectionChange: (selectionStart: number, selectionEnd: number): void => {
+                this.rememberContentCaret(selectionStart, selectionEnd)
+              },
               onContentChange: (): void => {
-                if (this.shouldRenderPreview()) {
-                  this.schedulePreviewRefresh()
-                } else {
-                  this.previewDirty = true
-                }
-                this.scheduleSave()
+                this.handleContentChange()
               }
             })
             NoteEditPreviewPane({
@@ -1515,23 +1829,26 @@ struct NoteEdit {
             onTitleChange: (): void => {
               this.scheduleSave()
             },
+            onContentSelectionChange: (selectionStart: number, selectionEnd: number): void => {
+              this.rememberContentCaret(selectionStart, selectionEnd)
+            },
             onContentChange: (): void => {
-              if (this.shouldRenderPreview()) {
-                this.schedulePreviewRefresh()
-              } else {
-                this.previewDirty = true
-              }
-              this.scheduleSave()
+              this.handleContentChange()
             }
           })
         }
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .padding({
+          left: this.pageWidth >= 600 ? 24 : 6,
+          right: this.pageWidth >= 600 ? 24 : 6
+        })
       }
       .width('100%')
       .height('100%')
       .padding({
-        top: $r('app.float.toolbar_editor_page_padding_top'),
-        left: this.pageWidth >= 600 ? 24 : 6,
-        right: this.pageWidth >= 600 ? 24 : 6
+        top: $r('app.float.toolbar_editor_page_padding_top')
       })
       .backgroundColor($r('app.color.app_background'))
 
@@ -1543,8 +1860,8 @@ struct NoteEdit {
         .zIndex(999)
       }
 
-      // 移动端预览模式下的可拖动悬浮标签栏
-      if (!this.isSplitMode() && hasEditorTitleOrBody(this.title, this.content)) {
+      // 移动端预览模式下的可拖动悬浮标签栏（编辑模式隐藏）
+      if (!this.isSplitMode() && this.previewMode === 'preview' && hasEditorTitleOrBody(this.title, this.content)) {
         Stack() {
           this.buildDraggableTagBar()
         }

@@ -32,6 +32,14 @@ export default function markdownUtilsTest() {
       expect(blocks[1].type).assertEqual('divider')
     })
 
+    it('should parse strikethrough inline', 0, () => {
+      const blocks = MarkdownUtils.parseBlocks('~~删除线~~')
+      expect(blocks.length).assertEqual(1)
+      expect(blocks[0].inlines.length).assertEqual(1)
+      expect(blocks[0].inlines[0].type).assertEqual('strikethrough')
+      expect(blocks[0].inlines[0].content).assertEqual('删除线')
+    })
+
     it('should parse inline emphasis code and links', 0, () => {
       const blocks = MarkdownUtils.parseBlocks('这是 **加粗**、*斜体*、`代码` 和 [链接](https://example.com)')
       expect(blocks.length).assertEqual(1)

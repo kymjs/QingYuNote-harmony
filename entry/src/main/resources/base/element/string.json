@@ -133,6 +133,18 @@
       "value": "服务协议"
     },
     {
+      "name": "note_settings_title",
+      "value": "笔记设置"
+    },
+    {
+      "name": "note_settings_hub",
+      "value": "笔记设置"
+    },
+    {
+      "name": "note_quick_action_bar",
+      "value": "快捷操作栏"
+    },
+    {
       "name": "feedback_title",
       "value": "问题反馈"
     },

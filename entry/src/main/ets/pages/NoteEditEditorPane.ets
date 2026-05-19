@@ -12,6 +12,9 @@ export struct NoteEditEditorPane {
   }
   onContentChange: () => void = () => {
   }
+  onContentSelectionChange: (selectionStart: number, selectionEnd: number) => void =
+    (_selectionStart: number, _selectionEnd: number) => {
+    }
 
   build() {
     Column({ space: 0 }) {
@@ -45,6 +48,9 @@ export struct NoteEditEditorPane {
         .backgroundColor($r('app.color.editor_background'))
         .borderRadius(12)
         .layoutWeight(1)
+        .onTextSelectionChange((selectionStart: number, selectionEnd: number) => {
+          this.onContentSelectionChange(selectionStart, selectionEnd)
+        })
         .onChange((_value: string) => {
           this.onContentChange()
         })
