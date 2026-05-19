@@ -39,6 +39,11 @@ export struct NoteEditMarkdownBlocksView {
     return this.forShareExport ? $r('app.color.share_text') : $r('app.color.tertiary_text')
   }
 
+  /** 分享长图正文行高相对预览/编辑再收紧 15%。 */
+  private contentLineHeight(base: number): number {
+    return this.forShareExport ? Math.round(base * 0.85) : base
+  }
+
   private resolveImageSrc(src: string): string {
     if (src.startsWith('http://') || src.startsWith('https://')) {
       return src
@@ -131,7 +136,8 @@ export struct NoteEditMarkdownBlocksView {
             .copyOption(CopyOptions.LocalDevice)
             .margin({ top: 1 })
           Column() {
-            this.buildInlineText(item, $r('app.float.body_font_size'), this.primaryTextColor(), 24)
+            this.buildInlineText(item, $r('app.float.body_font_size'), this.primaryTextColor(),
+              this.contentLineHeight(24))
           }
           .layoutWeight(1)
         }
@@ -146,14 +152,18 @@ export struct NoteEditMarkdownBlocksView {
   @Builder
   private buildPreviewBlock(block: MarkdownBlock) {
     if (block.type === 'heading1') {
-      this.buildInlineText(block.inlines, 24, this.primaryTextColor(), 32, FontWeight.Bold)
+      this.buildInlineText(block.inlines, 24, this.primaryTextColor(), this.contentLineHeight(32),
+        FontWeight.Bold)
     } else if (block.type === 'heading2') {
-      this.buildInlineText(block.inlines, 20, this.primaryTextColor(), 28, FontWeight.Medium)
+      this.buildInlineText(block.inlines, 20, this.primaryTextColor(), this.contentLineHeight(28),
+        FontWeight.Medium)
     } else if (block.type === 'heading3') {
-      this.buildInlineText(block.inlines, 17, this.primaryTextColor(), 24, FontWeight.Medium)
+      this.buildInlineText(block.inlines, 17, this.primaryTextColor(), this.contentLineHeight(24),
+        FontWeight.Medium)
     } else if (block.type === 'quote') {
       Column() {
-        this.buildInlineText(block.inlines, $r('app.float.body_font_size'), this.secondaryTextColor(), 24)
+        this.buildInlineText(block.inlines, $r('app.float.body_font_size'), this.secondaryTextColor(),
+          this.contentLineHeight(24))
       }
       .width('100%')
         .padding({ left: 14, top: 8, bottom: 8 })
@@ -174,7 +184,7 @@ export struct NoteEditMarkdownBlocksView {
           .fontSize($r('app.float.caption_font_size'))
           .fontColor(this.primaryTextColor())
           .fontFamily('monospace')
-          .lineHeight(22)
+          .lineHeight(this.contentLineHeight(22))
           .copyOption(CopyOptions.LocalDevice)
           .width('100%')
       }
@@ -194,7 +204,8 @@ export struct NoteEditMarkdownBlocksView {
         .borderRadius(12)
         .alt(block.content)
     } else {
-      this.buildInlineText(block.inlines, $r('app.float.body_font_size'), this.primaryTextColor(), 24)
+      this.buildInlineText(block.inlines, $r('app.float.body_font_size'), this.primaryTextColor(),
+        this.contentLineHeight(24))
     }
   }
 

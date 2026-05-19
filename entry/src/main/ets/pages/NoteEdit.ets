@@ -78,7 +78,7 @@ struct NoteEdit {
   private static readonly SHARE_CARD_ID: string = 'note_share_export_card'
   private static readonly SHARE_SLOGAN: string = '记录本身，就是意义。   ——轻羽云笔记'
   private static readonly SHARE_INTRO: string =
-    '轻羽云笔记是一款云笔记应用，同时支持手机与电脑全平台，无论你正在使用哪台设备，笔记都在手边。'
+    '轻羽云笔记同时支持手机与电脑全平台，无论你正在使用哪台设备，笔记都在手边。'
   private static readonly SHARE_HEADER_TO_CONTENT_GAP: number = 30
   private static readonly SHARE_AVATAR_SIZE: number = 48
   private static readonly SHARE_QR_SIZE: number = 72
@@ -962,7 +962,7 @@ struct NoteEdit {
 
   private shareDisplayName(): string {
     const name = (this.shareProfile?.username ?? '').trim()
-    return name.length > 0 ? name : '未设置'
+    return name.length > 0 ? name : '轻羽云笔记用户'
   }
 
   private shareAvatarUrlTrim(): string {
@@ -1047,10 +1047,18 @@ struct NoteEdit {
         .color($r('app.color.share_divider'))
         .margin({ top: 24, bottom: 16 })
       Row({ space: NoteEdit.SHARE_FOOTER_QR_GAP }) {
-        Image($r('app.media.website_qrcode'))
-          .width(NoteEdit.SHARE_QR_SIZE)
-          .height(NoteEdit.SHARE_QR_SIZE)
-          .objectFit(ImageFit.Contain)
+        Stack() {
+          Column()
+            .width(NoteEdit.SHARE_QR_SIZE)
+            .height(NoteEdit.SHARE_QR_SIZE)
+            .backgroundColor($r('app.color.share_text'))
+          Image($r('app.media.website_qrcode'))
+            .width(NoteEdit.SHARE_QR_SIZE)
+            .height(NoteEdit.SHARE_QR_SIZE)
+            .objectFit(ImageFit.Contain)
+        }
+        .width(NoteEdit.SHARE_QR_SIZE)
+        .height(NoteEdit.SHARE_QR_SIZE)
         Column({ space: 10 }) {
           Text(NoteEdit.SHARE_SLOGAN)
             .fontSize(14)
@@ -1068,7 +1076,7 @@ struct NoteEdit {
         .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
-      .alignItems(VerticalAlign.Top)
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
     .padding(18)
