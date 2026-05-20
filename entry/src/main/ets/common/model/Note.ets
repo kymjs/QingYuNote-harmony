@@ -124,6 +124,8 @@ export interface UpdateNoteInput {
   title?: string
   content?: string
   tags?: string[]
+  /** 为 undefined 时不修改；空字符串表示移到根目录。 */
+  parentId?: string
   /** 为 true 且 title 为空时，不调用 MarkdownUtils.extractTitle。 */
   skipTitleAutoFill?: boolean
 }

@@ -7,6 +7,8 @@ import { buildQingyuCloudWebDavConfig } from './QingyuCloudConfigHelper'
 
 const PREFERENCES_NAME = 'qingyu_preferences'
 const TAG_LIST_KEY = 'note_tags'
+/** 与 Flutter `AppConst.prefHomeSidebarFilterModeKey` 一致：`tag` | `folder` */
+const HOME_SIDEBAR_FILTER_MODE_KEY = 'home_sidebar_filter_mode'
 const HUAWEI_LOGGED_IN_KEY = 'account_huawei_logged_in'
 const NOTE_API_USER_ID_KEY = 'note_api_user_id'
 const NOTE_API_ACCESS_TOKEN_KEY = 'note_api_access_token'
@@ -25,6 +27,8 @@ const NOTE_SMS_DEVICE_ID_KEY = 'note_api_sms_device_id'
 const GUEST_MODE_KEY = 'guest_mode'
 /** 与 Flutter `prefNoteQuickActionBarEnabledKey` 一致 */
 const NOTE_QUICK_ACTION_BAR_ENABLED_KEY = 'note_quick_action_bar_enabled'
+/** 与 Flutter `prefNoteFolderModeEnabledKey` 一致 */
+const NOTE_FOLDER_MODE_ENABLED_KEY = 'note_folder_mode_enabled'
 /** 登录成功后导航：`Login` 消费并清空（OAuth 返回后 router params 可能丢失） */
 const LOGIN_RETURN_TARGET_KEY = 'login_return_target'
 
@@ -622,6 +626,61 @@ export class PreferencesService {
       Logger.warn(
         'PreferencesService',
         `setNoteQuickActionBarEnabled failed: ${this.describeError(error as Object)}`
+      )
+      throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  async getNoteFolderModeEnabled(): Promise<boolean> {
+    try {
+      const store = this.ensureStore()
+      return store.getSync(NOTE_FOLDER_MODE_ENABLED_KEY, false) as boolean
+    } catch (error) {
+      Logger.warn(
+        'PreferencesService',
+        `getNoteFolderModeEnabled failed: ${this.describeError(error as Object)}`
+      )
+      return false
+    }
+  }
+
+  async setNoteFolderModeEnabled(enabled: boolean): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(NOTE_FOLDER_MODE_ENABLED_KEY, enabled)
+      await store.flush()
+    } catch (error) {
+      Logger.warn(
+        'PreferencesService',
+        `setNoteFolderModeEnabled failed: ${this.describeError(error as Object)}`
+      )
+      throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  async getHomeSidebarFilterMode(): Promise<'tag' | 'folder'> {
+    try {
+      const store = this.ensureStore()
+      const raw = `${store.getSync(HOME_SIDEBAR_FILTER_MODE_KEY, 'tag') ?? 'tag'}`.trim()
+      return raw === 'folder' ? 'folder' : 'tag'
+    } catch (error) {
+      Logger.warn(
+        'PreferencesService',
+        `getHomeSidebarFilterMode failed: ${this.describeError(error as Object)}`
+      )
+      return 'tag'
+    }
+  }
+
+  async setHomeSidebarFilterMode(mode: 'tag' | 'folder'): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(HOME_SIDEBAR_FILTER_MODE_KEY, mode === 'folder' ? 'folder' : 'tag')
+      await store.flush()
+    } catch (error) {
+      Logger.warn(
+        'PreferencesService',
+        `setHomeSidebarFilterMode failed: ${this.describeError(error as Object)}`
       )
       throw this.toRuntimeError(error as Object)
     }

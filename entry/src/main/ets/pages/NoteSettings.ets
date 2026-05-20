@@ -5,6 +5,7 @@ import { AppContextHolder } from '../services/AppContextHolder'
 @Component
 struct NoteSettings {
   @State quickActionBarEnabled: boolean = true
+  @State folderModeEnabled: boolean = false
   @State loading: boolean = true
 
   aboutToAppear(): void {
@@ -22,6 +23,8 @@ struct NoteSettings {
     }
     this.quickActionBarEnabled =
       await PreferencesService.getInstance().getNoteQuickActionBarEnabled()
+    this.folderModeEnabled =
+      await PreferencesService.getInstance().getNoteFolderModeEnabled()
     this.loading = false
   }
 
@@ -36,6 +39,22 @@ struct NoteSettings {
 
   private toggleQuickActionBar(): void {
     void this.setQuickActionBarEnabled(!this.quickActionBarEnabled)
+  }
+
+  private async setFolderModeEnabled(enabled: boolean): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+    await PreferencesService.getInstance().setNoteFolderModeEnabled(enabled)
+    if (!enabled) {
+      await PreferencesService.getInstance().setHomeSidebarFilterMode('tag')
+    }
+    this.folderModeEnabled = enabled
+  }
+
+  private toggleFolderMode(): void {
+    void this.setFolderModeEnabled(!this.folderModeEnabled)
   }
 
   build() {
@@ -105,6 +124,32 @@ struct NoteSettings {
               .alignItems(VerticalAlign.Center)
               .onClick(() => {
                 this.toggleQuickActionBar()
+              })
+
+              Divider()
+                .strokeWidth(1)
+                .color($r('app.color.divider'))
+
+              Row() {
+                Text($r('app.string.note_folder_mode_enabled'))
+                  .fontSize($r('app.float.body_font_size'))
+                  .fontColor($r('app.color.primary_text'))
+                  .layoutWeight(1)
+                Toggle({ type: ToggleType.Switch, isOn: this.folderModeEnabled })
+                  .selectedColor($r('app.color.accent'))
+                  .hitTestBehavior(HitTestMode.None)
+              }
+              .width('100%')
+              .padding({
+                left: 20,
+                right: 16,
+                top: 14,
+                bottom: 14
+              })
+              .justifyContent(FlexAlign.SpaceBetween)
+              .alignItems(VerticalAlign.Center)
+              .onClick(() => {
+                this.toggleFolderMode()
               })
             }
             .width('100%')

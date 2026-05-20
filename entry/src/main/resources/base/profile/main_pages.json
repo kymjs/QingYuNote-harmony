@@ -17,6 +17,7 @@
     "pages/Profile",
     "pages/AvatarCrop",
     "pages/TagManage",
+    "pages/FolderManage",
     "pages/TagNoteAssign"
   ]
 }

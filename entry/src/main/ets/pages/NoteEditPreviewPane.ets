@@ -9,6 +9,8 @@ function noteEditPreviewDefaultTagBar(): void {
 export struct NoteEditPreviewPane {
   @Prop title: string = ''
   @Prop splitMode: boolean = false
+  /** 为 false 时标题由页面顶栏展示（窄屏全屏预览）。 */
+  @Prop includeTitle: boolean = true
   @Prop showSplitTagRow: boolean = false
   @Prop previewBlocks: MarkdownBlock[] = []
   @Prop filesDirCache: string = ''
@@ -21,7 +23,7 @@ export struct NoteEditPreviewPane {
   build() {
     Scroll() {
       Column({ space: 14 }) {
-        if (!this.splitMode) {
+        if (!this.splitMode && this.includeTitle) {
           Text(this.title.trim().length > 0 ? this.title : '无标题')
             .fontSize(22)
             .fontWeight(FontWeight.Bold)

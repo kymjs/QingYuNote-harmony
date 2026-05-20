@@ -1,4 +1,5 @@
 import { DrawerModel } from '../common/model/DrawerModel'
+import type { FolderSidebarRow, HomeSidebarFilterMode } from '../common/utils/NoteFolderTree'
 
 const DRAWER_WIDTH = 248
 /** 收起时多向左移若干 vp，避免子像素/舍入导致面板右缘残留在可视区内。 */
@@ -18,6 +19,9 @@ export struct HomeDrawerLayer {
   @Prop selectedTag: string = ''
   /** 表示「全部笔记」的 token，由调用方定义。 */
   @Prop allNotesTag: string = '__ALL_NOTES__'
+  @Prop filterMode: HomeSidebarFilterMode = 'tag'
+  @Prop folderModeEnabled: boolean = false
+  @Prop folderRows: FolderSidebarRow[] = []
 
   /** 菜单按钮触发切换抽屉：每次递增即可。 */
   @Prop @Watch('handleToggleNonceChanged') drawerToggleNonce: number = 0
@@ -27,7 +31,13 @@ export struct HomeDrawerLayer {
   /** 选中某一筛选标签。 */
   onTagSelected: (tag: string) => void = (_tag: string) => {
   }
+  onFolderSelected: (folderId: string) => void = (_folderId: string) => {
+  }
+  onFilterModeChanged: (mode: HomeSidebarFilterMode) => void = (_mode: HomeSidebarFilterMode) => {
+  }
   onOpenTagManage: () => void = () => {
+  }
+  onOpenFolderManage: () => void = () => {
   }
   onOpenRecycleBin: () => void = () => {
   }
@@ -70,15 +80,60 @@ export struct HomeDrawerLayer {
   }
 
   @Builder
-  private buildDrawerFilterItem(label: string, tag: string) {
-    Row() {
+  private buildModeSegment(label: string, mode: HomeSidebarFilterMode) {
+    Text(label)
+      .fontSize(13)
+      .fontWeight(this.filterMode === mode ? FontWeight.Medium : FontWeight.Regular)
+      .fontColor(this.filterMode === mode ? $r('app.color.accent') : $r('app.color.secondary_text'))
+      .layoutWeight(1)
+      .textAlign(TextAlign.Center)
+      .padding({ top: 8, bottom: 8 })
+      .backgroundColor(this.filterMode === mode ? $r('app.color.surface_muted') : Color.Transparent)
+      .borderRadius(10)
+      .onClick(() => {
+        if (this.filterMode !== mode) {
+          this.onFilterModeChanged(mode)
+        }
+      })
+  }
+
+  @Builder
+  private buildFilterModeSwitcher() {
+    Row({ space: 4 }) {
+      this.buildModeSegment('标签模式', 'tag')
+      this.buildModeSegment('文件夹模式', 'folder')
+    }
+    .width('100%')
+    .padding(4)
+    .backgroundColor($r('app.color.card_background'))
+    .borderRadius(12)
+    .border({ width: 1, color: $r('app.color.card_border') })
+  }
+
+  @Builder
+  private buildDrawerFilterItem(label: string, tag: string, showFolderIcon: boolean = false) {
+    Row({ space: showFolderIcon ? 10 : 0 }) {
+      if (showFolderIcon) {
+        Image(this.selectedTag === tag ? $r('app.media.ic_folder_open') : $r('app.media.ic_folder_closed'))
+          .width(20)
+          .height(20)
+          .objectFit(ImageFit.Contain)
+      }
       Text(label)
         .fontSize($r('app.float.body_font_size'))
         .fontWeight(this.selectedTag === tag ? FontWeight.Medium : FontWeight.Regular)
         .fontColor(this.selectedTag === tag ? $r('app.color.accent') : $r('app.color.primary_text'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
     }
     .width('100%')
-    .padding({ left: 18, right: 14, top: 12.8, bottom: 12.8 })
+    .padding({
+      left: showFolderIcon ? 12 : 18,
+      right: 14,
+      top: 12.8,
+      bottom: 12.8
+    })
     .backgroundColor(this.selectedTag === tag ? $r('app.color.surface_muted') : Color.Transparent)
     .borderRadius(12)
     .onClick(() => {
@@ -87,18 +142,61 @@ export struct HomeDrawerLayer {
   }
 
   @Builder
+  private buildDrawerFolderItem(row: FolderSidebarRow) {
+    Row({ space: 10 }) {
+      Image(row.isExpanded ? $r('app.media.ic_folder_open') : $r('app.media.ic_folder_closed'))
+        .width(20)
+        .height(20)
+        .objectFit(ImageFit.Contain)
+      Text(row.title)
+        .fontSize($r('app.float.body_font_size'))
+        .fontWeight(this.selectedTag === row.noteId ? FontWeight.Medium : FontWeight.Regular)
+        .fontColor(this.selectedTag === row.noteId ? $r('app.color.accent') : $r('app.color.primary_text'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .padding({
+      left: 12 + row.depth * 14,
+      right: 14,
+      top: 12.8,
+      bottom: 12.8
+    })
+    .backgroundColor(this.selectedTag === row.noteId ? $r('app.color.surface_muted') : Color.Transparent)
+    .borderRadius(12)
+    .onClick(() => {
+      this.onFolderSelected(row.noteId)
+    })
+  }
+
+  @Builder
   private buildDrawerSidebar() {
     Column({ space: 6 }) {
-      Text('筛选标签')
-        .fontSize(13)
-        .fontColor($r('app.color.tertiary_text'))
-        .margin({ top: 8, bottom: 8, left: 6 })
+      if (this.folderModeEnabled) {
+        this.buildFilterModeSwitcher()
+      } else {
+        Text('筛选标签')
+          .fontSize(13)
+          .fontColor($r('app.color.tertiary_text'))
+          .margin({ top: 8, bottom: 8, left: 6 })
+      }
 
-      this.buildDrawerFilterItem('全部笔记', this.allNotesTag)
+      if (this.folderModeEnabled && this.filterMode === 'folder') {
+        this.buildDrawerFilterItem('根目录', this.allNotesTag, true)
+      } else {
+        this.buildDrawerFilterItem('全部笔记', this.allNotesTag)
+      }
 
-      ForEach(this.tags, (tag: string) => {
-        this.buildDrawerFilterItem(tag, tag)
-      }, (tag: string) => `tag_${tag}`)
+      if (!this.folderModeEnabled) {
+        ForEach(this.tags, (tag: string) => {
+          this.buildDrawerFilterItem(tag, tag)
+        }, (tag: string) => `tag_${tag}`)
+      } else if (this.filterMode === 'folder') {
+        ForEach(this.folderRows, (row: FolderSidebarRow) => {
+          this.buildDrawerFolderItem(row)
+        }, (row: FolderSidebarRow) => `folder_${row.noteId}_${row.depth}_${row.isExpanded}`)
+      }
 
       Blank()
         .layoutWeight(1)
@@ -112,7 +210,11 @@ export struct HomeDrawerLayer {
         .margin({ top: 8, bottom: 4 })
 
       Row() {
-        Text($r('app.string.tag_manage'))
+        Text(
+          this.folderModeEnabled && this.filterMode === 'folder'
+            ? $r('app.string.folder_manage')
+            : $r('app.string.tag_manage')
+        )
           .fontSize($r('app.float.body_font_size'))
           .fontColor($r('app.color.primary_text'))
           .layoutWeight(1)
@@ -123,7 +225,11 @@ export struct HomeDrawerLayer {
       .width('100%')
       .padding({ left: 18, right: 14, top: 8, bottom: 8 })
       .onClick(() => {
-        this.onOpenTagManage()
+        if (this.folderModeEnabled && this.filterMode === 'folder') {
+          this.onOpenFolderManage()
+        } else {
+          this.onOpenTagManage()
+        }
       })
 
       Divider()

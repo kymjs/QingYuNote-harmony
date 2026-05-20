@@ -26,6 +26,7 @@ import { NoteEditEditorPane } from './NoteEditEditorPane'
 import { NoteEditPreviewPane } from './NoteEditPreviewPane'
 import { NoteEditMarkdownBlocksView } from './NoteEditMarkdownBlocksView'
 import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
+import { NoteFolderTree, type FolderSidebarRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 
 interface NoteEditParams {
   noteId?: string
@@ -61,6 +62,10 @@ struct NoteEdit {
   @State noteTags: string[] = []
   @State tagPool: string[] = []
   @State tagMenuVisible: boolean = false
+  @State parentId: string = ''
+  @State allNotes: Note[] = []
+  @State expandedFolderIds: string[] = []
+  @State folderMovePopupVisible: boolean = false
   @State tagBarX: number = 0
   @State tagBarY: number = 0
   @State tagBarInitialized: boolean = false
@@ -72,6 +77,7 @@ struct NoteEdit {
   @State titleFieldFocused: boolean = false
   /** 笔记设置：是否展示输入法上方快捷操作栏。 */
   @State quickActionBarEnabled: boolean = true
+  @State folderModeEnabled: boolean = false
   /** 软键盘占用高度（vp），用于快捷栏贴键盘定位。 */
   @State keyboardHeightVp: number = 0
   /** 正文上次已知光标位置；点击快捷栏时 TextArea 失焦，getCaretOffset 常误报文末。 */
@@ -87,6 +93,14 @@ struct NoteEdit {
     this.keyboardHeightVp = heightPx > 0 ? this.getUIContext().px2vp(heightPx) : 0
   }
   private shareScroller: Scroller = new Scroller()
+  private pathCaptionScroller: Scroller = new Scroller()
+  private pathCaptionMarqueeToken: number = 0
+  private pathCaptionMarqueeTimer: number = -1
+  @State private pathCaptionContentWidthVp: number = 0
+  @State private pathCaptionViewportWidthVp: number = 0
+  /** 与 Flutter 路径跑马灯一致的横向步进（vp/帧）。 */
+  private static readonly PATH_CAPTION_LED_STEP_VP: number = 0.8
+  private static readonly PATH_CAPTION_LED_FRAME_MS: number = 16
   /** 分享卡片内 Column 总高度（vp），用于长截图分段滚动。 */
   @State shareExportColumnVp: number = 0
   /**
@@ -121,6 +135,7 @@ struct NoteEdit {
 
   onPageShow(): void {
     void this.loadQuickActionBarPref()
+    void this.loadFolderModePref()
   }
 
   aboutToAppear(): void {
@@ -132,7 +147,9 @@ struct NoteEdit {
     this.noteId = params?.noteId ?? ''
     this.preferPreviewOnOpen = params?.openWithPreview === true
     void this.loadNote()
+    void this.refreshAllNotes()
     void this.loadQuickActionBarPref()
+    void this.loadFolderModePref()
     void this.initKeyboardAvoidArea()
   }
 
@@ -153,12 +170,26 @@ struct NoteEdit {
       clearTimeout(this.previewTimer)
       this.previewTimer = -1
     }
+    this.stopPathCaptionMarquee()
   }
 
   private async loadQuickActionBarPref(): Promise<void> {
     await this.ensurePreferencesInitialized()
     this.quickActionBarEnabled =
       await PreferencesService.getInstance().getNoteQuickActionBarEnabled()
+  }
+
+  private async loadFolderModePref(): Promise<void> {
+    await this.ensurePreferencesInitialized()
+    this.folderModeEnabled =
+      await PreferencesService.getInstance().getNoteFolderModeEnabled()
+    if (!this.folderModeEnabled) {
+      this.folderMovePopupVisible = false
+    }
+  }
+
+  private saveStatusBarClickable(): boolean {
+    return this.folderModeEnabled && this.mobileFullPreviewChrome()
   }
 
   private async initKeyboardAvoidArea(): Promise<void> {
@@ -428,10 +459,14 @@ struct NoteEdit {
     this.tagPool = this.normalizeTags(fromNotes.concat(stored).concat(this.noteTags))
   }
 
-  private normalizeTags(tags: string[]): string[] {
+  private noteTagsSafe(): string[] {
+    return this.noteTags ?? []
+  }
+
+  private normalizeTags(tags?: string[]): string[] {
     const seen: Set<string> = new Set()
     const normalized: string[] = []
-    for (const rawTag of tags) {
+    for (const rawTag of tags ?? []) {
       const tag = `${rawTag ?? ''}`.trim()
       if (tag.length === 0 || seen.has(tag)) {
         continue
@@ -522,6 +557,7 @@ struct NoteEdit {
     if (!this.noteId) {
       this.previewMode = this.pageWidth >= 600 ? 'split' : 'edit'
       this.preparePreviewForCurrentMode(this.content)
+      void this.refreshAllNotes()
       return
     }
     const note = await NoteRepository.getInstance().getNote(this.noteId)
@@ -536,6 +572,7 @@ struct NoteEdit {
     this.noteCreatedAt = note.createdAt
     this.saveStatus = '已保存'
     this.noteTags = this.normalizeTags(note.tags)
+    this.parentId = `${note.parentId ?? ''}`.trim()
     const hasBody = note.content.trim().length > 0
     if (this.preferPreviewOnOpen && hasBody) {
       this.previewMode = this.isSplitMode() ? 'split' : 'preview'
@@ -543,6 +580,17 @@ struct NoteEdit {
       this.previewMode = this.isSplitMode() ? 'split' : 'edit'
     }
     this.preparePreviewForCurrentMode(note.content)
+    void this.refreshAllNotes()
+    this.schedulePathCaptionMarquee()
+  }
+
+  private async refreshAllNotes(): Promise<void> {
+    await NoteRepository.getInstance().init()
+    this.allNotes = await NoteRepository.getInstance().listNotes()
+  }
+
+  private expandedFolderIdSet(): Set<string> {
+    return new Set(this.expandedFolderIds)
   }
 
   private scheduleSave(): void {
@@ -611,11 +659,17 @@ struct NoteEdit {
           skipTitleAutoFill: resolved.skipTitleAutoFill
         })
         this.noteId = note.id
+        if (this.parentId.trim().length > 0) {
+          note = await NoteRepository.getInstance().saveDraft(this.noteId, {
+            parentId: this.parentId
+          })
+        }
       } else {
         note = await NoteRepository.getInstance().saveDraft(this.noteId, {
           title: resolved.title,
           content: this.content,
           tags: this.normalizeTags(this.noteTags),
+          parentId: this.parentId,
           skipTitleAutoFill: resolved.skipTitleAutoFill
         })
       }
@@ -646,6 +700,306 @@ struct NoteEdit {
     this.getUIContext().getRouter().back()
   }
 
+  private mobileFullPreviewChrome(): boolean {
+    return !this.isSplitMode() && this.previewMode === 'preview'
+  }
+
+  private onToggleFolderExpand(folderId: string): void {
+    if (folderId === NoteFolderTree.VIRTUAL_ROOT_FOLDER_ID) {
+      if (this.expandedFolderIds.includes(NoteFolderTree.VIRTUAL_ROOT_FOLDER_ID)) {
+        this.expandedFolderIds = this.expandedFolderIds.filter(
+          (id: string) => id !== NoteFolderTree.VIRTUAL_ROOT_FOLDER_ID
+        )
+      } else {
+        this.expandedFolderIds = [...this.expandedFolderIds, NoteFolderTree.VIRTUAL_ROOT_FOLDER_ID]
+      }
+      return
+    }
+    const expanded = this.expandedFolderIdSet()
+    NoteFolderTree.applyToggleExpand(folderId, this.allNotes, expanded)
+    this.expandedFolderIds = Array.from(expanded)
+  }
+
+  private getMovePickerEntries(): MovePickerEntry[] {
+    return NoteFolderTree.visibleMovePickerEntries(
+      this.allNotes,
+      this.expandedFolderIdSet(),
+      this.noteId
+    )
+  }
+
+  private isMovePickerEntryExpanded(entry: MovePickerEntry): boolean {
+    return this.expandedFolderIds.includes(entry.id)
+  }
+
+  /** 弹窗中标注当前笔记已所在的父文件夹（根目录 parentId 为空）。 */
+  private isMovePickerCurrentParent(entry: MovePickerEntry): boolean {
+    const current = `${this.parentId ?? ''}`.trim()
+    if (!entry.isFolder) {
+      return false
+    }
+    if (entry.id === NoteFolderTree.VIRTUAL_ROOT_FOLDER_ID) {
+      return current.length === 0
+    }
+    const target = `${entry.moveTargetParentId ?? ''}`.trim()
+    return target.length > 0 && target === current
+  }
+
+  private async onSelectMoveFolder(folderId: string): Promise<void> {
+    if (this.noteId.length > 0 &&
+      NoteFolderTree.wouldCreateParentCycle(this.noteId, folderId, this.allNotes)) {
+      return
+    }
+    this.parentId = folderId
+    this.folderMovePopupVisible = false
+    if (this.noteId.length === 0) {
+      this.scheduleSave()
+      return
+    }
+    try {
+      let note = await NoteRepository.getInstance().saveDraft(this.noteId, {
+        parentId: folderId
+      })
+      this.parentId = `${note.parentId ?? ''}`.trim()
+      this.lastSavedAt = note.updatedAt
+      this.saveStatus = '已保存'
+      void this.refreshAllNotes()
+      this.schedulePathCaptionMarquee()
+    } catch (error) {
+      this.saveStatus = '保存失败'
+      Logger.error('NoteEdit', `onSelectMoveFolder failed: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private parentPathSegments(): string[] {
+    return NoteFolderTree.parentPathSegments(this.parentId, this.allNotes)
+  }
+
+  private stopPathCaptionTimer(): void {
+    if (this.pathCaptionMarqueeTimer !== -1) {
+      clearInterval(this.pathCaptionMarqueeTimer)
+      this.pathCaptionMarqueeTimer = -1
+    }
+  }
+
+  private stopPathCaptionMarquee(): void {
+    this.pathCaptionMarqueeToken += 1
+    this.stopPathCaptionTimer()
+    this.pathCaptionScroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
+  }
+
+  private startPathCaptionLedMarquee(maxX: number, token: number): void {
+    this.stopPathCaptionTimer()
+    this.pathCaptionScroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
+    this.pathCaptionMarqueeTimer = setInterval(() => {
+      if (token !== this.pathCaptionMarqueeToken || !this.mobileFullPreviewChrome()) {
+        this.stopPathCaptionTimer()
+        return
+      }
+      this.pathCaptionScroller.scrollBy(NoteEdit.PATH_CAPTION_LED_STEP_VP, 0)
+      const current = this.pathCaptionScroller.currentOffset().xOffset
+      if (current >= maxX) {
+        this.pathCaptionScroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
+      }
+    }, NoteEdit.PATH_CAPTION_LED_FRAME_MS)
+  }
+
+  private tryStartPathCaptionMarqueeFromMeasure(): void {
+    if (!this.mobileFullPreviewChrome()) {
+      return
+    }
+    if (this.pathCaptionContentWidthVp <= 0 || this.pathCaptionViewportWidthVp <= 0) {
+      return
+    }
+    const maxX = this.pathCaptionContentWidthVp - this.pathCaptionViewportWidthVp
+    if (maxX <= 1) {
+      this.stopPathCaptionTimer()
+      this.pathCaptionScroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
+      return
+    }
+    this.startPathCaptionLedMarquee(maxX, this.pathCaptionMarqueeToken)
+  }
+
+  private schedulePathCaptionMarquee(): void {
+    this.stopPathCaptionTimer()
+    this.pathCaptionContentWidthVp = 0
+    this.pathCaptionViewportWidthVp = 0
+    this.pathCaptionScroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
+  }
+
+  private onPathCaptionContentAreaChange(area: Area): void {
+    const width = Number.parseFloat(`${area.width}`)
+    if (width > 0 && Math.abs(this.pathCaptionContentWidthVp - width) >= 0.5) {
+      this.pathCaptionContentWidthVp = width
+      this.tryStartPathCaptionMarqueeFromMeasure()
+    }
+  }
+
+  private onPathCaptionViewportAreaChange(area: Area): void {
+    const width = Number.parseFloat(`${area.width}`)
+    if (width > 0 && Math.abs(this.pathCaptionViewportWidthVp - width) >= 0.5) {
+      this.pathCaptionViewportWidthVp = width
+      this.tryStartPathCaptionMarqueeFromMeasure()
+    }
+  }
+
+  @Builder
+  private buildMovePickerFileRow(entry: MovePickerEntry) {
+    Row({ space: 8 }) {
+      SymbolGlyph($r('sys.symbol.doc_text'))
+        .fontSize(16)
+        .fontColor([$r('app.color.accent')])
+      Text(entry.title)
+        .fontSize(14)
+        .fontColor(
+          NoteFolderTree.wouldCreateParentCycle(this.noteId, entry.id, this.allNotes) ?
+            $r('app.color.tertiary_text') : $r('app.color.primary_text')
+        )
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .padding({
+      left: 20 + entry.depth * 14,
+      right: 16,
+      top: 6,
+      bottom: 6
+    })
+    .onClick(() => {
+      if (!NoteFolderTree.wouldCreateParentCycle(this.noteId, entry.id, this.allNotes)) {
+        void this.onSelectMoveFolder(entry.id)
+      }
+    })
+  }
+
+  @Builder
+  private buildMovePickerFolderRow(entry: MovePickerEntry) {
+    Row({ space: 0 }) {
+      Image(this.isMovePickerEntryExpanded(entry) ? $r('app.media.ic_folder_open') : $r('app.media.ic_folder_closed'))
+        .width(20)
+        .height(20)
+        .objectFit(ImageFit.Contain)
+        .margin({ left: 8 + entry.depth * 14, right: 10 })
+        .onClick(() => {
+          if (entry.canExpand) {
+            this.onToggleFolderExpand(entry.id)
+          }
+        })
+      Text(entry.title)
+        .fontSize($r('app.float.body_font_size'))
+        .fontColor(
+          this.isMovePickerCurrentParent(entry) ? $r('app.color.tertiary_text') :
+            (entry.moveTargetParentId !== undefined &&
+              entry.moveTargetParentId.length > 0 &&
+              NoteFolderTree.wouldCreateParentCycle(this.noteId, entry.moveTargetParentId, this.allNotes) ?
+              $r('app.color.tertiary_text') : $r('app.color.primary_text'))
+        )
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+        .padding({ top: 10, bottom: 10, right: 12 })
+        .onClick(() => {
+          const target = entry.moveTargetParentId ?? ''
+          if (target.length === 0 ||
+            !NoteFolderTree.wouldCreateParentCycle(this.noteId, target, this.allNotes)) {
+            void this.onSelectMoveFolder(target)
+          }
+        })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private buildMovePickerEntryRow(entry: MovePickerEntry) {
+    if (entry.isFolder) {
+      this.buildMovePickerFolderRow(entry)
+    } else {
+      this.buildMovePickerFileRow(entry)
+    }
+  }
+
+  @Builder
+  private buildFolderMovePanel() {
+    Column({ space: 0 }) {
+      Text('将当前文件移动到')
+        .fontSize($r('app.float.move_panel_hint_font_size'))
+        .fontColor($r('app.color.secondary_text'))
+        .textAlign(TextAlign.Center)
+        .width('100%')
+        .padding({ left: 16, right: 16, top: 14, bottom: 8 })
+      Scroll() {
+        Column({ space: 0 }) {
+          ForEach(this.getMovePickerEntries(), (entry: MovePickerEntry) => {
+            this.buildMovePickerEntryRow(entry)
+          }, (entry: MovePickerEntry) =>
+            `pick_${entry.id}_${entry.depth}_${entry.isFolder}_${this.isMovePickerEntryExpanded(entry)}`)
+        }
+        .width('100%')
+      }
+      .scrollBar(BarState.Off)
+      .constraintSize({ maxHeight: '50%' })
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.card_background'))
+    .borderRadius(12)
+    .border({ width: 1, color: $r('app.color.card_border') })
+    .shadow({
+      radius: 12,
+      color: $r('app.color.shadow_color'),
+      offsetX: 0,
+      offsetY: 4
+    })
+  }
+
+  @Builder
+  private buildParentPathCaption() {
+    Scroll(this.pathCaptionScroller) {
+      Row({ space: 0 }) {
+        Text('当前位置：/')
+          .fontSize(13)
+          .fontColor($r('app.color.secondary_text'))
+          .flexShrink(0)
+        Text('根目录')
+          .fontSize(13)
+          .fontColor($r('app.color.secondary_text'))
+          .flexShrink(0)
+        ForEach(this.parentPathSegments(), (segment: string, index: number) => {
+          Text('/')
+            .fontSize(13)
+            .fontColor($r('app.color.secondary_text'))
+            .flexShrink(0)
+          Text(segment)
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.accent'))
+            .maxLines(1)
+            .flexShrink(0)
+        }, (segment: string, index: number) => `path_${this.parentId}_${index}_${segment}`)
+      }
+      .justifyContent(FlexAlign.Start)
+      .onAreaChange((_: Area, area: Area) => {
+        this.onPathCaptionContentAreaChange(area)
+      })
+    }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .enableScrollInteraction(false)
+    .clip(true)
+    .align(Alignment.Start)
+    .width('100%')
+    .padding({ left: 13, bottom: 8 })
+    .onAreaChange((_: Area, area: Area) => {
+      this.onPathCaptionViewportAreaChange(area)
+    })
+    .onAppear(() => {
+      this.schedulePathCaptionMarquee()
+    })
+    .onDisAppear(() => {
+      this.stopPathCaptionMarquee()
+    })
+  }
+
   private isSplitMode(): boolean {
     return this.pageWidth >= 600
   }
@@ -668,6 +1022,8 @@ struct NoteEdit {
       this.preparePreviewForCurrentMode(this.content, true)
     } else if (mode === 'edit') {
       this.tagMenuVisible = false
+      this.folderMovePopupVisible = false
+      this.stopPathCaptionMarquee()
     }
   }
 
@@ -1419,7 +1775,7 @@ struct NoteEdit {
         ForEach(this.tagPool, (tag: string) => {
           Row() {
             Checkbox()
-              .select(this.noteTags.includes(tag))
+              .select(this.noteTagsSafe().includes(tag))
               .selectedColor($r('app.color.accent'))
               .onChange((value: boolean) => {
                 void this.onTagChecked(tag, value)
@@ -1432,7 +1788,7 @@ struct NoteEdit {
           .width('100%')
           .padding({ left: 12, right: 12, top: 10, bottom: 10 })
           .onClick(() => {
-            const selected = !this.noteTags.includes(tag)
+            const selected = !this.noteTagsSafe().includes(tag)
             void this.onTagChecked(tag, selected)
           })
         }, (tag: string) => `tag_item_${tag}`)
@@ -1457,7 +1813,7 @@ struct NoteEdit {
         void this.openTagManage()
       })
     }
-    .width(110)
+    .width(154)
     .constraintSize({ maxHeight: 320 })
     .backgroundColor($r('app.color.card_background'))
     .borderRadius(12)
@@ -1476,8 +1832,18 @@ struct NoteEdit {
    * - 仅当 `hasEditorTitleOrBody` 为 true 时展示
    * - 悬浮窗形式，支持手指拖动到屏幕任意位置
    */
+  /**
+   * 供 NoteEditPreviewPane 的 @BuilderParam 使用。
+   * 传入子组件时必须用箭头函数包装（`(): void => { this.noteEditPreviewTagBarSlot() }`），
+   * 不可直接传 `this.noteEditPreviewTagBarSlot`，否则子组件调用时 this 丢失。
+   */
   @Builder
-  buildMobileTagBarWidget() {
+  noteEditPreviewTagBarSlot() {
+    this.buildMobileTagBarWidget(this.noteTagsSafe())
+  }
+
+  @Builder
+  buildMobileTagBarWidget(noteTags: string[]) {
     Row({ space: 4 }) {
       Row() {
         Row({ space: 4 }) {
@@ -1485,14 +1851,14 @@ struct NoteEdit {
             .fontSize(14)
             .fontColor($r('app.color.secondary_text'))
             .fontWeight(FontWeight.Medium)
-          if (this.noteTags.length === 0) {
+          if (noteTags.length === 0) {
             Text('标签')
               .fontSize(12)
               .fontColor($r('app.color.secondary_text'))
           } else {
             Scroll() {
               Row({ space: 4 }) {
-                ForEach(this.noteTags, (tag: string) => {
+                ForEach(noteTags, (tag: string) => {
                   this.buildTagChip(tag)
                 }, (tag: string) => `mobile_tag_chip_${tag}`)
               }
@@ -1524,7 +1890,6 @@ struct NoteEdit {
   @Builder
   buildDraggableTagBar() {
     Stack() {
-      // 内联构建移动端标签栏，避免链式调用问题
       Row({ space: 4 }) {
         Row() {
           Row({ space: 4 }) {
@@ -1532,14 +1897,14 @@ struct NoteEdit {
               .fontSize(14)
               .fontColor($r('app.color.secondary_text'))
               .fontWeight(FontWeight.Medium)
-            if (this.noteTags.length === 0) {
+            if (this.noteTagsSafe().length === 0) {
               Text('标签')
                 .fontSize(12)
                 .fontColor($r('app.color.secondary_text'))
             } else {
               Scroll() {
                 Row({ space: 4 }) {
-                  ForEach(this.noteTags, (tag: string) => {
+                  ForEach(this.noteTagsSafe(), (tag: string) => {
                     this.buildTagChip(tag)
                   }, (tag: string) => `mobile_tag_chip_${tag}`)
                 }
@@ -1648,17 +2013,68 @@ struct NoteEdit {
           })
 
           Column({ space: 4 }) {
-            Text(this.saveStatusDisplay())
-              .fontSize($r('app.float.caption_font_size'))
-              .fontWeight(FontWeight.Medium)
-              .fontColor(
-                this.saveStatus === '已保存' ? $r('app.color.success') :
-                  (this.saveStatus === '保存失败' ? $r('app.color.danger') : $r('app.color.secondary_text'))
-              )
-              .textAlign(TextAlign.Start)
+            if (this.saveStatusBarClickable()) {
+              Text() {
+                Span(`${this.saveStatus} - `)
+                  .fontSize($r('app.float.caption_font_size'))
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(
+                    this.saveStatus === '已保存' ? $r('app.color.success') :
+                      (this.saveStatus === '保存失败' ? $r('app.color.danger') : $r('app.color.secondary_text'))
+                  )
+                Span('预览模式')
+                  .fontSize($r('app.float.caption_font_size'))
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor(
+                    this.saveStatus === '已保存' ? $r('app.color.success') :
+                      (this.saveStatus === '保存失败' ? $r('app.color.danger') : $r('app.color.secondary_text'))
+                  )
+                Span('▼')
+                  .fontSize($r('app.float.caption_font_size'))
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor($r('app.color.secondary_text'))
+              }
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
+              .onClick(() => {
+                if (this.folderMovePopupVisible) {
+                  this.folderMovePopupVisible = false
+                } else {
+                  this.folderMovePopupVisible = true
+                  if (!this.expandedFolderIds.includes(NoteFolderTree.VIRTUAL_ROOT_FOLDER_ID)) {
+                    this.expandedFolderIds = [
+                      ...this.expandedFolderIds,
+                      NoteFolderTree.VIRTUAL_ROOT_FOLDER_ID
+                    ]
+                  }
+                }
+              })
+            } else if (this.mobileFullPreviewChrome()) {
+              Text(this.saveStatusDisplay())
+                .fontSize($r('app.float.caption_font_size'))
+                .fontWeight(FontWeight.Medium)
+                .fontColor(
+                  this.saveStatus === '已保存' ? $r('app.color.success') :
+                    (this.saveStatus === '保存失败' ? $r('app.color.danger') : $r('app.color.secondary_text'))
+                )
+                .textAlign(TextAlign.Start)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+            } else {
+              Text(this.saveStatusDisplay())
+                .fontSize($r('app.float.caption_font_size'))
+                .fontWeight(FontWeight.Medium)
+                .fontColor(
+                  this.saveStatus === '已保存' ? $r('app.color.success') :
+                    (this.saveStatus === '保存失败' ? $r('app.color.danger') : $r('app.color.secondary_text'))
+                )
+                .textAlign(TextAlign.Start)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+            }
             if (this.lastSavedAt > 0) {
               Text(TimeUtils.format(this.lastSavedAt))
                 .fontSize(12)
@@ -1793,28 +2209,41 @@ struct NoteEdit {
               onLinkToast: (href: string): void => {
                 this.showPreviewMessage(href)
               },
-              tagBarSlot: this.buildMobileTagBarWidget
+              tagBarSlot: (): void => {
+                this.noteEditPreviewTagBarSlot()
+              }
             })
           }
           .layoutWeight(1)
           .width('100%')
         } else if (this.previewMode === 'preview') {
-          NoteEditPreviewPane({
-            title: this.title,
-            splitMode: this.isSplitMode(),
-            showSplitTagRow: hasEditorTitleOrBody(this.title, this.content),
-            previewBlocks: this.previewBlocksState,
-            filesDirCache: this.filesDirCache,
-            onBackgroundTap: (): void => {
-              if (this.tagMenuVisible) {
-                this.tagMenuVisible = false
+          Column({ space: 0 }) {
+            if (this.folderModeEnabled && this.mobileFullPreviewChrome()) {
+              this.buildParentPathCaption()
+            }
+            NoteEditPreviewPane({
+              title: this.title,
+              splitMode: this.isSplitMode(),
+              includeTitle: true,
+              showSplitTagRow: hasEditorTitleOrBody(this.title, this.content) && !this.mobileFullPreviewChrome(),
+              previewBlocks: this.previewBlocksState,
+              filesDirCache: this.filesDirCache,
+              onBackgroundTap: (): void => {
+                if (this.tagMenuVisible) {
+                  this.tagMenuVisible = false
+                }
+              },
+              onLinkToast: (href: string): void => {
+                this.showPreviewMessage(href)
+              },
+              tagBarSlot: (): void => {
+                this.noteEditPreviewTagBarSlot()
               }
-            },
-            onLinkToast: (href: string): void => {
-              this.showPreviewMessage(href)
-            },
-            tagBarSlot: this.buildMobileTagBarWidget
-          })
+            })
+              .layoutWeight(1)
+          }
+          .layoutWeight(1)
+          .width('100%')
         } else {
           NoteEditEditorPane({
             title: $title,
@@ -1856,8 +2285,32 @@ struct NoteEdit {
         Column() {
           this.buildTagDropdown()
         }
-        .position({ x: this.pageWidth - 130, y: 69 })
+        .position({ x: this.pageWidth - 174, y: 69 })
         .zIndex(999)
+      }
+
+      if (this.folderMovePopupVisible && this.saveStatusBarClickable()) {
+        Stack({ alignContent: Alignment.TopStart }) {
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor('rgba(0,0,0,0.3)')
+            .onClick(() => {
+              this.folderMovePopupVisible = false
+            })
+          Column() {
+            this.buildFolderMovePanel()
+          }
+          .width('100%')
+          .padding({
+            left: this.pageWidth >= 600 ? 24 : 6,
+            right: this.pageWidth >= 600 ? 24 : 6,
+            top: 35
+          })
+        }
+        .width('100%')
+        .height('100%')
+        .zIndex(1000)
       }
 
       // 移动端预览模式下的可拖动悬浮标签栏（编辑模式隐藏）

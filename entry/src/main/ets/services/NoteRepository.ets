@@ -320,6 +320,7 @@ export class NoteRepository {
     const nextContent = patch.content ?? existing.content
     const nextTitle = (patch.title ?? existing.title).trim()
     const nextTags = patch.tags ?? existing.tags
+    const nextParentId = patch.parentId !== undefined ? patch.parentId : existing.parentId
     const resolvedTitle =
       patch.skipTitleAutoFill === true && nextTitle.length === 0 ? '' :
         nextTitle.length > 0 ? nextTitle : MarkdownUtils.extractTitle(nextContent)
@@ -328,7 +329,8 @@ export class NoteRepository {
     const titleChanged = resolvedTitle !== existing.title
     const summaryChanged = nextSummary !== existing.summary
     const tagsChanged = !this.areTagsEqual(nextTags, existing.tags)
-    if (!contentChanged && !titleChanged && !summaryChanged && !tagsChanged) {
+    const parentIdChanged = nextParentId !== existing.parentId
+    if (!contentChanged && !titleChanged && !summaryChanged && !tagsChanged && !parentIdChanged) {
       return this.cloneNote(existing)
     }
 
@@ -337,6 +339,7 @@ export class NoteRepository {
     updated.title = resolvedTitle
     updated.content = nextContent
     updated.tags = [...nextTags]
+    updated.parentId = nextParentId
     updated.summary = nextSummary
     updated.localModified = now
     updated.deleted = false
@@ -703,7 +706,7 @@ export class NoteRepository {
       lastOperationAt: resolvedLocalModified,
       syncStatus: 'pending'
     }
-    const resolvedTags = tags ?? state.tags
+    const resolvedTags = tags ?? state.tags ?? []
     const resolvedImageRefs: string[] = state.imageRefs ?? []
     return {
       id: state.id,

@@ -14,6 +14,11 @@ import {
 import { WebDAVClient } from '../services/WebDAVClient'
 import { NoteApiClient } from '../services/NoteApiClient'
 import { Logger } from '../common/utils/Logger'
+import {
+  NoteFolderTree,
+  type FolderSidebarRow,
+  type HomeSidebarFilterMode
+} from '../common/utils/NoteFolderTree'
 import { SyncConstants } from '../common/constants/SyncConstants'
 
 /** 与 HomeDrawerLayer 内 DRAWER_SPAN 一致，用于全屏横向拖动手势计算行程。 */
@@ -34,6 +39,9 @@ struct Index {
   @State allNotes: Note[] = []
   @State tags: string[] = []
   @State selectedTag: string = ALL_NOTES_TAG
+  @State filterMode: HomeSidebarFilterMode = 'tag'
+  @State folderModeEnabled: boolean = false
+  @State expandedFolderIds: string[] = []
   @State searchQuery: string = ''
   @State searchExpanded: boolean = false
   @State loading: boolean = true
@@ -205,6 +213,15 @@ struct Index {
       await NoteRepository.getInstance().init()
       const listedNotes = await NoteRepository.getInstance().listNotes()
       this.allNotes = listedNotes
+      await this.ensurePreferencesInitialized()
+      this.folderModeEnabled =
+        await PreferencesService.getInstance().getNoteFolderModeEnabled()
+      let filterMode = await PreferencesService.getInstance().getHomeSidebarFilterMode()
+      if (!this.folderModeEnabled && filterMode === 'folder') {
+        filterMode = 'tag'
+        await PreferencesService.getInstance().setHomeSidebarFilterMode('tag')
+      }
+      this.filterMode = filterMode
       await this.refreshTagCatalog(listedNotes)
       this.applyTagFilter()
     } finally {
@@ -386,9 +403,45 @@ struct Index {
     const storedTags = await PreferencesService.getInstance().getNoteTags()
     const mergedTags = this.normalizeTags(this.extractTagsFromNotes(notes).concat(storedTags))
     this.tags = mergedTags
-    if (this.selectedTag !== ALL_NOTES_TAG && !mergedTags.includes(this.selectedTag)) {
+    this.validateSidebarSelection(notes)
+  }
+
+  private validateSidebarSelection(notes: Note[]): void {
+    if (this.selectedTag === ALL_NOTES_TAG) {
+      return
+    }
+    if (!this.folderModeEnabled || this.filterMode === 'tag') {
+      if (!this.tags.includes(this.selectedTag)) {
+        this.selectedTag = ALL_NOTES_TAG
+      }
+      return
+    }
+    if (!NoteFolderTree.folderNoteIds(notes).has(this.selectedTag)) {
       this.selectedTag = ALL_NOTES_TAG
     }
+  }
+
+  private expandedFolderIdSet(): Set<string> {
+    return new Set(this.expandedFolderIds)
+  }
+
+  private getFolderSidebarRows(): FolderSidebarRow[] {
+    return NoteFolderTree.visibleSidebarRows(this.allNotes, this.expandedFolderIdSet())
+  }
+
+  private async setFilterMode(mode: HomeSidebarFilterMode): Promise<void> {
+    if (!this.folderModeEnabled && mode === 'folder') {
+      return
+    }
+    if (this.filterMode === mode) {
+      return
+    }
+    await this.ensurePreferencesInitialized()
+    await PreferencesService.getInstance().setHomeSidebarFilterMode(mode)
+    this.filterMode = mode
+    this.selectedTag = ALL_NOTES_TAG
+    this.expandedFolderIds = []
+    this.applyTagFilter()
   }
 
   private clearSearchFilterTimer(): void {
@@ -411,8 +464,11 @@ struct Index {
     let pool: Note[] = []
     if (this.selectedTag === ALL_NOTES_TAG) {
       pool = [...this.allNotes]
-    } else {
+    } else if (!this.folderModeEnabled || this.filterMode === 'tag') {
       pool = this.allNotes.filter((note: Note) => note.tags.includes(this.selectedTag))
+    } else {
+      pool = this.allNotes.filter((note: Note) =>
+        NoteFolderTree.isUnderFolder(note, this.selectedTag, this.allNotes))
     }
     const raw = this.searchQuery.trim()
     if (raw.length > 0) {
@@ -427,12 +483,27 @@ struct Index {
   }
 
   private selectTag(tag: string): void {
+    const rootInFolderMode =
+      this.folderModeEnabled && this.filterMode === 'folder' && tag === ALL_NOTES_TAG
     if (tag === this.selectedTag) {
+      if (rootInFolderMode) {
+        this.drawerCloseNonce += 1
+      }
       return
     }
     this.selectedTag = tag
     this.applyTagFilter()
-    this.drawerCloseNonce += 1
+    if (!this.folderModeEnabled || this.filterMode === 'tag' || rootInFolderMode) {
+      this.drawerCloseNonce += 1
+    }
+  }
+
+  private selectFolder(folderId: string): void {
+    this.selectedTag = folderId
+    const expanded = this.expandedFolderIdSet()
+    NoteFolderTree.applyToggleExpand(folderId, this.allNotes, expanded)
+    this.expandedFolderIds = Array.from(expanded)
+    this.applyTagFilter()
   }
 
   private animateDrawerSnapTo(targetOpen: number): void {
@@ -478,6 +549,18 @@ struct Index {
     } catch (error) {
       console.error(JSON.stringify(error))
       this.showUserMessage(this.formatActionError('打开标签页', error))
+    }
+  }
+
+  private async openFolderManage(): Promise<void> {
+    this.drawerCloseNonce += 1
+    try {
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/FolderManage'
+      })
+    } catch (error) {
+      console.error(JSON.stringify(error))
+      this.showUserMessage(this.formatActionError('打开文件夹管理', error))
     }
   }
 
@@ -1052,13 +1135,25 @@ struct Index {
         tags: this.tags,
         selectedTag: this.selectedTag,
         allNotesTag: ALL_NOTES_TAG,
+        folderModeEnabled: this.folderModeEnabled,
+        filterMode: this.filterMode,
+        folderRows: this.getFolderSidebarRows(),
         drawerToggleNonce: this.drawerToggleNonce,
         drawerCloseNonce: this.drawerCloseNonce,
         onTagSelected: (tag: string): void => {
           this.selectTag(tag)
         },
+        onFolderSelected: (folderId: string): void => {
+          this.selectFolder(folderId)
+        },
+        onFilterModeChanged: (mode: HomeSidebarFilterMode): void => {
+          void this.setFilterMode(mode)
+        },
         onOpenTagManage: (): void => {
           void this.openTagEditor()
+        },
+        onOpenFolderManage: (): void => {
+          void this.openFolderManage()
         },
         onOpenRecycleBin: (): void => {
           void this.openRecycleBin()

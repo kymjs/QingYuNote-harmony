@@ -145,6 +145,10 @@
       "value": "快捷操作栏"
     },
     {
+      "name": "note_folder_mode_enabled",
+      "value": "启用文件夹模式"
+    },
+    {
       "name": "feedback_title",
       "value": "问题反馈"
     },
@@ -167,6 +171,10 @@
     {
       "name": "tag_manage",
       "value": "标签管理"
+    },
+    {
+      "name": "folder_manage",
+      "value": "文件夹管理"
     },
     {
       "name": "recycle_bin_title",

@@ -29,6 +29,10 @@
       "value": "13fp"
     },
     {
+      "name": "move_panel_hint_font_size",
+      "value": "20fp"
+    },
+    {
       "name": "toolbar_height",
       "value": "40vp"
     },
