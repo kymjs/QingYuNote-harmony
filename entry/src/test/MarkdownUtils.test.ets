@@ -54,6 +54,13 @@ export default function markdownUtilsTest() {
       expect(blocks[0].inlines[7].href).assertEqual('https://example.com')
     })
 
+    it('should parse math display and inline', 0, () => {
+      const blocks = MarkdownUtils.parseBlocks('$$\n\\frac{a}{b}\n$$')
+      expect(blocks.some((b) => b.type === 'math_display')).assertTrue()
+      const inlines = MarkdownUtils.parseInlines('公式 \\(x^2\\) 结束')
+      expect(inlines.some((i) => i.type === 'math_inline' && i.content === 'x^2')).assertTrue()
+    })
+
     it('should keep summary readable after stripping markdown', 0, () => {
       const summary = MarkdownUtils.summary('# 标题\n\n- **项目**\n- [链接](https://example.com)')
       expect(summary).assertContain('标题')

@@ -1,4 +1,6 @@
 import type { MarkdownBlock, MarkdownInline } from '../common/utils/MarkdownUtils'
+import { KatexFormulaPreview } from '../components/KatexFormulaPreview'
+import { KatexUtils } from '../common/utils/KatexUtils'
 import { fileUri } from '@kit.CoreFileKit'
 
 /** 笔记预览/分享卡片共用的 Markdown 块渲染，独立于编辑页以缩小状态失效范围。 */
@@ -39,6 +41,69 @@ export struct NoteEditMarkdownBlocksView {
     return this.forShareExport ? $r('app.color.share_text') : $r('app.color.tertiary_text')
   }
 
+  private mathTextColor(): string {
+    return this.forShareExport ? '#F5E6B8' : '#1D1D1F'
+  }
+
+  private mathBackgroundColor(): string {
+    return this.forShareExport ? '#1A1A1C' : 'transparent'
+  }
+
+  private hasMathInline(inlines: MarkdownInline[]): boolean {
+    return inlines.some((inline: MarkdownInline) => inline.type === 'math_inline')
+  }
+
+  private hasAnyMath(): boolean {
+    for (const block of this.blocks) {
+      if (block.type === 'math_display') {
+        return true
+      }
+      if (this.hasMathInline(block.inlines)) {
+        return true
+      }
+      for (const item of block.items) {
+        if (this.hasMathInline(item)) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  /** 首个非图片/分割线的块索引，用于插入合并后的 KaTeX Web。 */
+  private firstRenderableBlockIndex(): number {
+    for (let i = 0; i < this.blocks.length; i++) {
+      const t = this.blocks[i].type
+      if (t !== 'image' && t !== 'divider') {
+        return i
+      }
+    }
+    return -1
+  }
+
+  private skipBlockInUnifiedKatex(block: MarkdownBlock, index: number): boolean {
+    if (!this.hasAnyMath()) {
+      return false
+    }
+    if (block.type === 'image' || block.type === 'divider') {
+      return false
+    }
+    return index !== this.firstRenderableBlockIndex()
+  }
+
+  /** 由 inlines 还原含 $ 定界符的原文（列表项等无 block.content 时使用）。 */
+  private inlineSource(inlines: MarkdownInline[]): string {
+    let buf = ''
+    for (const inline of inlines) {
+      if (inline.type === 'math_inline') {
+        buf += `$${inline.content}$`
+      } else {
+        buf += inline.content
+      }
+    }
+    return buf
+  }
+
   /** 分享长图正文行高相对预览/编辑再收紧 15%。 */
   private contentLineHeight(base: number): number {
     return this.forShareExport ? Math.round(base * 0.85) : base
@@ -71,6 +136,9 @@ export struct NoteEditMarkdownBlocksView {
   }
 
   private previewBlockKey(block: MarkdownBlock, index: number): string {
+    if (block.type === 'math_display') {
+      return `${block.type}:${block.content.slice(0, 48)}:${index}`
+    }
     if (block.type === 'unordered_list' || block.type === 'ordered_list') {
       const items = block.items
         .map((item: MarkdownInline[]) => item.map((inline: MarkdownInline) => inline.content.slice(0, 20)).join(''))
@@ -81,19 +149,29 @@ export struct NoteEditMarkdownBlocksView {
   }
 
   @Builder
-  private buildInlineText(inlines: MarkdownInline[], fontSize: number | Resource, fontColor: ResourceColor,
-    lineHeight: number, fontWeight: FontWeight = FontWeight.Regular) {
-    Text() {
-      ForEach(inlines, (inline: MarkdownInline, index: number) => {
-        this.buildInlineSpan(inline, fontColor)
-      }, (inline: MarkdownInline, index: number) => this.inlineKey(inline, index))
+  private buildInlineText(inlines: MarkdownInline[], rawContent: string, fontSize: number | Resource,
+    fontColor: ResourceColor, lineHeight: number, fontWeight: FontWeight = FontWeight.Regular) {
+    if (this.hasMathInline(inlines) && !this.hasAnyMath()) {
+      KatexFormulaPreview({
+        source: rawContent,
+        textColor: this.mathTextColor(),
+        previewBackgroundColor: this.mathBackgroundColor(),
+        displayBlock: false
+      })
+        .key(`katex_inline:${rawContent.slice(0, 64)}`)
+    } else {
+      Text() {
+        ForEach(inlines, (inline: MarkdownInline, index: number) => {
+          this.buildInlineSpan(inline, fontColor)
+        }, (inline: MarkdownInline, index: number) => this.inlineKey(inline, index))
+      }
+      .fontSize(fontSize)
+      .fontColor(fontColor)
+      .lineHeight(lineHeight)
+      .fontWeight(fontWeight)
+      .copyOption(CopyOptions.LocalDevice)
+      .width('100%')
     }
-    .fontSize(fontSize)
-    .fontColor(fontColor)
-    .lineHeight(lineHeight)
-    .fontWeight(fontWeight)
-    .copyOption(CopyOptions.LocalDevice)
-    .width('100%')
   }
 
   @Builder
@@ -140,8 +218,8 @@ export struct NoteEditMarkdownBlocksView {
             .copyOption(CopyOptions.LocalDevice)
             .margin({ top: 1 })
           Column() {
-            this.buildInlineText(item, $r('app.float.body_font_size'), this.primaryTextColor(),
-              this.contentLineHeight(24))
+            this.buildInlineText(item, this.inlineSource(item), $r('app.float.body_font_size'),
+              this.primaryTextColor(), this.contentLineHeight(24))
           }
           .layoutWeight(1)
         }
@@ -156,17 +234,17 @@ export struct NoteEditMarkdownBlocksView {
   @Builder
   private buildPreviewBlock(block: MarkdownBlock) {
     if (block.type === 'heading1') {
-      this.buildInlineText(block.inlines, 24, this.primaryTextColor(), this.contentLineHeight(32),
+      this.buildInlineText(block.inlines, block.content, 24, this.primaryTextColor(), this.contentLineHeight(32),
         FontWeight.Bold)
     } else if (block.type === 'heading2') {
-      this.buildInlineText(block.inlines, 20, this.primaryTextColor(), this.contentLineHeight(28),
+      this.buildInlineText(block.inlines, block.content, 20, this.primaryTextColor(), this.contentLineHeight(28),
         FontWeight.Medium)
     } else if (block.type === 'heading3') {
-      this.buildInlineText(block.inlines, 17, this.primaryTextColor(), this.contentLineHeight(24),
+      this.buildInlineText(block.inlines, block.content, 17, this.primaryTextColor(), this.contentLineHeight(24),
         FontWeight.Medium)
     } else if (block.type === 'quote') {
       Column() {
-        this.buildInlineText(block.inlines, $r('app.float.body_font_size'), this.secondaryTextColor(),
+        this.buildInlineText(block.inlines, block.content, $r('app.float.body_font_size'), this.secondaryTextColor(),
           this.contentLineHeight(24))
       }
       .width('100%')
@@ -207,16 +285,41 @@ export struct NoteEditMarkdownBlocksView {
         .objectFit(ImageFit.Cover)
         .borderRadius(12)
         .alt(block.content)
+    } else if (block.type === 'math_display' && !this.hasAnyMath()) {
+      KatexFormulaPreview({
+        source: KatexUtils.wrapDisplaySource(block.content),
+        textColor: this.mathTextColor(),
+        previewBackgroundColor: this.mathBackgroundColor(),
+        displayBlock: true
+      })
+        .key(`math_display:${block.content.slice(0, 48)}`)
     } else {
-      this.buildInlineText(block.inlines, $r('app.float.body_font_size'), this.primaryTextColor(),
+      this.buildInlineText(block.inlines, block.content, $r('app.float.body_font_size'), this.primaryTextColor(),
         this.contentLineHeight(24))
     }
+  }
+
+  @Builder
+  private buildUnifiedKatexPreview() {
+    KatexFormulaPreview({
+      source: KatexUtils.combineBlocksForKatex(this.blocks),
+      textColor: this.mathTextColor(),
+      previewBackgroundColor: this.mathBackgroundColor(),
+      displayBlock: false
+    })
+      .key(`katex_unified:${this.blocks.length}`)
   }
 
   build() {
     Column({ space: 14 }) {
       ForEach(this.blocks, (block: MarkdownBlock, index: number) => {
-        this.buildPreviewBlock(block)
+        if (!this.skipBlockInUnifiedKatex(block, index)) {
+          if (this.hasAnyMath() && index === this.firstRenderableBlockIndex()) {
+            this.buildUnifiedKatexPreview()
+          } else {
+            this.buildPreviewBlock(block)
+          }
+        }
       }, (block: MarkdownBlock, index: number) => this.previewBlockKey(block, index))
     }
     .width('100%')

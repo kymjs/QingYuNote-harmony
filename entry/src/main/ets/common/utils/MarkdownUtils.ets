@@ -1,4 +1,5 @@
-export type MarkdownInlineType = 'text' | 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link'
+export type MarkdownInlineType =
+  'text' | 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link' | 'math_inline'
 
 export interface MarkdownInline {
   type: MarkdownInlineType
@@ -7,7 +8,7 @@ export interface MarkdownInline {
 }
 
 export type MarkdownBlockType =
-  'heading1' | 'heading2' | 'heading3' | 'quote' | 'unordered_list' | 'ordered_list' | 'code' | 'divider' | 'image' | 'paragraph'
+  'heading1' | 'heading2' | 'heading3' | 'quote' | 'unordered_list' | 'ordered_list' | 'code' | 'divider' | 'image' | 'paragraph' | 'math_display'
 
 type MarkdownListBlockType = 'unordered_list' | 'ordered_list'
 
@@ -20,7 +21,7 @@ export interface MarkdownBlock {
 }
 
 interface MarkdownToken {
-  type: 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link'
+  type: 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link' | 'math_inline'
   index: number
   marker: string
 }
@@ -55,6 +56,10 @@ export class MarkdownUtils {
       return content.replace(/\r/g, '').trim()
     }
     return content
+      .replace(/\$\$[\s\S]*?\$\$/g, ' ')
+      .replace(/\\\[[\s\S]*?\\\]/g, ' ')
+      .replace(/\\\([\s\S]*?\\\)/g, ' ')
+      .replace(/(?<!\\)\$[^$\n]+(?<!\\)\$/g, ' ')
       .replace(/```[\s\S]*?```/g, ' ')
       .replace(/`([^`]+)`/g, '$1')
       .replace(/^>\s?/gm, '')
@@ -92,8 +97,29 @@ export class MarkdownUtils {
     let inCodeBlock = false
     const codeLines: string[] = []
     let codeLanguage = ''
+    let inMathBlock = false
+    const mathLines: string[] = []
     let activeListType: MarkdownListBlockType = 'unordered_list'
     let hasActiveList = false
+
+    const flushMathBlock = (): void => {
+      if (!inMathBlock) {
+        return
+      }
+      const latex = mathLines.join('\n').trim()
+      mathLines.length = 0
+      inMathBlock = false
+      if (latex.length === 0) {
+        return
+      }
+      blocks.push({
+        type: 'math_display',
+        content: latex,
+        inlines: [],
+        items: [],
+        language: ''
+      })
+    }
 
     const flushParagraph = (): void => {
       if (paragraphLines.length === 0) {
@@ -150,6 +176,7 @@ export class MarkdownUtils {
     }
 
     const flushAll = (): void => {
+      flushMathBlock()
       flushParagraph()
       flushQuote()
       flushList()
@@ -178,6 +205,48 @@ export class MarkdownUtils {
       }
       if (inCodeBlock) {
         codeLines.push(line)
+        continue
+      }
+      if (inMathBlock) {
+        if (trimmed.endsWith('$$')) {
+          const withoutClose = trimmed.slice(0, trimmed.length - 2).trim()
+          if (withoutClose.length > 0) {
+            mathLines.push(withoutClose)
+          }
+          flushMathBlock()
+        } else {
+          mathLines.push(line)
+        }
+        continue
+      }
+      if (trimmed.startsWith('$$')) {
+        flushAll()
+        const inner = trimmed.slice(2)
+        if (trimmed.endsWith('$$') && trimmed.length > 4) {
+          blocks.push({
+            type: 'math_display',
+            content: inner.slice(0, inner.length - 2).trim(),
+            inlines: [],
+            items: [],
+            language: ''
+          })
+        } else if (trimmed === '$$') {
+          inMathBlock = true
+        } else {
+          inMathBlock = true
+          mathLines.push(inner)
+        }
+        continue
+      }
+      if (trimmed.startsWith('\\[') && trimmed.endsWith('\\]') && trimmed.length > 4) {
+        flushAll()
+        blocks.push({
+          type: 'math_display',
+          content: trimmed.slice(2, trimmed.length - 2).trim(),
+          inlines: [],
+          items: [],
+          language: ''
+        })
         continue
       }
       if (trimmed.length === 0) {
@@ -318,6 +387,28 @@ export class MarkdownUtils {
           href: ''
         })
       }
+      if (nextToken.type === 'math_inline') {
+        const isParen = nextToken.marker === '\\('
+        const closingToken = isParen ? '\\)' : '$'
+        const closingIndex = isParen
+          ? content.indexOf(closingToken, nextToken.index + 2)
+          : MarkdownUtils.findClosingInlineDollar(content, nextToken.index + 1)
+        if (closingIndex === -1) {
+          MarkdownUtils.pushInline(inlines, {
+            type: 'text',
+            content: content.slice(nextToken.index),
+            href: ''
+          })
+          break
+        }
+        MarkdownUtils.pushInline(inlines, {
+          type: 'math_inline',
+          content: content.slice(nextToken.index + nextToken.marker.length, closingIndex).trim(),
+          href: ''
+        })
+        cursor = closingIndex + closingToken.length
+        continue
+      }
       if (nextToken.type === 'inline_code') {
         const closingIndex = content.indexOf('`', nextToken.index + 1)
         if (closingIndex === -1) {
@@ -390,8 +481,8 @@ export class MarkdownUtils {
   private static findNextToken(content: string, from: number): MarkdownToken | null {
     let nextToken: MarkdownToken | null = null
 
-    const updateCandidate = (type: 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link', index: number,
-      marker: string): void => {
+    const updateCandidate = (type: 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link' | 'math_inline',
+      index: number, marker: string): void => {
       if (index === -1) {
         return
       }
@@ -401,6 +492,11 @@ export class MarkdownUtils {
     }
 
     updateCandidate('inline_code', content.indexOf('`', from), '`')
+    updateCandidate('math_inline', content.indexOf('\\(', from), '\\(')
+    const dollarIndex = MarkdownUtils.findInlineDollarStart(content, from)
+    if (dollarIndex !== -1) {
+      updateCandidate('math_inline', dollarIndex, '$')
+    }
     updateCandidate('link', content.indexOf('[', from), '[')
     updateCandidate('bold', content.indexOf('**', from), '**')
     updateCandidate('bold', content.indexOf('__', from), '__')
@@ -448,9 +544,34 @@ export class MarkdownUtils {
     }
   }
 
+  private static findInlineDollarStart(content: string, from: number): number {
+    for (let i = from; i < content.length; i++) {
+      if (content.charAt(i) !== '$' || (i > 0 && content.charAt(i - 1) === '\\')) {
+        continue
+      }
+      if (i + 1 < content.length && content.charAt(i + 1) === '$') {
+        continue
+      }
+      return i
+    }
+    return -1
+  }
+
+  private static findClosingInlineDollar(content: string, from: number): number {
+    for (let i = from; i < content.length; i++) {
+      if (content.charAt(i) === '$' && (i === 0 || content.charAt(i - 1) !== '\\')) {
+        return i
+      }
+      if (content.charAt(i) === '\n') {
+        return -1
+      }
+    }
+    return -1
+  }
+
   private static containsInlineMarkers(content: string): boolean {
     return content.includes('`') || content.includes('[') || content.includes('*') || content.includes('_')
-      || content.includes('~')
+      || content.includes('~') || content.includes('$') || content.includes('\\(')
   }
 
   private static containsMarkdownMarkers(content: string): boolean {

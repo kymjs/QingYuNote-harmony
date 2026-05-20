@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<link rel="stylesheet" type="text/css" href="katex.min.css">
+<script src="katex.min.js"></script>
+<script src="auto-render.min.js"></script>
+<style>
+  html, body {
+    margin: 0;
+    padding: 6px 4px;
+    font-size: 16px;
+    line-height: 1.65;
+    overflow: visible;
+    height: auto;
+    min-height: 0;
+  }
+  #content {
+    word-wrap: break-word;
+    white-space: pre-wrap;
+    overflow: visible;
+  }
+  .katex-display { margin: 0.5em 0; overflow-x: auto; overflow-y: visible; }
+</style>
+</head>
+<body>
+<div id="content"></div>
+<script>
+window.renderKatexPreview = function (source, textColor, bgColor) {
+  var el = document.getElementById('content');
+  var safeColor = textColor || '#1D1D1F';
+  var safeBg = bgColor || 'transparent';
+  el.style.color = safeColor;
+  document.body.style.background = safeBg;
+  el.textContent = source;
+
+  function report(msg) {
+    try { HeightChannel.postMessage(String(msg)); } catch (e) {}
+    try { console.log('[FormulaPreview] ' + msg); } catch (e) {}
+  }
+
+  function measureHeightPx() {
+    var body = document.body;
+    var root = document.documentElement;
+    var h = el.offsetHeight;
+    if (el.scrollHeight > h) { h = el.scrollHeight; }
+    var rect = el.getBoundingClientRect();
+    if (rect.height > h) { h = rect.height; }
+    var bodyRect = body.getBoundingClientRect();
+    var bottom = rect.bottom - bodyRect.top;
+    if (bottom > h) { h = bottom; }
+    if (body.scrollHeight > h) { h = body.scrollHeight; }
+    if (root.scrollHeight > h) { h = root.scrollHeight; }
+    return Math.ceil(h);
+  }
+
+  function reportHeightSoon() {
+    var px = measureHeightPx();
+    if (px > 0) {
+      report('ok:' + px);
+    }
+  }
+
+  function scheduleHeightReports() {
+    reportHeightSoon();
+    requestAnimationFrame(function () {
+      reportHeightSoon();
+      requestAnimationFrame(reportHeightSoon);
+    });
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(function () {
+        reportHeightSoon();
+        setTimeout(reportHeightSoon, 80);
+        setTimeout(reportHeightSoon, 240);
+        setTimeout(reportHeightSoon, 500);
+      });
+    } else {
+      setTimeout(reportHeightSoon, 120);
+      setTimeout(reportHeightSoon, 400);
+      setTimeout(reportHeightSoon, 800);
+    }
+  }
+
+  try {
+    if (typeof katex === 'undefined') {
+      report('error:katex-undefined');
+      return;
+    }
+    if (typeof renderMathInElement !== 'function') {
+      report('error:renderMathInElement-undefined');
+      return;
+    }
+    renderMathInElement(el, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '$', right: '$', display: false },
+        { left: '\\(', right: '\\)', display: false },
+        { left: '\\[', right: '\\]', display: true }
+      ],
+      throwOnError: false,
+      strict: false,
+      trust: true,
+      errorColor: '#cc0000'
+    });
+    scheduleHeightReports();
+  } catch (e) {
+    report('error:' + (e && e.message ? e.message : String(e)));
+  }
+};
+</script>
+</body>
+</html>
