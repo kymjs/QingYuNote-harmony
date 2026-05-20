@@ -1,5 +1,11 @@
-import { NoteApiClient } from '../services/NoteApiClient'
+import { ComponentContent } from '@kit.ArkUI'
 import promptAction from '@ohos.promptAction'
+
+import {
+  buildRegisterCaptchaDialogContent,
+  type RegisterCaptchaDialogParams
+} from './RegisterCaptchaDialog'
+import { NoteApiClient } from '../services/NoteApiClient'
 
 /** 绑定手机号编辑：须填写新号码 + 验证码。 */
 export interface ProfilePhoneSmsDialogParams {
@@ -95,6 +101,10 @@ export struct ProfilePhoneSmsDialog {
         return '请求无效'
       case 'network_error':
         return '网络异常'
+      case 'captcha_required':
+        return '请先完成图形验证'
+      case 'captcha_invalid':
+        return '图形验证码错误'
       default:
         return '发送失败'
     }
@@ -154,24 +164,54 @@ export struct ProfilePhoneSmsDialog {
     }, 1000)
   }
 
+  private closeCaptchaDialog(holder: ComponentContent<RegisterCaptchaDialogParams> | undefined): void {
+    if (holder === undefined) {
+      return
+    }
+    try {
+      this.getUIContext().getPromptAction().closeCustomDialog(holder)
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  private openProfilePhoneCaptchaDialog(phone: string): void {
+    const ui = this.getUIContext()
+    let holder: ComponentContent<RegisterCaptchaDialogParams> | undefined = undefined
+    const params: RegisterCaptchaDialogParams = {
+      phone,
+      onDismiss: (): void => {
+        this.closeCaptchaDialog(holder)
+      },
+      onSmsSent: (): void => {
+        this.closeCaptchaDialog(holder)
+        this.showToast('验证码已发送')
+        this.startCooldown()
+      },
+      sendSms: (p: string, captchaId: string, captchaCode: string): Promise<string | null> =>
+        NoteApiClient.getInstance().sendProfilePhoneSms(p, captchaId, captchaCode)
+    }
+    holder = new ComponentContent(ui, wrapBuilder(buildRegisterCaptchaDialogContent), params)
+    try {
+      ui.getPromptAction().openCustomDialog(holder, {
+        alignment: DialogAlignment.Center,
+        autoCancel: false
+      })
+    } catch (e) {
+      console.error(`ProfilePhoneSmsDialog openCaptcha failed: ${JSON.stringify(e)}`)
+    }
+  }
+
   private async onSend(): Promise<void> {
     const typed = this.draftPhone.trim()
-    if (this.sending || this.cooldownSec > 0) {
+    if (this.cooldownSec > 0) {
       return
     }
     if (typed.length === 0) {
       this.showToast('请输入手机号')
       return
     }
-    this.sending = true
-    const err = await NoteApiClient.getInstance().sendProfilePhoneSms(typed)
-    this.sending = false
-    if (err !== null) {
-      this.showToast(this.mapSmsSendError(err))
-      return
-    }
-    this.showToast('验证码已发送')
-    this.startCooldown()
+    this.openProfilePhoneCaptchaDialog(typed)
   }
 
   private async onSave(): Promise<void> {

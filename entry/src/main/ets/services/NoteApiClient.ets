@@ -2,6 +2,7 @@ import fs from '@ohos.file.fs'
 import http from '@ohos.net.http'
 import { NoteApiConstants } from '../common/constants/NoteApiConstants'
 import { PreferencesService } from './PreferencesService'
+import { getAppVersionName } from './AppUpdateService'
 import { Logger } from '../common/utils/Logger'
 
 /**
@@ -140,11 +141,21 @@ export class NoteApiClient {
     return ''
   }
 
-  /** 构建通用请求头，包含 X-Platform 和 X-Device-Id。 */
+  private static cachedAppVersion: string = ''
+
+  /** 构建通用请求头，包含 X-Platform、X-Device-Id 与 X-App-Version。 */
   private async buildCommonHeaders(): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
       'Accept': 'application/json',
       'X-Platform': 'harmony'
+    }
+    if (NoteApiClient.cachedAppVersion.length === 0) {
+      try {
+        NoteApiClient.cachedAppVersion = (await getAppVersionName()).trim()
+      } catch (_) {}
+    }
+    if (NoteApiClient.cachedAppVersion.length > 0) {
+      headers['X-App-Version'] = NoteApiClient.cachedAppVersion
     }
     let devId = ''
     try {
@@ -550,8 +561,9 @@ export class NoteApiClient {
 
   /**
    * POST /api/v1/me/profile/phone/sms/send：向填写的目标手机号发送验证码（资料页绑定/改号）。
+   * 须先通过图形验证码（与注册发短信一致）。
    */
-  async sendProfilePhoneSms(phone: string): Promise<string | null> {
+  async sendProfilePhoneSms(phone: string, captchaId: string, captchaCode: string): Promise<string | null> {
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (tok === null || tok.length === 0) {
       return 'not_logged_in'
@@ -569,7 +581,11 @@ export class NoteApiClient {
           'Content-Type': 'application/json; charset=utf-8',
           'Authorization': `Bearer ${tok}`
         },
-        extraData: JSON.stringify({ phone: trimmed }),
+        extraData: JSON.stringify({
+          phone: trimmed,
+          captcha_id: captchaId.trim(),
+          captcha_code: captchaCode.trim()
+        }),
         expectDataType: http.HttpDataType.STRING,
         connectTimeout: 15000,
         readTimeout: 20000

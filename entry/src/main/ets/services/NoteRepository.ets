@@ -11,6 +11,7 @@ import { FileService } from './FileService'
 import { AppContextHolder } from './AppContextHolder'
 import { PreferencesService } from './PreferencesService'
 import { WebDAVClient } from './WebDAVClient'
+import { NoteContentEncryptionService } from './NoteContentEncryptionService'
 
 export class NoteRepository {
   private static instance: NoteRepository = new NoteRepository()
@@ -62,6 +63,19 @@ export class NoteRepository {
     this.bumpVersion()
   }
 
+  invalidateCachesForIdentityChange(): void {
+    this.invalidateListCaches()
+    this.bumpVersion()
+  }
+
+  private async noteForDisplay(note: Note): Promise<Note> {
+    const userId = await NoteContentEncryptionService.getInstance().resolveUserId()
+    if (userId === null) {
+      return note
+    }
+    return NoteContentEncryptionService.getInstance().decryptNoteForDisplay(note, userId)
+  }
+
   beginBulkNotification(): void {
     this.notificationSuspendCount += 1
   }
@@ -104,36 +118,53 @@ export class NoteRepository {
 
   async getNote(id: string): Promise<Note | null> {
     await this.init()
+    await this.migrateNoteEncryptionIfNeeded(id)
     const payload = await FileService.getInstance().readParsedNote(id)
     if (!payload) {
       return null
     }
     const syncState = await DatabaseService.getInstance().getSyncState(id)
-    return this.createNoteFromPayload(payload, syncState ?? undefined)
+    return this.noteForDisplay(this.createNoteFromPayload(payload, syncState ?? undefined))
   }
 
   async listNotes(): Promise<Note[]> {
     await this.init()
     if (this.cachedActiveNotesVersion === this.notesVersion && this.cachedActiveNotes) {
-      return this.cloneNotes(this.cachedActiveNotes)
+      const notes: Note[] = []
+      for (const note of this.cachedActiveNotes) {
+        notes.push(await this.noteForDisplay(this.cloneNote(note)))
+      }
+      return notes
     }
     const notes = (await this.loadAllNotes()).filter((note: Note) => !note.deleted && note.deletedTime === 0)
     const sortedNotes = NoteSortUtils.sortByLastEditedDesc(notes)
-    this.cachedActiveNotes = sortedNotes
+    const displayNotes: Note[] = []
+    for (const note of sortedNotes) {
+      displayNotes.push(await this.noteForDisplay(this.cloneNote(note)))
+    }
+    this.cachedActiveNotes = displayNotes
     this.cachedActiveNotesVersion = this.notesVersion
-    return this.cloneNotes(sortedNotes)
+    return this.cloneNotes(displayNotes)
   }
 
   async listAllNotes(): Promise<Note[]> {
     await this.init()
     if (this.cachedAllNotesVersion === this.notesVersion && this.cachedAllNotes) {
-      return this.cloneNotes(this.cachedAllNotes)
+      const notes: Note[] = []
+      for (const note of this.cachedAllNotes) {
+        notes.push(await this.noteForDisplay(this.cloneNote(note)))
+      }
+      return notes
     }
     const notes = await this.loadAllNotes()
     const sortedNotes = NoteSortUtils.sortByLastEditedDesc(notes)
-    this.cachedAllNotes = sortedNotes
+    const displayNotes: Note[] = []
+    for (const note of sortedNotes) {
+      displayNotes.push(await this.noteForDisplay(this.cloneNote(note)))
+    }
+    this.cachedAllNotes = displayNotes
     this.cachedAllNotesVersion = this.notesVersion
-    return this.cloneNotes(sortedNotes)
+    return this.cloneNotes(displayNotes)
   }
 
   /**
@@ -215,7 +246,8 @@ export class NoteRepository {
             lastOperationAt: remoteStat.remoteModified > 0 ? remoteStat.remoteModified : payload.modifiedAt,
             syncStatus: 'synced'
           }
-          const merged = this.createNoteFromPayload(payload, existingSync ?? fallbackSync)
+          const merged = await this.noteForDisplay(
+            this.createNoteFromPayload(payload, existingSync ?? fallbackSync))
           map.set(noteId, merged)
           if (!(await FileService.getInstance().readParsedNote(noteId))) {
             remoteOnlyIds.push(noteId)
@@ -268,7 +300,7 @@ export class NoteRepository {
         lastOperationAt: remoteStat.remoteModified > 0 ? remoteStat.remoteModified : payload.modifiedAt,
         syncStatus: 'synced'
       }
-      const note = this.createNoteFromPayload(payload, syncedState)
+      const note = await this.noteForDisplay(this.createNoteFromPayload(payload, syncedState))
       await FileService.getInstance().writeNoteFile(note)
       await DatabaseService.getInstance().upsertSyncState(this.toSyncState(note))
       this.bumpVersion()
@@ -423,6 +455,13 @@ export class NoteRepository {
     const payload = NoteStateCodec.parseNoteFile(content, noteId, remoteModified > 0 ? remoteModified : Date.now())
     payload.filePath = FileService.getInstance().getNotePath(noteId)
     payload.modifiedAt = remoteModified > 0 ? remoteModified : payload.modifiedAt
+    const migrated = await this.persistEncryptionMigrationFromRaw(noteId, payload, remoteModified, true)
+    if (migrated !== null) {
+      await DatabaseService.getInstance().clearDeleted(noteId, remoteModified, migrated.lastOperationAt,
+        migrated.syncStatus)
+      this.bumpVersion()
+      return migrated
+    }
     const syncedState: NoteSyncState = {
       noteId,
       remoteModified,
@@ -431,11 +470,69 @@ export class NoteRepository {
       lastOperationAt: remoteModified > 0 ? remoteModified : payload.modifiedAt,
       syncStatus: 'synced'
     }
-    const updated = this.createNoteFromPayload(payload, syncedState)
+    const updated = await this.noteForDisplay(this.createNoteFromPayload(payload, syncedState))
     await FileService.getInstance().writeNoteFile(updated)
     await DatabaseService.getInstance().clearDeleted(noteId, remoteModified, syncedState.lastOperationAt, 'synced')
     this.bumpVersion()
     return updated
+  }
+
+  /** 老版本未加密笔记：按磁盘原文加密标题/正文并写入 `rsa: true`。 */
+  async migrateNoteEncryptionIfNeeded(noteId: string, rawPayload?: NoteFilePayload): Promise<Note | null> {
+    await this.init()
+    const payload = rawPayload ?? await FileService.getInstance().readRawParsedNote(noteId)
+    if (!payload) {
+      return null
+    }
+    const syncState = await DatabaseService.getInstance().getSyncState(noteId)
+    return this.persistEncryptionMigrationFromRaw(noteId, payload, syncState?.remoteModified ?? 0, true, syncState ?? undefined)
+  }
+
+  private async persistEncryptionMigrationFromRaw(noteId: string, rawPayload: NoteFilePayload,
+    remoteModified: number, scheduleSyncOnMigrate: boolean,
+    syncState?: NoteSyncState): Promise<Note | null> {
+    const userId = await NoteContentEncryptionService.getInstance().resolveUserId()
+    if (userId === null) {
+      return null
+    }
+    const encryption = NoteContentEncryptionService.getInstance()
+    const rsa = rawPayload.state.rsa
+    const title = rawPayload.state.title
+    const content = rawPayload.content
+    const needsMigrate = encryption.needsEncryptionMigration(rsa, title, content)
+    const needsRepair = encryption.needsRsaFlagRepair(rsa, title, content)
+    if (!needsMigrate && !needsRepair) {
+      return null
+    }
+    const plaintextPayload =
+      await encryption.plaintextPayloadFromRaw(rawPayload, userId)
+    const now = Date.now()
+    const effectiveSyncState: NoteSyncState = syncState ?? {
+      noteId,
+      remoteModified,
+      deleted: false,
+      deletedAt: 0,
+      lastOperationAt: rawPayload.modifiedAt > 0 ? rawPayload.modifiedAt : now,
+      syncStatus: 'pending'
+    }
+    let writeNote = this.createNoteFromPayload(plaintextPayload, effectiveSyncState)
+    if (needsMigrate && scheduleSyncOnMigrate) {
+      writeNote = this.cloneNote(writeNote)
+      writeNote.syncStatus = 'pending'
+      writeNote.lastOperationAt = now
+    }
+    await FileService.getInstance().writeNoteFile(writeNote)
+    if (needsMigrate && scheduleSyncOnMigrate) {
+      await DatabaseService.getInstance().upsertSyncState(this.toSyncState(writeNote))
+      this.scheduleSyncHandler?.(noteId)
+    } else if (needsRepair) {
+      await DatabaseService.getInstance().upsertSyncState(this.toSyncState(writeNote))
+    }
+    this.bumpVersion()
+    const display = await this.noteForDisplay(this.createNoteFromPayload(plaintextPayload, effectiveSyncState))
+    display.syncStatus = writeNote.syncStatus
+    display.lastOperationAt = writeNote.lastOperationAt
+    return display
   }
 
   async startupRepair(): Promise<void> {
@@ -444,16 +541,34 @@ export class NoteRepository {
     let repaired: boolean = false
     let checkedNotes: number = 0
     const syncStateMap = await this.loadSyncStateMap()
+    const userId = await NoteContentEncryptionService.getInstance().resolveUserId()
     for (const noteId of noteIds) {
-      const payload = await FileService.getInstance().readParsedNote(noteId)
-      if (!payload) {
+      const rawPayload = await FileService.getInstance().readRawParsedNote(noteId)
+      if (!rawPayload) {
         continue
       }
-      const note = this.createNoteFromPayload(payload, syncStateMap.get(noteId))
-      if (!payload.hasStateBlock || payload.state.title !== note.title) {
-        await FileService.getInstance().writeNoteFile(note)
+      if (await this.migrateNoteEncryptionIfNeeded(noteId, rawPayload) !== null) {
         repaired = true
+        checkedNotes += 1
+        if (checkedNotes % 10 === 0) {
+          await this.yieldToMainThread()
+        }
+        continue
       }
+      const displayPayload = userId === null
+        ? rawPayload
+        : await NoteContentEncryptionService.getInstance().decryptPayloadForDisplay(rawPayload, userId)
+      const note = this.createNoteFromPayload(displayPayload, syncStateMap.get(noteId))
+      const needsWrite = !rawPayload.hasStateBlock || displayPayload.state.title !== note.title
+      if (!needsWrite) {
+        checkedNotes += 1
+        if (checkedNotes % 10 === 0) {
+          await this.yieldToMainThread()
+        }
+        continue
+      }
+      await FileService.getInstance().writeNoteFile(note)
+      repaired = true
       checkedNotes += 1
       if (checkedNotes % 10 === 0) {
         await this.yieldToMainThread()
@@ -480,9 +595,11 @@ export class NoteRepository {
           const currentIndex = nextIndex
           nextIndex += 1
           const noteId = noteIds[currentIndex]
+          await NoteRepository.getInstance().migrateNoteEncryptionIfNeeded(noteId)
           const payload = await FileService.getInstance().readParsedNote(noteId)
           if (payload) {
-            slots[currentIndex] = this.createNoteFromPayload(payload, syncStateMap.get(noteId))
+            slots[currentIndex] = await this.noteForDisplay(
+              this.createNoteFromPayload(payload, syncStateMap.get(noteId)))
           }
         }
       })())
@@ -562,6 +679,7 @@ export class NoteRepository {
       source: base.source,
       order: base.order,
       userData: base.userData,
+      rsa: base.rsa,
       deletedTime: 0,
       type_: base.type_
     }
@@ -616,6 +734,7 @@ export class NoteRepository {
       source: state.source,
       order: state.order,
       userData: state.userData,
+      rsa: state.rsa,
       deletedTime: state.deletedTime,
       type_: state.type_
     }
@@ -686,6 +805,7 @@ export class NoteRepository {
       source: note.source,
       order: note.order,
       userData: note.userData,
+      rsa: note.rsa,
       deletedTime: note.deletedTime,
       type_: note.type_
     }

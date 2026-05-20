@@ -236,6 +236,7 @@ export class SyncService {
           remoteModified: 0
         }
       }
+      await NoteRepository.getInstance().migrateNoteEncryptionIfNeeded(noteId)
       const rawContent = await FileService.getInstance().readNoteFile(noteId)
       if (!remoteStat.exists) {
         Logger.info('SyncService', `syncNote upload new note: noteId=${noteId}`)
@@ -303,7 +304,7 @@ export class SyncService {
       }
       const canSkipBodyGet =
         remoteStat.contentLength > 0 &&
-        remoteStat.contentLength === note.content.length &&
+        remoteStat.contentLength === rawContent.length &&
         remoteStat.remoteModified > 0
       let remoteWhenEqual = ''
       if (canSkipBodyGet) {
@@ -1011,7 +1012,9 @@ export class SyncService {
   }
 
   private async syncImagesForNote(note: Note, content: string): Promise<void> {
-    const imageRefs = NoteStateCodec.extractImageRefs(content)
+    const imageRefs = note.imageRefs.length > 0
+      ? note.imageRefs
+      : NoteStateCodec.extractImageRefs(content)
     if (imageRefs.length === 0) {
       return
     }
@@ -1046,7 +1049,10 @@ export class SyncService {
   }
 
   private async downloadImagesForNote(noteId: string, content: string): Promise<void> {
-    const imageRefs = NoteStateCodec.extractImageRefs(content)
+    const parsed = NoteStateCodec.parseNoteFile(content, noteId)
+    const imageRefs = parsed.state.imageRefs.length > 0
+      ? parsed.state.imageRefs
+      : NoteStateCodec.extractImageRefs(parsed.content)
     if (imageRefs.length === 0) {
       return
     }

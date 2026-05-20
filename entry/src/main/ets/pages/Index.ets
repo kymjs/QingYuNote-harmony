@@ -110,6 +110,7 @@ struct Index {
 
   private async handleIndexPageShow(): Promise<void> {
     await this.ensureLoggedInOrRedirectToLogin()
+    void this.navigateToBindPhoneIfNeeded()
     await tryAutoProvisionQingyuCloudOnHomeEntry()
     void this.refreshCloudSyncConfiguredState()
     if (!this.hasShownOnce) {
@@ -152,26 +153,32 @@ struct Index {
     /** 与版本检查并行启动同步，避免「检查更新」阻塞云同步开始时间。 */
     void this.startStartupSyncIfNeeded()
     await runAppUpdateCheckOnLaunch(this.getUIContext())
-    void this.checkPhoneBindingAndPrompt()
+    void this.navigateToBindPhoneIfNeeded()
   }
 
-  private async checkPhoneBindingAndPrompt(): Promise<void> {
+  private bindPhoneNavigationActive: boolean = false
+
+  private async navigateToBindPhoneIfNeeded(): Promise<void> {
+    if (this.bindPhoneNavigationActive) {
+      return
+    }
     try {
+      const loggedIn = await PreferencesService.getInstance().isUserLoggedIn()
+      const guest = await PreferencesService.getInstance().isGuestMode()
+      if (!loggedIn || guest) {
+        return
+      }
       const profile = await NoteApiClient.getInstance().fetchProfile()
       if (profile !== null) {
         const phone = (profile.phone ?? '').trim()
         if (phone.length === 0) {
-          const result = await this.getUIContext().getPromptAction().showDialog({
-            title: '提示',
-            message: '请先绑定手机号',
-            buttons: [
-              { text: '确定', color: '#0DAA4A' }
-            ]
-          })
-          if (result.index === 0) {
-            this.getUIContext().getRouter().pushUrl({ url: 'pages/Profile' }).catch((err: Error) => {
-              console.error(`push Profile: ${JSON.stringify(err)}`)
-            })
+          this.bindPhoneNavigationActive = true
+          try {
+            await this.getUIContext().getRouter().pushUrl({ url: 'pages/BindPhone' })
+          } catch (err) {
+            console.error(`pushUrl BindPhone failed: ${JSON.stringify(err)}`)
+          } finally {
+            this.bindPhoneNavigationActive = false
           }
         }
       }
@@ -191,6 +198,10 @@ struct Index {
       this.loading = true
     }
     try {
+      const context = AppContextHolder.tryGetContext()
+      if (context) {
+        await PreferencesService.getInstance().init(context)
+      }
       await NoteRepository.getInstance().init()
       const listedNotes = await NoteRepository.getInstance().listNotes()
       this.allNotes = listedNotes

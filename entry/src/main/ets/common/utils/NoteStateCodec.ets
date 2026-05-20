@@ -6,6 +6,9 @@ const NOTE_STATE_REGEX = /(?:\r?\n)?<!-- NOTE_STATE\r?\n([\s\S]*?)\r?\n-->\s*$/
 const IMAGE_REF_REGEX = /!\[[^\]]*\]\((qingyu-note-image\/[^)]+)\)/g
 
 export class NoteStateCodec {
+  /** 笔记 NOTE_STATE 隐藏字段 `source`，标识鸿蒙客户端平台。 */
+  static readonly NOTE_SOURCE: string = 'harmony'
+
   static parseNoteFile(raw: string, fallbackId: string = '', fallbackTimestamp: number = Date.now()): NoteFilePayload {
     const normalizedRaw = raw.replace(/\r/g, '')
     const match = normalizedRaw.match(NOTE_STATE_REGEX)
@@ -67,6 +70,7 @@ export class NoteStateCodec {
       source: note.source,
       order: note.order,
       userData: note.userData,
+      rsa: note.rsa,
       imageRefs: [...note.imageRefs],
       deletedTime: note.deletedTime,
       type_: note.type_
@@ -74,7 +78,7 @@ export class NoteStateCodec {
   }
 
   static serializeStateBlock(state: NoteStateBlock): string {
-    const lines = [
+    const lines: string[] = [
       `${NOTE_STATE_START}`,
       `id: ${state.id}`,
       `title: ${state.title}`,
@@ -92,14 +96,27 @@ export class NoteStateCodec {
       `todo_due: ${state.todoDue}`,
       `todo_completed: ${state.todoCompleted}`,
       `source: ${state.source}`,
-      `order: ${state.order}`,
-      `user_data: ${state.userData}`,
-      `image_refs: ${NoteStateCodec.serializeTags(state.imageRefs)}`,
-      `deleted_time: ${state.deletedTime}`,
-      `type_: ${state.type_}`,
-      '-->'
+      `order: ${state.order}`
     ]
+    if (state.userData.length > 0) {
+      lines.push(`user_data: ${state.userData}`)
+    }
+    if (state.rsa !== 0) {
+      lines.push('rsa: true')
+    }
+    lines.push(`image_refs: ${NoteStateCodec.serializeTags(state.imageRefs)}`)
+    lines.push(`deleted_time: ${state.deletedTime}`)
+    lines.push(`type_: ${state.type_}`)
+    lines.push('-->')
     return lines.join('\n')
+  }
+
+  static parseRsaFlag(value: string): number {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'true' || normalized === '1') {
+      return 1
+    }
+    return 0
   }
 
   static serializeRemoteRecycleBinFile(noteId: string, lastModifiedMs: number): string {
@@ -134,6 +151,7 @@ export class NoteStateCodec {
       source: state.source,
       order: state.order,
       userData: state.userData,
+      rsa: state.rsa,
       imageRefs: [],
       deletedTime: 1,
       type_: state.type_,
@@ -158,9 +176,10 @@ export class NoteStateCodec {
       isTodo: 0,
       todoDue: 0,
       todoCompleted: 0,
-      source: 'joplin-desktop',
+      source: NoteStateCodec.NOTE_SOURCE,
       order: 0,
       userData: '',
+      rsa: 0,
       imageRefs: [],
       deletedTime: 0,
       type_: 1
@@ -232,6 +251,9 @@ export class NoteStateCodec {
           break
         case 'user_data':
           parsed.userData = value
+          break
+        case 'rsa':
+          parsed.rsa = NoteStateCodec.parseRsaFlag(value)
           break
         case 'image_refs':
           parsed.imageRefs = NoteStateCodec.parseTags(value)

@@ -5,11 +5,16 @@ import { AppContextHolder } from '../services/AppContextHolder'
 import { NoteApiClient } from '../services/NoteApiClient'
 import { PreferencesService } from '../services/PreferencesService'
 
+/** 发短信前：图形验证码 + 短信接口（与 Flutter `_RegisterCaptchaDialog` 对齐）。 */
+export type SmsCaptchaSendFn = (phone: string, captchaId: string, captchaCode: string) => Promise<string | null>
+
 /** 注册发短信前：图形验证码 + 短信接口（与 Flutter `_RegisterCaptchaDialog` 对齐）。 */
 export interface RegisterCaptchaDialogParams {
   phone: string
   onDismiss: () => void
   onSmsSent: () => void
+  /** 默认走注册发短信；资料绑定手机号可传入 `sendProfilePhoneSms`。 */
+  sendSms?: SmsCaptchaSendFn
 }
 
 @Component
@@ -192,8 +197,11 @@ export struct RegisterCaptchaDialog {
       return
     }
     this.submitting = true
-    const err =
-      await NoteApiClient.getInstance().sendRegisterSms(this.params.phone.trim(), this.captchaId, code)
+    const phone = this.params.phone.trim()
+    const send = this.params.sendSms ??
+      ((p: string, id: string, c: string): Promise<string | null> =>
+        NoteApiClient.getInstance().sendRegisterSms(p, id, c))
+    const err = await send(phone, this.captchaId, code)
     this.submitting = false
     if (err !== null) {
       this.showToast(this.mapErr(err))

@@ -3,6 +3,7 @@ import type common from '@ohos.app.ability.common'
 import type { Note, NoteFilePayload } from '../common/model/Note'
 import { Logger } from '../common/utils/Logger'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
+import { NoteContentEncryptionService } from './NoteContentEncryptionService'
 
 const NOTES_DIR = 'notes'
 const NOTE_FILE_SUFFIX = '.md'
@@ -59,6 +60,24 @@ export class FileService {
     }
   }
 
+  async readRawParsedNote(noteId: string): Promise<NoteFilePayload | null> {
+    try {
+      const filePath = this.getNotePath(noteId)
+      if (!fs.accessSync(filePath)) {
+        return null
+      }
+      const rawContent = await this.readNoteFile(noteId)
+      const modifiedAt = this.readModifiedAt(filePath)
+      const payload = NoteStateCodec.parseNoteFile(rawContent, noteId, modifiedAt)
+      payload.filePath = filePath
+      payload.modifiedAt = modifiedAt
+      return payload
+    } catch (error) {
+      Logger.warn('FileService', `readRawParsedNote failed: noteId=${noteId}, error=${this.describeError(error as Object)}`)
+      throw this.toRuntimeError(error as Object)
+    }
+  }
+
   async readParsedNote(noteId: string): Promise<NoteFilePayload | null> {
     try {
       const filePath = this.getNotePath(noteId)
@@ -71,7 +90,11 @@ export class FileService {
       const payload = NoteStateCodec.parseNoteFile(rawContent, noteId, modifiedAt)
       payload.filePath = filePath
       payload.modifiedAt = modifiedAt
-      return payload
+      const userId = await NoteContentEncryptionService.getInstance().resolveUserId()
+      if (userId === null) {
+        return payload
+      }
+      return NoteContentEncryptionService.getInstance().decryptPayloadForDisplay(payload, userId)
     } catch (error) {
       Logger.warn('FileService', `readParsedNote failed: noteId=${noteId}, error=${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)
@@ -86,7 +109,12 @@ export class FileService {
   async writeNoteFile(note: Note): Promise<void> {
     try {
       const filePath = this.getNotePath(note.id)
-      const serialized = NoteStateCodec.serializeNoteFile(note)
+      let storageNote = note
+      const userId = await NoteContentEncryptionService.getInstance().resolveUserId()
+      if (userId !== null) {
+        storageNote = await NoteContentEncryptionService.getInstance().encryptNoteForStorage(note, userId)
+      }
+      const serialized = NoteStateCodec.serializeNoteFile(storageNote)
       const file = fs.openSync(filePath, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
       try {
         Logger.info('FileService',
@@ -141,6 +169,7 @@ export class FileService {
       source: state.source,
       order: state.order,
       userData: state.userData,
+      rsa: state.rsa,
       deletedTime: state.deletedTime,
       type_: state.type_
     })

@@ -19,6 +19,7 @@ export interface NoteStateBlock {
   source: string
   order: number
   userData: string
+  rsa: number
   imageRefs: string[]
   deletedTime: number
   type_: number
@@ -61,6 +62,7 @@ export interface Note {
   source: string
   order: number
   userData: string
+  rsa: number
   imageRefs: string[]
   deletedTime: number
   type_: number

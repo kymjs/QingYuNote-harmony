@@ -4,6 +4,8 @@ import { Logger } from '../common/utils/Logger'
 
 const KEY_SEED = 'qingyu-notes-key'
 const AAD_SEED = 'qingyu-aad'
+const NOTE_KEY_PREFIX = 'zhangtaodeqingyuliulanqi-'
+const NOTE_AAD_SEED = 'qingyu-note-rsa-aad'
 const GCM_AUTH_TAG_LENGTH = 16
 
 interface ErrorLike {
@@ -29,39 +31,68 @@ export class CryptoService {
     await this.getSymKey()
   }
 
+  async encryptNoteText(plainText: string, userId: string): Promise<string> {
+    const trimmedUserId = userId.trim()
+    if (plainText.length === 0 || trimmedUserId.length === 0) {
+      return plainText
+    }
+    return this.encryptTextWithKey(plainText, await this.deriveNoteEncryptionKey(trimmedUserId), NOTE_AAD_SEED)
+  }
+
+  async decryptNoteText(cipherText: string, userId: string): Promise<string> {
+    const trimmedUserId = userId.trim()
+    if (cipherText.length === 0 || trimmedUserId.length === 0) {
+      return cipherText
+    }
+    try {
+      const key = await this.deriveNoteEncryptionKey(trimmedUserId)
+      return await this.decryptTextWithKey(cipherText, key, NOTE_AAD_SEED)
+    } catch (error) {
+      Logger.warn('CryptoService', `decryptNoteText failed: ${this.describeError(error)}`)
+      return ''
+    }
+  }
+
+  private async deriveNoteEncryptionKey(userId: string): Promise<cryptoFramework.SymKey> {
+    const md5Hex = await this.md5Hex(`${NOTE_KEY_PREFIX}${userId}`)
+    const keyBytes = new Uint8Array(16)
+    for (let i = 0; i < 16; i++) {
+      keyBytes[i] = parseInt(md5Hex.substring(i * 2, i * 2 + 2), 16)
+    }
+    const generator = cryptoFramework.createSymKeyGenerator('AES128')
+    return generator.convertKey({ data: keyBytes })
+  }
+
   async encryptText(plainText: string): Promise<string> {
-    Logger.info('CryptoService', `encryptText start: inputLength=${plainText.length}`)
+    return this.encryptTextWithKey(plainText, await this.getSymKey(), AAD_SEED)
+  }
+
+  private async encryptTextWithKey(plainText: string, symKey: cryptoFramework.SymKey, aad: string): Promise<string> {
+    Logger.info('CryptoService', `encryptTextWithKey start: inputLength=${plainText.length}`)
     if (plainText.length === 0) {
-      Logger.info('CryptoService', 'encryptText short-circuit: empty plain text')
       return ''
     }
     try {
       const cipher = cryptoFramework.createCipher('AES128|GCM|PKCS7')
       const ivBytes = this.randomBytes(12)
-      Logger.info('CryptoService', `encryptText iv ready: ivLength=${ivBytes.length}`)
-      const aadBytes = this.toBytes(AAD_SEED)
+      const aadBytes = this.toBytes(aad)
       const params: cryptoFramework.GcmParamsSpec = {
         iv: { data: ivBytes },
         aad: { data: aadBytes },
         authTag: { data: new Uint8Array(16) },
         algName: 'GcmParamsSpec'
       }
-      await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, await this.getSymKey(), params)
-      Logger.info('CryptoService', 'encryptText cipher init success')
+      await cipher.init(cryptoFramework.CryptoMode.ENCRYPT_MODE, symKey, params)
       const encrypted = await cipher.doFinal({
         data: this.toBytes(plainText)
       })
-      Logger.info('CryptoService', `encryptText doFinal success: encryptedLength=${encrypted.data.length}`)
       const payload = this.buildGcmPayload(encrypted.data, params.authTag.data)
-      const cipherText = [
+      return [
         this.base64.encodeToStringSync(ivBytes),
         this.base64.encodeToStringSync(payload)
       ].join('.')
-      Logger.info('CryptoService',
-        `encryptText success: segmentCount=${cipherText.split('.').length}, cipherLength=${cipherText.length}`)
-      return cipherText
     } catch (error) {
-      Logger.warn('CryptoService', `encryptText failed: ${this.describeError(error)}`)
+      Logger.warn('CryptoService', `encryptTextWithKey failed: ${this.describeError(error)}`)
       throw this.toRuntimeError(error)
     }
   }
@@ -88,15 +119,15 @@ export class CryptoService {
   }
 
   async decryptText(cipherText: string): Promise<string> {
-    Logger.info('CryptoService', `decryptText start: cipherLength=${cipherText.length}`)
+    return this.decryptTextWithKey(cipherText, await this.getSymKey(), AAD_SEED)
+  }
+
+  private async decryptTextWithKey(cipherText: string, symKey: cryptoFramework.SymKey, aad: string): Promise<string> {
     if (cipherText.length === 0) {
-      Logger.info('CryptoService', 'decryptText short-circuit: empty cipher text')
       return ''
     }
     const segments = cipherText.split('.')
-    Logger.info('CryptoService', `decryptText segments parsed: segmentCount=${segments.length}`)
     if (segments.length !== 2 && segments.length !== 3) {
-      Logger.warn('CryptoService', 'decryptText invalid format: segmentCount is neither 2 nor 3')
       return ''
     }
     try {
@@ -108,24 +139,19 @@ export class CryptoService {
             cipherBytes: this.base64.decodeSync(segments[2]),
             authTagBytes: this.base64.decodeSync(segments[1])
           }
-      const cipherBytes = payloadParts.cipherBytes
-      const authTagBytes = payloadParts.authTagBytes
       const params: cryptoFramework.GcmParamsSpec = {
         iv: { data: iv },
-        aad: { data: this.toBytes(AAD_SEED) },
-        authTag: { data: authTagBytes },
+        aad: { data: this.toBytes(aad) },
+        authTag: { data: payloadParts.authTagBytes },
         algName: 'GcmParamsSpec'
       }
-      await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, await this.getSymKey(), params)
-      Logger.info('CryptoService', 'decryptText cipher init success')
+      await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, symKey, params)
       const decrypted = await cipher.doFinal({
-        data: cipherBytes
+        data: payloadParts.cipherBytes
       })
-      const plainText = this.fromBytes(decrypted.data)
-      Logger.info('CryptoService', `decryptText success: outputLength=${plainText.length}`)
-      return plainText
+      return this.fromBytes(decrypted.data)
     } catch (error) {
-      Logger.warn('CryptoService', `decryptText failed: ${this.describeError(error)}`)
+      Logger.warn('CryptoService', `decryptTextWithKey failed: ${this.describeError(error)}`)
       throw this.toRuntimeError(error)
     }
   }

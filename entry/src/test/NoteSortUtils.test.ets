@@ -28,9 +28,10 @@ function createNote(overrides: Partial<Note>): Note {
     isTodo: overrides.isTodo ?? 0,
     todoDue: overrides.todoDue ?? 0,
     todoCompleted: overrides.todoCompleted ?? 0,
-    source: overrides.source ?? 'joplin-desktop',
+    source: overrides.source ?? 'harmony',
     order: overrides.order ?? 0,
     userData: overrides.userData ?? '',
+    rsa: overrides.rsa ?? 0,
     deletedTime: overrides.deletedTime ?? 0,
     type_: overrides.type_ ?? 1
   }
