@@ -23,7 +23,7 @@ import { SyncConstants } from '../common/constants/SyncConstants'
 
 /** 与 HomeDrawerLayer 内 DRAWER_SPAN 一致，用于全屏横向拖动手势计算行程。 */
 const DRAWER_OFFSCREEN_PAD = 20
-const DRAWER_SPAN = 248 + DRAWER_OFFSCREEN_PAD
+const DRAWER_SPAN = 248 * 1.2 + DRAWER_OFFSCREEN_PAD
 /** 松手吸附动画时长（抽屉已由手指实时拖动，此处仅收尾过渡）。 */
 const DRAWER_SNAP_MS = 220
 /** 搜索框输入防抖后再筛选列表，降低大库全文扫描频率。 */
@@ -560,7 +560,7 @@ struct Index {
       })
     } catch (error) {
       console.error(JSON.stringify(error))
-      this.showUserMessage(this.formatActionError('打开文件夹管理', error))
+      this.showUserMessage(this.formatActionError('打开文件管理', error))
     }
   }
 

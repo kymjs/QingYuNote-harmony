@@ -3,6 +3,7 @@ import type { CreateNoteInput, Note, NoteFilePayload, NoteStateBlock, NoteSyncSt
   UpdateNoteInput } from '../common/model/Note'
 import { Logger } from '../common/utils/Logger'
 import { MarkdownUtils } from '../common/utils/MarkdownUtils'
+import { NoteFolderTree } from '../common/utils/NoteFolderTree'
 import { NoteSortUtils } from '../common/utils/NoteSortUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { IdUtils } from '../common/utils/IdUtils'
@@ -320,7 +321,12 @@ export class NoteRepository {
     const nextContent = patch.content ?? existing.content
     const nextTitle = (patch.title ?? existing.title).trim()
     const nextTags = patch.tags ?? existing.tags
-    const nextParentId = patch.parentId !== undefined ? patch.parentId : existing.parentId
+    const allNoteIds = new Set(await FileService.getInstance().listNoteIds())
+    const nextParentId = NoteFolderTree.sanitizeParentId(
+      patch.parentId !== undefined ? patch.parentId : existing.parentId,
+      allNoteIds,
+      id
+    )
     const resolvedTitle =
       patch.skipTitleAutoFill === true && nextTitle.length === 0 ? '' :
         nextTitle.length > 0 ? nextTitle : MarkdownUtils.extractTitle(nextContent)
@@ -456,6 +462,12 @@ export class NoteRepository {
   async overwriteFromRemote(noteId: string, content: string, remoteModified: number): Promise<Note> {
     await this.init()
     const payload = NoteStateCodec.parseNoteFile(content, noteId, remoteModified > 0 ? remoteModified : Date.now())
+    const allNoteIds = new Set(await FileService.getInstance().listNoteIds())
+    payload.state.parentId = NoteFolderTree.sanitizeParentId(
+      payload.state.parentId,
+      allNoteIds,
+      noteId
+    )
     payload.filePath = FileService.getInstance().getNotePath(noteId)
     payload.modifiedAt = remoteModified > 0 ? remoteModified : payload.modifiedAt
     const migrated = await this.persistEncryptionMigrationFromRaw(noteId, payload, remoteModified, true)
@@ -541,6 +553,7 @@ export class NoteRepository {
   async startupRepair(): Promise<void> {
     await this.init()
     const noteIds = await FileService.getInstance().listNoteIds()
+    const allNoteIds = new Set(noteIds)
     let repaired: boolean = false
     let checkedNotes: number = 0
     const syncStateMap = await this.loadSyncStateMap()
@@ -561,8 +574,18 @@ export class NoteRepository {
       const displayPayload = userId === null
         ? rawPayload
         : await NoteContentEncryptionService.getInstance().decryptPayloadForDisplay(rawPayload, userId)
-      const note = this.createNoteFromPayload(displayPayload, syncStateMap.get(noteId))
-      const needsWrite = !rawPayload.hasStateBlock || displayPayload.state.title !== note.title
+      let note = this.createNoteFromPayload(displayPayload, syncStateMap.get(noteId))
+      const sanitizedParent = NoteFolderTree.sanitizeParentId(
+        note.parentId,
+        allNoteIds,
+        note.id
+      )
+      let needsWrite = !rawPayload.hasStateBlock || displayPayload.state.title !== note.title
+      if (sanitizedParent !== note.parentId) {
+        note = this.cloneNote(note)
+        note.parentId = sanitizedParent
+        needsWrite = true
+      }
       if (!needsWrite) {
         checkedNotes += 1
         if (checkedNotes % 10 === 0) {

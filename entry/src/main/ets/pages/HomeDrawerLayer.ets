@@ -1,7 +1,7 @@
 import { DrawerModel } from '../common/model/DrawerModel'
 import type { FolderSidebarRow, HomeSidebarFilterMode } from '../common/utils/NoteFolderTree'
 
-const DRAWER_WIDTH = 248
+const DRAWER_WIDTH = 248 * 1.2 // 297.6，侧栏宽度 +20%
 /** 收起时多向左移若干 vp，避免子像素/舍入导致面板右缘残留在可视区内。 */
 const DRAWER_OFFSCREEN_PAD = 20
 const DRAWER_SPAN = DRAWER_WIDTH + DRAWER_OFFSCREEN_PAD
@@ -188,11 +188,11 @@ export struct HomeDrawerLayer {
         this.buildDrawerFilterItem('全部笔记', this.allNotesTag)
       }
 
-      if (!this.folderModeEnabled) {
+      if (!this.folderModeEnabled || this.filterMode === 'tag') {
         ForEach(this.tags, (tag: string) => {
           this.buildDrawerFilterItem(tag, tag)
         }, (tag: string) => `tag_${tag}`)
-      } else if (this.filterMode === 'folder') {
+      } else if (this.folderModeEnabled && this.filterMode === 'folder') {
         ForEach(this.folderRows, (row: FolderSidebarRow) => {
           this.buildDrawerFolderItem(row)
         }, (row: FolderSidebarRow) => `folder_${row.noteId}_${row.depth}_${row.isExpanded}`)
