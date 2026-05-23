@@ -41,14 +41,10 @@ struct FolderManage {
   private readonly estimatedManageRowHeight: number = 44
   private readonly dragGhostOpacity: number = 0.45
   private readonly dropBorderWidth: number = 2
-  private readonly dragLogTag: string = '[FolderManage.drag]'
   private rowAreaHeights: Map<string, number> = new Map()
   private rowAreaWindowTops: Map<string, number> = new Map()
-  private lastDragZoneLogKey: string = ''
-  private dragMoveLogCounter: number = 0
 
   aboutToAppear(): void {
-    this.logDrag('drag debug logging enabled (filter: FolderManage.drag)')
     void this.loadNotes()
   }
 
@@ -57,7 +53,6 @@ struct FolderManage {
     await NoteRepository.getInstance().init()
     const list = await NoteRepository.getInstance().listNotes()
     const allList = await NoteRepository.getInstance().listAllNotes()
-    NoteFolderTree.debugLogManagePageTree(list, allList)
     this.notes = list
     this.rows = NoteFolderTree.visibleManageRows(list, allList)
     this.loading = false
@@ -75,25 +70,9 @@ struct FolderManage {
   }
 
   private clearDragUi(): void {
-    this.logDrag('clearDragUi')
     this.draggingNoteId = ''
     this.hoverIntoFolderId = ''
     this.insertBeforeIndex = -1
-    this.lastDragZoneLogKey = ''
-    this.dragMoveLogCounter = 0
-  }
-
-  private logDrag(message: string): void {
-    console.info(`${this.dragLogTag} ${message}`)
-  }
-
-  private logDragUiState(action: string, row?: FolderManageRow): void {
-    const target = row !== undefined ?
-      ` row=${row.noteId} isFolder=${row.isFolder} isRoot=${row.isRoot}` :
-      ''
-    this.logDrag(
-      `${action} dragging=${this.draggingNoteId} hover=${this.hoverIntoFolderId} insert=${this.insertBeforeIndex}${target}`
-    )
   }
 
   private rowInsertEdgeHeight(rowHeight: number): number {
@@ -130,47 +109,27 @@ struct FolderManage {
     const globalY = Number.parseFloat(`${area.globalPosition?.y ?? -1}`)
     const localY = Number.parseFloat(`${area.position?.y ?? -1}`)
     const top = globalY >= 0 ? globalY : localY
-    const prevH = this.rowAreaHeights.get(rowId) ?? -1
-    const prevTop = this.rowAreaWindowTops.get(rowId) ?? -1
     this.rowAreaHeights.set(rowId, h)
     this.rowAreaWindowTops.set(rowId, top)
-    if (Math.abs(prevH - h) >= 0.5 || Math.abs(prevTop - top) >= 0.5) {
-      this.logDrag(
-        `recordRowDropArea row=${rowId} h=${h} top=${top} globalY=${globalY} localY=${localY}`
-      )
-    }
   }
 
-  private localDragY(row: FolderManageRow, event: DragEvent): number {
-    const areaTop = this.rowAreaWindowTops.get(row.noteId) ?? 0
-    return event.getWindowY() - areaTop
-  }
-
-  private handleRowDragMove(row: FolderManageRow, index: number, event: DragEvent, source: string): void {
+  private handleRowDragMove(row: FolderManageRow, index: number, event: DragEvent): void {
     if (this.draggingNoteId.length === 0) {
-      this.logDrag(`handleRowDragMove skip: no dragging (${source})`)
       return
     }
     const height = this.rowAreaHeights.get(row.noteId) ?? this.estimatedManageRowHeight
     const areaTop = this.rowAreaWindowTops.get(row.noteId) ?? 0
-    const windowY = event.getWindowY()
-    const legacyY = event.getY()
-    const y = windowY - areaTop
+    const y = event.getWindowY() - areaTop
     const edge = this.rowInsertEdgeHeight(height)
     const dropBottom = height - edge
     const canDrop = this.canDropOnRow(this.draggingNoteId, row)
-    let zone = 'unknown'
-    const prevHover = this.hoverIntoFolderId
-    const prevInsert = this.insertBeforeIndex
 
     if (y >= edge && y <= dropBottom) {
-      zone = 'center-drop-into'
       if (canDrop) {
         this.hoverIntoFolderId = row.noteId
         this.insertBeforeIndex = -1
       }
     } else if (y > dropBottom) {
-      zone = 'bottom-insert-after'
       const nextIndex = index + 1
       if (this.canInsertBefore(this.draggingNoteId, nextIndex)) {
         this.insertBeforeIndex = nextIndex
@@ -179,49 +138,17 @@ struct FolderManage {
     } else if (index > 0) {
       const prev = this.rows[index - 1]
       if (this.shareInsertParent(prev, row)) {
-        zone = 'top-shared-parent-drop-into'
         if (canDrop) {
           this.hoverIntoFolderId = row.noteId
           this.insertBeforeIndex = -1
         }
       } else if (this.canInsertBefore(this.draggingNoteId, index)) {
-        zone = 'top-insert-before'
         this.insertBeforeIndex = index
         this.hoverIntoFolderId = ''
-      } else {
-        zone = 'top-no-op'
       }
     } else if (this.canInsertBefore(this.draggingNoteId, index)) {
-      zone = 'top-insert-before'
       this.insertBeforeIndex = index
       this.hoverIntoFolderId = ''
-    } else {
-      zone = 'no-op'
-    }
-
-    this.dragMoveLogCounter += 1
-    const zoneKey =
-      `${row.noteId}|${zone}|${canDrop}|${this.hoverIntoFolderId}|${this.insertBeforeIndex}`
-    const stateChanged = prevHover !== this.hoverIntoFolderId || prevInsert !== this.insertBeforeIndex
-    const shouldLog = stateChanged || zoneKey !== this.lastDragZoneLogKey ||
-      this.dragMoveLogCounter % 15 === 0
-    if (shouldLog) {
-      this.lastDragZoneLogKey = zoneKey
-      this.logDrag(
-        `handleRowDragMove ${source} index=${index} title=${row.title} zone=${zone} canDrop=${canDrop} ` +
-          `windowY=${windowY} getY=${legacyY} areaTop=${areaTop} localY=${y.toFixed(1)} ` +
-          `height=${height} edge=${edge.toFixed(1)} dropBottom=${dropBottom.toFixed(1)} ` +
-          `dropActive=${this.isDropIntoTarget(row)}`
-      )
-      if (zone === 'center-drop-into' && !canDrop) {
-        this.logDrag(
-          `center-drop blocked reason=${this.describeCanDropOnRow(this.draggingNoteId, row)} ` +
-            `dragged=${this.draggingNoteId} target=${row.noteId}`
-        )
-      }
-      if (stateChanged) {
-        this.logDragUiState('state-changed', row)
-      }
     }
   }
 
@@ -585,11 +512,6 @@ struct FolderManage {
       width: dropActive ? this.dropBorderWidth : 0,
       color: dropActive ? $r('app.color.accent') : Color.Transparent
     })
-    .onAppear(() => {
-      if (dropActive) {
-        this.logDrag(`buildDropIntoFolderGroup ACTIVE row=${row.noteId} title=${row.title}`)
-      }
-    })
     .onAreaChange((_: Area, area: Area) => {
       this.recordRowDropArea(row.noteId, area)
     })
@@ -698,7 +620,6 @@ struct FolderManage {
       .onDrop(() => {
         const canInsert = this.draggingNoteId.length > 0 &&
           this.canInsertBefore(this.draggingNoteId, index)
-        this.logDrag(`insertSlot.onDrop index=${index} canInsert=${canInsert}`)
         if (canInsert) {
           const parentId = NoteFolderTree.parentIdForInsertBefore(this.rows, index, this.notes)
           const dragged = this.draggingNoteId
@@ -717,40 +638,29 @@ struct FolderManage {
       .onDragStart(() => {
         if (!this.busy && row.isRoot !== true) {
           this.draggingNoteId = row.noteId
-          this.logDragUiState('onDragStart', row)
-        } else {
-          this.logDrag(`onDragStart ignored busy=${this.busy} isRoot=${row.isRoot} row=${row.noteId}`)
         }
       })
       .onDragEnd(() => {
-        this.logDragUiState('onDragEnd', row)
         this.clearDragUi()
       })
       .onDragEnter((event: DragEvent) => {
         const canDrop = this.draggingNoteId.length > 0 && this.canDropOnRow(this.draggingNoteId, row)
-        this.logDrag(
-          `onDragEnter index=${index} row=${row.noteId} canDrop=${canDrop} windowY=${event.getWindowY()}`
-        )
         if (canDrop) {
           this.hoverIntoFolderId = row.noteId
           this.insertBeforeIndex = -1
-          this.logDragUiState('onDragEnter-set-hover', row)
         }
-        this.handleRowDragMove(row, index, event, 'onDragEnter')
+        this.handleRowDragMove(row, index, event)
       })
       .onDragMove((event: DragEvent) => {
-        this.handleRowDragMove(row, index, event, 'onDragMove')
+        this.handleRowDragMove(row, index, event)
       })
       .onDragLeave(() => {
-        this.logDrag(`onDragLeave row=${row.noteId} wasHover=${this.hoverIntoFolderId === row.noteId}`)
         if (this.hoverIntoFolderId === row.noteId) {
           this.hoverIntoFolderId = ''
-          this.logDragUiState('onDragLeave-clear-hover', row)
         }
       })
       .onDrop(() => {
         const canDrop = this.draggingNoteId.length > 0 && this.canDropOnRow(this.draggingNoteId, row)
-        this.logDrag(`onDrop row=${row.noteId} canDrop=${canDrop}`)
         if (canDrop) {
           const dragged = this.draggingNoteId
           const parentId = NoteFolderTree.parentIdForDropOnRow(row)
@@ -985,7 +895,6 @@ struct FolderManage {
               .onDrop(() => {
                 const canInsert = this.draggingNoteId.length > 0 &&
                   this.canInsertBefore(this.draggingNoteId, this.rows.length)
-                this.logDrag(`insertSlot.onDrop tail index=${this.rows.length} canInsert=${canInsert}`)
                 if (canInsert) {
                   const parentId =
                     NoteFolderTree.parentIdForInsertBefore(this.rows, this.rows.length, this.notes)

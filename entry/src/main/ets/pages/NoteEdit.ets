@@ -26,6 +26,7 @@ import { NoteEditEditorPane } from './NoteEditEditorPane'
 import { NoteEditPreviewPane } from './NoteEditPreviewPane'
 import { NoteEditMarkdownBlocksView } from './NoteEditMarkdownBlocksView'
 import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
+import { AiTagService } from '../services/AiTagService'
 import { NoteFolderTree, type FolderSidebarRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 
 interface NoteEditParams {
@@ -62,6 +63,7 @@ struct NoteEdit {
   @State noteTags: string[] = []
   @State tagPool: string[] = []
   @State tagMenuVisible: boolean = false
+  @State aiTagCreating: boolean = false
   @State parentId: string = ''
   @State allNotes: Note[] = []
   @State expandedFolderIds: string[] = []
@@ -101,6 +103,8 @@ struct NoteEdit {
   /** 与 Flutter 路径跑马灯一致的横向步进（vp/帧）。 */
   private static readonly PATH_CAPTION_LED_STEP_VP: number = 0.8
   private static readonly PATH_CAPTION_LED_FRAME_MS: number = 16
+  private static readonly TAG_DROPDOWN_ITEM_HEIGHT_VP: number = 44
+  private static readonly TAG_DROPDOWN_MAX_VISIBLE_ITEMS: number = 5
   /** 分享卡片内 Column 总高度（vp），用于长截图分段滚动。 */
   @State shareExportColumnVp: number = 0
   /**
@@ -476,6 +480,42 @@ struct NoteEdit {
     }
     normalized.sort((left: string, right: string) => left.localeCompare(right, 'zh-Hans-CN'))
     return normalized
+  }
+
+  private async onAiCreateTag(): Promise<void> {
+    if (this.aiTagCreating) {
+      return
+    }
+    this.aiTagCreating = true
+    this.tagMenuVisible = false
+    try {
+      await this.refreshTagPool()
+      const suggested = await AiTagService.getInstance().suggestTag(
+        this.title,
+        this.content,
+        this.tagPool
+      )
+      const resolved = suggested
+      const isNew = AiTagService.findExactPoolTag(resolved, this.tagPool) === null
+      if (isNew) {
+        const stored = await PreferencesService.getInstance().getNoteTags()
+        const nextStored = this.normalizeTags(stored.concat([resolved]))
+        await PreferencesService.getInstance().saveNoteTags(nextStored)
+        await this.refreshTagPool()
+      }
+      await this.onTagChecked(resolved, true)
+      this.showPreviewMessage(isNew ? `已创建并应用标签：${resolved}` : `已应用标签：${resolved}`)
+    } catch (e) {
+      const detail = e instanceof Error
+        ? e.message
+        : AiTagService.describeError(e as Object)
+      this.showPreviewMessage(
+        e instanceof Error ? e.message : 'AI 创建标签失败，请稍后重试'
+      )
+      Logger.error('NoteEdit', `onAiCreateTag failed: ${detail}`)
+    } finally {
+      this.aiTagCreating = false
+    }
   }
 
   private async onTagChecked(tag: string, selected: boolean): Promise<void> {
@@ -1764,39 +1804,85 @@ struct NoteEdit {
   }
 
   @Builder
+  private buildTagDropdownItem(tag: string) {
+    Row() {
+      Checkbox()
+        .select(this.noteTagsSafe().includes(tag))
+        .selectedColor($r('app.color.accent'))
+        .onChange((value: boolean) => {
+          void this.onTagChecked(tag, value)
+        })
+      Text(tag)
+        .fontSize($r('app.float.body_font_size'))
+        .fontColor($r('app.color.primary_text'))
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height(NoteEdit.TAG_DROPDOWN_ITEM_HEIGHT_VP)
+    .padding({ left: 12, right: 12 })
+    .onClick(() => {
+      const selected = !this.noteTagsSafe().includes(tag)
+      void this.onTagChecked(tag, selected)
+    })
+  }
+
+  @Builder
+  private buildTagDropdownTagList() {
+    if (this.tagPool.length === 0) {
+      Text('暂无可用标签')
+        .fontSize($r('app.float.caption_font_size'))
+        .fontColor($r('app.color.tertiary_text'))
+        .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+    } else if (this.tagPool.length > NoteEdit.TAG_DROPDOWN_MAX_VISIBLE_ITEMS) {
+      Scroll() {
+        Column() {
+          ForEach(this.tagPool, (tag: string) => {
+            this.buildTagDropdownItem(tag)
+          }, (tag: string) => `tag_item_${tag}`)
+        }
+      }
+      .width('100%')
+      .height(NoteEdit.TAG_DROPDOWN_ITEM_HEIGHT_VP * NoteEdit.TAG_DROPDOWN_MAX_VISIBLE_ITEMS)
+      .scrollable(ScrollDirection.Vertical)
+      .scrollBar(BarState.Auto)
+    } else {
+      ForEach(this.tagPool, (tag: string) => {
+        this.buildTagDropdownItem(tag)
+      }, (tag: string) => `tag_item_${tag}`)
+    }
+  }
+
+  @Builder
   private buildTagDropdown() {
     Column() {
-      if (this.tagPool.length === 0) {
-        Text('暂无可用标签')
-          .fontSize($r('app.float.caption_font_size'))
-          .fontColor($r('app.color.tertiary_text'))
-          .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-      } else {
-        ForEach(this.tagPool, (tag: string) => {
-          Row() {
-            Checkbox()
-              .select(this.noteTagsSafe().includes(tag))
-              .selectedColor($r('app.color.accent'))
-              .onChange((value: boolean) => {
-                void this.onTagChecked(tag, value)
-              })
-            Text(tag)
-              .fontSize($r('app.float.body_font_size'))
-              .fontColor($r('app.color.primary_text'))
-              .layoutWeight(1)
-          }
-          .width('100%')
-          .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-          .onClick(() => {
-            const selected = !this.noteTagsSafe().includes(tag)
-            void this.onTagChecked(tag, selected)
-          })
-        }, (tag: string) => `tag_item_${tag}`)
-      }
+      this.buildTagDropdownTagList()
       Divider()
         .strokeWidth(1)
         .color($r('app.color.divider'))
         .margin({ top: 4, bottom: 4 })
+      Row() {
+        if (this.aiTagCreating) {
+          LoadingProgress()
+            .width(16)
+            .height(16)
+            .color($r('app.color.accent'))
+        } else {
+          SymbolGlyph($r('sys.symbol.plus'))
+            .fontSize(16)
+            .fontColor([$r('app.color.accent')])
+        }
+        Text(this.aiTagCreating ? 'AI 生成中…' : 'AI创建标签')
+          .fontSize($r('app.float.body_font_size'))
+          .fontColor($r('app.color.accent'))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+      .onClick(() => {
+        if (!this.aiTagCreating) {
+          void this.onAiCreateTag()
+        }
+      })
       Row() {
         SymbolGlyph($r('sys.symbol.plus'))
           .fontSize(16)
@@ -1814,7 +1900,6 @@ struct NoteEdit {
       })
     }
     .width(154)
-    .constraintSize({ maxHeight: 320 })
     .backgroundColor($r('app.color.card_background'))
     .borderRadius(12)
     .border({ width: 1, color: $r('app.color.card_border') })

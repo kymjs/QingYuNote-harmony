@@ -89,6 +89,13 @@ export interface PostAuthJsonStatusResult {
   obj: Object | null
 }
 
+/** `GET /api/v1/me/ai-tag-config` */
+export interface AiTagConfigBody {
+  token_plan_key: string
+  model: string
+  base_url: string
+}
+
 /** `GET /api/v1/me/profile` */
 export interface ProfileBody {
   huawei_linked?: boolean
@@ -500,6 +507,30 @@ export class NoteApiClient {
       return obj as MergeAccountResponseBody
     }
     return null
+  }
+
+  async fetchAiTagConfig(): Promise<AiTagConfigBody | null> {
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      return null
+    }
+    const obj = await this.requestJson(http.RequestMethod.GET, '/api/v1/me/ai-tag-config', undefined, tok)
+    if (obj === null) {
+      return null
+    }
+    const record = obj as Record<string, Object>
+    const key = `${record['token_plan_key'] ?? ''}`.trim()
+    const model = `${record['model'] ?? 'MiniMax-M2.7'}`.trim()
+    const baseUrl = `${record['base_url'] ?? 'https://api.minimaxi.com/v1'}`.trim()
+    if (key.length === 0 || model.length === 0) {
+      return null
+    }
+    const body: AiTagConfigBody = {
+      token_plan_key: key,
+      model: model,
+      base_url: baseUrl
+    }
+    return body
   }
 
   async fetchProfile(): Promise<ProfileBody | null> {
