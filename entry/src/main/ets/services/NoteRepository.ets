@@ -1,3 +1,4 @@
+import fs from '@ohos.file.fs'
 import type common from '@ohos.app.ability.common'
 import type { CreateNoteInput, Note, NoteFilePayload, NoteStateBlock, NoteSyncState, RecycleBinLoadResult,
   UpdateNoteInput } from '../common/model/Note'
@@ -440,6 +441,49 @@ export class NoteRepository {
     await DatabaseService.getInstance().upsertSyncState(this.toSyncState(updated))
     this.bumpVersion()
     this.scheduleSyncHandler?.(id)
+  }
+
+  /** 退出登录时清空本地笔记、图片与同步库，并重置标签/同步游标（保留 WebDAV 配置）。 */
+  async clearAllLocalNotes(): Promise<void> {
+    await this.init()
+    this.beginBulkNotification()
+    try {
+      await FileService.getInstance().clearAllNoteFiles()
+      await DatabaseService.getInstance().clearAllSyncStates()
+      await this.clearLocalImagesDirectory()
+      await PreferencesService.getInstance().saveNoteTags([])
+      await PreferencesService.getInstance().setLastSyncTime(0)
+      await PreferencesService.getInstance().setLastRemoteIndexUpdatedAt(0)
+      await PreferencesService.getInstance().setLastRemoteIndexFingerprint('')
+    } finally {
+      this.endBulkNotification()
+      this.invalidateCachesForIdentityChange()
+    }
+  }
+
+  private async clearLocalImagesDirectory(): Promise<void> {
+    const ctx = this.context ?? AppContextHolder.tryGetContext()
+    if (!ctx) {
+      return
+    }
+    const imagesDir = `${ctx.filesDir ?? ''}/qingyu-note-image`
+    try {
+      if (!fs.accessSync(imagesDir)) {
+        return
+      }
+      const entries = fs.listFileSync(imagesDir, {
+        recursion: false,
+        listNum: 0
+      }) as string[]
+      for (const name of entries) {
+        const filePath = `${imagesDir}/${name}`
+        if (fs.accessSync(filePath)) {
+          fs.unlinkSync(filePath)
+        }
+      }
+    } catch (error) {
+      Logger.warn('NoteRepository', `clearLocalImagesDirectory failed: ${JSON.stringify(error)}`)
+    }
   }
 
   /** 删除本地笔记文件并移除同步库记录（远端 `deleted_time` 为 2 时与远端一并清空）。 */

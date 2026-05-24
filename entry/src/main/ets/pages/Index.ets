@@ -20,6 +20,7 @@ import {
   type HomeSidebarFilterMode
 } from '../common/utils/NoteFolderTree'
 import { SyncConstants } from '../common/constants/SyncConstants'
+import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 
 /** 与 HomeDrawerLayer 内 DRAWER_SPAN 一致，用于全屏横向拖动手势计算行程。 */
 const DRAWER_OFFSCREEN_PAD = 20
@@ -704,7 +705,7 @@ struct Index {
       return '同步完成'
     }
     if (failedResults.length === 1 && failedResults[0].message.trim().length > 0) {
-      return `同步失败：${failedResults[0].message}`
+      return UserFacingMessage.forSyncNoteFailure(failedResults[0].message)
     }
     return `同步完成，但有 ${failedResults.length} 条笔记同步失败`
   }

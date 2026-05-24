@@ -32,6 +32,7 @@ import { NoteEditMarkdownBlocksView } from './NoteEditMarkdownBlocksView'
 import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
 import { AiTagService } from '../services/AiTagService'
 import { AiNoteService } from '../services/AiNoteService'
+import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { NoteFolderTree, type FolderSidebarRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 
@@ -612,7 +613,10 @@ struct NoteEdit {
         ? e.message
         : AiTagService.describeError(e as Object)
       this.showPreviewMessage(
-        e instanceof Error ? e.message : 'AI 创建标签失败，请稍后重试'
+        UserFacingMessage.forAi(
+          e instanceof Error ? e.message : undefined,
+          'AI 创建标签失败，请稍后重试'
+        )
       )
       Logger.error('NoteEdit', `onAiCreateTag failed: ${detail}`)
     } finally {
@@ -2115,9 +2119,12 @@ struct NoteEdit {
       this.handleContentChange()
       this.showPreviewMessage('AI 已优化笔记正文')
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'AI 优化失败，请稍后重试'
+      const msg = UserFacingMessage.forAi(
+        e instanceof Error ? e.message : undefined,
+        'AI 优化失败，请稍后重试'
+      )
       this.showPreviewMessage(msg)
-      Logger.error('NoteEdit', `onAiOptimizeContent failed: ${msg}`)
+      Logger.error('NoteEdit', `onAiOptimizeContent failed: ${e instanceof Error ? e.message : JSON.stringify(e)}`)
     } finally {
       this.aiNoteWorking = false
     }
@@ -2174,9 +2181,12 @@ struct NoteEdit {
       this.handleContentChange()
       this.showPreviewMessage('AI 已生成链接摘要并写入正文')
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'AI 提取链接失败，请稍后重试'
+      const msg = UserFacingMessage.forAi(
+        e instanceof Error ? e.message : undefined,
+        'AI 提取链接失败，请稍后重试'
+      )
       this.showPreviewMessage(msg)
-      Logger.error('NoteEdit', `onAiExtractLink failed: ${msg}`)
+      Logger.error('NoteEdit', `onAiExtractLink failed: ${e instanceof Error ? e.message : JSON.stringify(e)}`)
     } finally {
       this.aiNoteWorking = false
     }

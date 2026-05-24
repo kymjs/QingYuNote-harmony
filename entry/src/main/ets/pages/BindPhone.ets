@@ -127,7 +127,7 @@ struct BindPhone {
       case 'phone_rebind_race':
         return '手机号状态已变化，请重试绑定'
       default:
-        return `操作失败（${code}）`
+        return '操作失败，请稍后重试'
     }
   }
 

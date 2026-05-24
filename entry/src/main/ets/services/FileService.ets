@@ -211,6 +211,32 @@ export class FileService {
     }
   }
 
+  /** 退出登录时删除本地全部笔记 Markdown 文件。 */
+  async clearAllNoteFiles(): Promise<void> {
+    try {
+      await this.ensureBaseDir()
+      if (!fs.accessSync(this.baseDir)) {
+        return
+      }
+      const entries = fs.listFileSync(this.baseDir, {
+        recursion: false,
+        listNum: 0
+      }) as string[]
+      for (const entry of entries) {
+        if (!NOTE_FILE_NAME_REGEX.test(entry)) {
+          continue
+        }
+        const filePath = `${this.baseDir}/${entry}`
+        if (fs.accessSync(filePath)) {
+          fs.unlinkSync(filePath)
+        }
+      }
+    } catch (error) {
+      Logger.warn('FileService', `clearAllNoteFiles failed: ${this.describeError(error as Object)}`)
+      throw this.toRuntimeError(error as Object)
+    }
+  }
+
   async exists(noteId: string): Promise<boolean> {
     try {
       return fs.accessSync(this.getNotePath(noteId))

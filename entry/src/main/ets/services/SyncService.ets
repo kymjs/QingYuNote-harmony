@@ -8,6 +8,7 @@ import { FileService } from './FileService'
 import { TimeUtils } from '../common/utils/TimeUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { Logger } from '../common/utils/Logger'
+import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { AppContextHolder } from './AppContextHolder'
 import { SyncConstants } from '../common/constants/SyncConstants'
 
@@ -330,9 +331,10 @@ export class SyncService {
         remoteModified: remoteStat.remoteModified
       }
     } catch (error) {
-      const errorMessage = this.describeError(error as Object)
-      Logger.error('SyncService', `syncNote failed: noteId=${noteId}, error=${errorMessage}`)
-      if (errorMessage.includes('authentication')) {
+      const rawError = this.describeError(error as Object)
+      const errorMessage = UserFacingMessage.forCatch(error as Object, '同步失败，请稍后重试')
+      Logger.error('SyncService', `syncNote failed: noteId=${noteId}, error=${rawError}`)
+      if (rawError.includes('authentication')) {
         await PreferencesService.getInstance().setAuthInvalid(true)
       }
       const syncState = await DatabaseService.getInstance().getSyncState(noteId)
@@ -880,10 +882,11 @@ export class SyncService {
         Logger.warn('SyncService',
           `syncNoteByIdWithRetry retry by failed result: noteId=${noteId}, attempt=${attempt}, message=${latestResult.message}`)
       } catch (error) {
-        const errorMessage = this.describeError(error as Object)
-        if (!this.isRetryableSyncMessage(errorMessage) || attempt >= MAX_RETRYABLE_SYNC_ATTEMPTS) {
+        const rawError = this.describeError(error as Object)
+        const errorMessage = UserFacingMessage.forCatch(error as Object, '同步失败，请稍后重试')
+        if (!this.isRetryableSyncMessage(rawError) || attempt >= MAX_RETRYABLE_SYNC_ATTEMPTS) {
           Logger.error('SyncService',
-            `syncNoteByIdWithRetry failed: noteId=${noteId}, attempt=${attempt}, error=${errorMessage}`)
+            `syncNoteByIdWithRetry failed: noteId=${noteId}, attempt=${attempt}, error=${rawError}`)
           return {
             noteId,
             success: false,
@@ -893,7 +896,7 @@ export class SyncService {
           }
         }
         Logger.warn('SyncService',
-          `syncNoteByIdWithRetry retry by exception: noteId=${noteId}, attempt=${attempt}, error=${errorMessage}`)
+          `syncNoteByIdWithRetry retry by exception: noteId=${noteId}, attempt=${attempt}, error=${rawError}`)
       }
       await this.delay(RETRY_DELAY_MS * attempt)
     }

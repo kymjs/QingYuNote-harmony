@@ -64,7 +64,7 @@ export function describeHuaweiLoginError(error: Object): string {
     Logger.warn('HuaweiAuthService', `Huawei login error: ${rawMsg.length > 0 ? rawMsg : JSON.stringify(error)}`)
   }
   const hintMap: Map<number, string> = new Map([
-    [1001500001, '应用校验失败，请在 AGC 配置 SHA256 证书指纹并核对 Client ID'],
+    [1001500001, '华为登录暂不可用，请稍后重试'],
     [1001500002, '请勿重复发起登录'],
     [1001502001, '请先在本机登录华为账号'],
     [1001502005, '网络异常，请稍后重试'],
@@ -76,13 +76,6 @@ export function describeHuaweiLoginError(error: Object): string {
     if (mapped !== undefined && mapped.length > 0) {
       return mapped
     }
-    if (rawMsg.length > 0) {
-      return rawMsg
-    }
   }
-  const asErr = error as Error
-  if (asErr.message !== undefined && `${asErr.message}`.length > 0) {
-    return `${asErr.message}`
-  }
-  return '华为账号登录失败'
+  return '华为账号登录失败，请稍后重试'
 }

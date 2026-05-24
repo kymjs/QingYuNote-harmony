@@ -86,15 +86,11 @@ export struct ProfilePhoneSmsDialog {
       case 'invalid_phone':
         return '手机号格式无效'
       case 'sms_send_failed':
-        return '短信发送失败（请查看服务端日志）'
       case 'sms_feature_not_opened':
-        return '请在阿里云开通号码认证后再试'
       case 'sms_invalid_params':
-        return '短信模板参数无效'
       case 'sms_sign_template_mismatch':
-        return '签名或模板与控制台不一致'
       case 'sms_aliyun_auth':
-        return '阿里云密钥或权限有误'
+        return '短信发送失败，请稍后重试'
       case 'sms_client_failed':
         return '短信服务暂时不可用'
       case 'invalid_body':
@@ -141,7 +137,7 @@ export struct ProfilePhoneSmsDialog {
       case 'sms_client_failed':
         return '短信服务暂时不可用'
       default:
-        return `操作失败（${code}）`
+        return '操作失败，请稍后重试'
     }
   }
 

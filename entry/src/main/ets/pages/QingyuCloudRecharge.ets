@@ -11,6 +11,7 @@ import type { QingyuRechargePlanId } from '../common/constants/QingyuRechargePla
 import { QingyuRechargePlans } from '../common/constants/QingyuRechargePlans'
 import { QingyuHuaweiIapProducts } from '../common/constants/QingyuHuaweiIapProducts'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
+import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 
 /**
  * 轻羽云服务 — 会员档位；支持华为应用内支付（IAP）与支付宝 App 支付。
@@ -108,19 +109,10 @@ struct QingyuCloudRecharge {
   }
 
   private huaweiVerifyFailureMessage(obj: Object | null): string {
-    if (obj === null) {
-      return '网络异常，请稍后重试'
-    }
-    const r = obj as Record<string, Object>
-    const msg = r['message']
-    if (typeof msg === 'string' && msg.trim().length > 0) {
-      return msg.trim()
-    }
-    const err = r['error']
-    if (typeof err === 'string' && err.trim().length > 0) {
-      return err.trim()
-    }
-    return '支付校验未通过'
+    return UserFacingMessage.forPaymentVerify(
+      obj,
+      '支付校验未通过，如已扣款请稍后刷新会员状态或联系客服'
+    )
   }
 
   private async pollOrderPaid(orderId: number): Promise<boolean> {
@@ -239,7 +231,7 @@ struct QingyuCloudRecharge {
         if (code === 'alipay_not_configured') {
           this.showToast('暂未开通支付')
         } else {
-          this.showToast(human.length > 0 ? human : '获取支付参数失败')
+          this.showToast(UserFacingMessage.sanitize(human, '获取支付参数失败，请稍后重试'))
         }
         return
       }
@@ -266,7 +258,9 @@ struct QingyuCloudRecharge {
       if (st !== undefined && st !== 9000 && st !== 8000) {
         const memo = (payResult.get('memo') ?? '').trim()
         Logger.warn('QingyuCloudRecharge', `alipay sdk orderId=${oid} resultStatus=${st} memo=${memo}`)
-        this.showToast(memo.length > 0 ? `支付未完成：${memo}` : '支付未完成')
+        this.showToast(
+          UserFacingMessage.sanitize(memo, '支付未完成，请稍后重试')
+        )
         return
       }
       const confirmed = await this.pollOrderPaid(oid)

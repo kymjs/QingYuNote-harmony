@@ -10,6 +10,7 @@ import {
   NoteApiClient,
   type ProfileBody
 } from '../services/NoteApiClient'
+import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
 import { Logger } from '../common/utils/Logger'
 import promptAction from '@ohos.promptAction'
@@ -78,10 +79,16 @@ struct Profile {
     }
     this.loading = true
     this.loadError = ''
+    const cachedRaw = await PreferencesService.getInstance().getCachedUserProfile()
+    const cached = cachedRaw !== null ? cachedRaw as ProfileBody : null
+    if (cached !== null) {
+      this.profile = cached
+    }
     const p = await NoteApiClient.getInstance().fetchProfile()
     const uid = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
     this.loading = false
-    if (p === null) {
+    const resolved = p ?? cached
+    if (resolved === null) {
       this.loadError = '无法加载个人信息'
       this.profile = null
       this.noteApiUserId = uid
@@ -89,7 +96,7 @@ struct Profile {
       return
     }
     this.avatarNetworkLoadFailed = false
-    this.profile = p
+    this.profile = resolved
     this.noteApiUserId = uid
   }
 
@@ -438,7 +445,7 @@ struct Profile {
       case 'phone_rebind_race':
         return '手机号状态已变化，请重试绑定'
       default:
-        return `操作失败（${code}）`
+        return '操作失败，请稍后重试'
     }
   }
 
@@ -729,7 +736,9 @@ struct Profile {
       const context = AppContextHolder.tryGetContext()
       if (context !== undefined) {
         await PreferencesService.getInstance().init(context)
+        await NoteRepository.getInstance().init(context)
       }
+      await NoteRepository.getInstance().clearAllLocalNotes()
       await PreferencesService.getInstance().clearLoginSession()
       const router = this.getUIContext().getRouter()
       const routerWithClear = router as RouterWithOptionalClear

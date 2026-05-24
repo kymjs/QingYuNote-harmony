@@ -72,8 +72,7 @@ export class AiTagService {
           readTimeout: 60000
         })
         if (resp.responseCode < 200 || resp.responseCode >= 300) {
-          const text = (resp.result as string) ?? ''
-          throw new Error(`AI 请求失败：HTTP ${resp.responseCode} ${text.slice(0, 200)}`)
+          throw new Error('AI 服务暂时不可用，请稍后重试')
         }
         const text = (resp.result as string) ?? ''
         let obj: Object | null = null
@@ -122,8 +121,7 @@ export class AiTagService {
       }
     }
 
-    const hint = lastRaw.length > 0 ? `最近解析正文：${lastRaw.slice(0, 120)}` : '模型未返回可解析的正文'
-    throw new Error(`未能生成合适标签（${hint}）`)
+    throw new Error('未能生成合适标签，请稍后重试')
   }
 
   static finalizeTag(raw: string, pool: string[]): string {
@@ -199,17 +197,16 @@ export class AiTagService {
     if (baseResp !== undefined) {
       const code = Number(baseResp['status_code'] ?? 0)
       if (code !== 0) {
-        const msg = `${baseResp['status_msg'] ?? ''}`
-        throw new Error(`MiniMax 接口错误(${code})：${msg}`)
+        throw new Error('AI 服务暂时不可用，请稍后重试')
       }
     }
     const err = record['error']
     if (err !== undefined && err !== null) {
-      throw new Error(`MiniMax 接口错误：${JSON.stringify(err).slice(0, 200)}`)
+      throw new Error('AI 服务暂时不可用，请稍后重试')
     }
     const choices = record['choices']
     if (!Array.isArray(choices) || choices.length === 0) {
-      throw new Error(`MiniMax 响应无 choices，摘要：${rawText.slice(0, 280)}`)
+      throw new Error('AI 未返回有效内容')
     }
   }
 

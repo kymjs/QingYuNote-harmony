@@ -1,5 +1,6 @@
 import { Want } from '@kit.AbilityKit'
 import { AppContextHolder } from '../services/AppContextHolder'
+import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
 import { runAppUpdateCheckManually } from '../services/AppUpdateUi'
 
@@ -38,7 +39,9 @@ struct Settings {
       const context = AppContextHolder.tryGetContext()
       if (context) {
         await PreferencesService.getInstance().init(context)
+        await NoteRepository.getInstance().init(context)
       }
+      await NoteRepository.getInstance().clearAllLocalNotes()
       await PreferencesService.getInstance().clearLoginSession()
       const router = this.getUIContext().getRouter()
       const routerWithClear = router as RouterWithOptionalClear

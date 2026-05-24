@@ -93,8 +93,7 @@ export class AiNoteService {
         readTimeout: 90000
       })
       if (resp.responseCode < 200 || resp.responseCode >= 300) {
-        const text = (resp.result as string) ?? ''
-        throw new Error(`AI 请求失败：HTTP ${resp.responseCode} ${text.slice(0, 200)}`)
+        throw new Error('AI 服务暂时不可用，请稍后重试')
       }
       const text = (resp.result as string) ?? ''
       let obj: Object | null = null
@@ -163,16 +162,15 @@ export class AiNoteService {
       const br = baseResp as Record<string, Object>
       const code = Number(br['status_code'] ?? 0)
       if (code !== 0) {
-        const msg = `${br['status_msg'] ?? ''}`
-        throw new Error(`MiniMax 接口错误(${code})：${msg}`)
+        throw new Error('AI 服务暂时不可用，请稍后重试')
       }
     }
     if (record['error'] !== undefined && record['error'] !== null) {
-      throw new Error(`MiniMax 接口错误：${JSON.stringify(record['error']).slice(0, 200)}`)
+      throw new Error('AI 服务暂时不可用，请稍后重试')
     }
     const choices = record['choices']
     if (!Array.isArray(choices) || choices.length === 0) {
-      throw new Error(`MiniMax 响应无 choices，摘要：${rawText.slice(0, 280)}`)
+      throw new Error('AI 未返回有效内容')
     }
   }
 

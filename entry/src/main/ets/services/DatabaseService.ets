@@ -162,6 +162,18 @@ export class DatabaseService {
     }
   }
 
+  /** 退出登录时清空同步状态表。 */
+  async clearAllSyncStates(): Promise<void> {
+    try {
+      const store = await this.ensureStore()
+      const predicates = new relationalStore.RdbPredicates(TABLE_NAME)
+      await store.delete(predicates)
+    } catch (error) {
+      Logger.error('DatabaseService', `clearAllSyncStates failed: ${this.describeError(error as Object)}`)
+      throw this.toRuntimeError(error as Object)
+    }
+  }
+
   async clearDeleted(id: string, remoteModified: number = 0, lastOperationAt: number = Date.now(),
     syncStatus: SyncStatus = 'synced'): Promise<void> {
     const existing = await this.getSyncState(id)

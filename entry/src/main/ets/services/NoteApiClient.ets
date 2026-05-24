@@ -540,9 +540,12 @@ export class NoteApiClient {
     }
     const obj = await this.requestJson(http.RequestMethod.GET, '/api/v1/me/profile', undefined, tok)
     if (obj === null) {
-      return null
+      const cached = await PreferencesService.getInstance().getCachedUserProfile()
+      return cached !== null ? cached as ProfileBody : null
     }
-    return obj as ProfileBody
+    const profile = obj as ProfileBody
+    await PreferencesService.getInstance().saveCachedUserProfile(obj as Record<string, Object>)
+    return profile
   }
 
   /**
@@ -989,6 +992,7 @@ export class NoteApiClient {
       const code = resp.responseCode
       const text = (resp.result as string) ?? ''
       if (code >= 200 && code < 300) {
+        void this.fetchProfile()
         return null
       }
       return NoteApiClient.parseErrorCode(text)

@@ -60,7 +60,7 @@ export struct ProfileChangePasswordDialog {
       case 'phone_required':
         return '请输入手机号'
       default:
-        return `操作失败（${code}）`
+        return '操作失败，请稍后重试'
     }
   }
 

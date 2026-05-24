@@ -155,15 +155,11 @@ export struct RegisterCaptchaDialog {
       case 'sms_quota_exceeded':
         return '发送过于频繁，请稍后再试'
       case 'sms_send_failed':
-        return '短信发送失败（请查看服务端日志中的阿里云返回详情）'
       case 'sms_feature_not_opened':
-        return '请在阿里云开通号码认证/短信认证后再试'
       case 'sms_invalid_params':
-        return '短信模板参数无效，请核对 ALIYUN_SMS_TEMPLATE_PARAM'
       case 'sms_sign_template_mismatch':
-        return '签名或模板与控制台不一致，请核对赠送签名与模板 CODE'
       case 'sms_aliyun_auth':
-        return '阿里云访问密钥或 RAM 权限有误'
+        return '短信发送失败，请稍后重试'
       case 'sms_client_failed':
         return '短信服务暂时不可用'
       case 'invalid_body':

@@ -198,7 +198,10 @@ struct Login {
     } catch (error) {
       const message = describeHuaweiLoginError(error as Object)
       try {
-        this.getUIContext().getPromptAction().showToast({ message, duration: 2000 })
+        this.getUIContext().getPromptAction().showToast({
+          message: message.trim().length > 0 ? message : '华为账号登录失败，请稍后重试',
+          duration: 2000
+        })
       } catch (_) {
         console.error(`Login Huawei toast failed: ${message}`)
       }

@@ -13,6 +13,8 @@ const HUAWEI_LOGGED_IN_KEY = 'account_huawei_logged_in'
 const NOTE_API_USER_ID_KEY = 'note_api_user_id'
 const NOTE_API_ACCESS_TOKEN_KEY = 'note_api_access_token'
 const NOTE_API_EXPIRES_AT_MS_KEY = 'note_api_expires_at_ms'
+/** 与 Flutter `AppConst.prefCachedUserProfileKey` 一致：最近一次成功拉取的 profile，按用户 id 隔离 */
+const NOTE_API_CACHED_USER_PROFILE_KEY = 'note_api_cached_user_profile'
 /**
  * 与 Flutter `AppConst.prefSmsDeviceIdKey` 键名一致（`note_api_sms_device_id`）。
  *
@@ -553,6 +555,61 @@ export class PreferencesService {
     }
   }
 
+  /** 写入当前登录用户的资料缓存（与 [getCachedUserProfile] 成对使用）。 */
+  async saveCachedUserProfile(profile: Record<string, Object>): Promise<void> {
+    try {
+      const userId = (await this.getNoteApiUserId()).trim()
+      if (userId.length === 0) {
+        return
+      }
+      const store = this.ensureStore()
+      store.putSync(
+        NOTE_API_CACHED_USER_PROFILE_KEY,
+        JSON.stringify({ user_id: userId, profile: profile })
+      )
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `saveCachedUserProfile failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  /** 读取当前登录用户上次成功拉取的资料；用户 id 不匹配时返回 null。 */
+  async getCachedUserProfile(): Promise<Record<string, Object> | null> {
+    try {
+      const userId = (await this.getNoteApiUserId()).trim()
+      if (userId.length === 0) {
+        return null
+      }
+      const store = this.ensureStore()
+      const raw = `${store.getSync(NOTE_API_CACHED_USER_PROFILE_KEY, '') ?? ''}`.trim()
+      if (raw.length === 0) {
+        return null
+      }
+      const decoded = JSON.parse(raw) as Record<string, Object>
+      if (`${decoded['user_id'] ?? ''}`.trim() !== userId) {
+        return null
+      }
+      const profile = decoded['profile']
+      if (profile === null || profile === undefined || typeof profile !== 'object') {
+        return null
+      }
+      return profile as Record<string, Object>
+    } catch (error) {
+      Logger.warn('PreferencesService', `getCachedUserProfile failed: ${this.describeError(error as Object)}`)
+      return null
+    }
+  }
+
+  async clearCachedUserProfile(): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(NOTE_API_CACHED_USER_PROFILE_KEY, '')
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `clearCachedUserProfile failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
   /**
    * 首次调用生成 UUID 写入 preferences，之后只读；与 Flutter `getOrCreateSmsDeviceId` 对齐。
    * 值通过 `X-Device-Id` / JSON `device_id` 发往 Note API，供公开短信频控「设备」维度使用。
@@ -585,6 +642,7 @@ export class PreferencesService {
       store.putSync(NOTE_API_ACCESS_TOKEN_KEY, '')
       store.putSync(NOTE_API_EXPIRES_AT_MS_KEY, 0)
       store.putSync(LOGIN_RETURN_TARGET_KEY, '')
+      store.putSync(NOTE_API_CACHED_USER_PROFILE_KEY, '')
       await store.flush()
     } catch (error) {
       Logger.warn('PreferencesService', `clearLoginSession failed: ${this.describeError(error as Object)}`)
