@@ -620,7 +620,7 @@ export class WebDAVClient {
     return PathUtils.joinRemoteFileUrl(config.baseUrl, config.notesDir, noteId)
   }
 
-  private async requireConfig(): Promise<WebDAVConfig> {
+  async requireConfig(): Promise<WebDAVConfig> {
     let config: WebDAVConfig | null = null
     for (let round = 0; round < 3; round += 1) {
       if (round > 0) {

@@ -36,6 +36,11 @@ const NOTE_FOLDER_MODE_ENABLED_KEY = 'note_folder_mode_enabled'
 /** 登录成功后导航：`Login` 消费并清空（OAuth 返回后 router params 可能丢失） */
 const LOGIN_RETURN_TARGET_KEY = 'login_return_target'
 
+export interface LegacyNoteSettingsFlags {
+  quick: boolean
+  folder: boolean
+}
+
 export class PreferencesService {
   private static instance: PreferencesService = new PreferencesService()
   private context?: common.Context
@@ -664,15 +669,17 @@ export class PreferencesService {
     }
   }
 
-  readLegacyNoteSettingsFlags(): { quick: boolean, folder: boolean } {
+  readLegacyNoteSettingsFlags(): LegacyNoteSettingsFlags {
     try {
       const store = this.ensureStore()
-      return {
+      const result: LegacyNoteSettingsFlags = {
         quick: store.getSync(NOTE_QUICK_ACTION_BAR_ENABLED_KEY, true) as boolean,
         folder: store.getSync(NOTE_FOLDER_MODE_ENABLED_KEY, false) as boolean
       }
+      return result
     } catch (_) {
-      return { quick: true, folder: false }
+      const fallback: LegacyNoteSettingsFlags = { quick: true, folder: false }
+      return fallback
     }
   }
 
