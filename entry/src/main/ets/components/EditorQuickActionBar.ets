@@ -1,5 +1,6 @@
 export type EditorQuickActionType =
   | 'link'
+  | 'image'
   | 'quote'
   | 'hr'
   | 'orderedList'
@@ -10,7 +11,7 @@ export type EditorQuickActionType =
 
 @Component
 export struct EditorQuickActionBar {
-  /** 与编辑页 [pageWidth] 同步，避免首帧宽度为 0 时按满 padding 布局导致第 8 个图标被挤出。 */
+  /** 与编辑页 [pageWidth] 同步，避免首帧宽度为 0 时按满 padding 布局导致图标被挤出。 */
   @Prop barWidthVp: number = 360
   /** 在 onClick 之前触发（TouchDown），此时 TextArea 往往仍保有正确选区。 */
   onBeforeAction: () => void = () => {
@@ -21,7 +22,7 @@ export struct EditorQuickActionBar {
   private static readonly BAR_HEIGHT: number = 40
   private static readonly SLOT_SIZE: number = 40
   private static readonly BAR_PADDING_H: number = 8
-  private static readonly ICON_COUNT: number = 8
+  private static readonly ICON_COUNT: number = 9
   private static readonly ICON_VISUAL_SIZE: number = EditorQuickActionBar.SLOT_SIZE * 0.7
   private static readonly ICON_PADDING: number = EditorQuickActionBar.SLOT_SIZE * 0.3
   private static readonly ICON_CELL_WIDTH: number =
@@ -41,17 +42,28 @@ export struct EditorQuickActionBar {
     return Math.max(0, Math.min(EditorQuickActionBar.ICON_PADDING, pad))
   }
 
+  private needsHorizontalScroll(hPad: number): boolean {
+    const usable = this.barWidthVp - EditorQuickActionBar.BAR_PADDING_H * 2
+    return EditorQuickActionBar.ICON_COUNT * this.cellWidth(hPad) > usable
+  }
+
   private cellWidth(hPad: number): number {
     return EditorQuickActionBar.ICON_VISUAL_SIZE + hPad * 2
   }
 
   @Builder
-  private buildIcon(action: EditorQuickActionType, media: Resource, hPad: number) {
+  private buildIcon(
+    action: EditorQuickActionType,
+    media: Resource,
+    hPad: number,
+    imageFill?: ResourceColor
+  ) {
     Row() {
       Image(media)
         .width(EditorQuickActionBar.ICON_VISUAL_SIZE)
         .height(EditorQuickActionBar.ICON_VISUAL_SIZE)
         .objectFit(ImageFit.Contain)
+        .fillColor(imageFill ?? Color.Transparent)
     }
     .width(this.cellWidth(hPad))
     .height(EditorQuickActionBar.SLOT_SIZE)
@@ -70,9 +82,10 @@ export struct EditorQuickActionBar {
   }
 
   @Builder
-  private buildBar(hPad: number) {
+  private buildActionRow(hPad: number, justify: FlexAlign) {
     Row() {
       this.buildIcon('link', $r('app.media.ic_editor_link'), hPad)
+      this.buildIcon('image', $r('app.media.ic_image'), hPad, $r('app.color.primary_text'))
       this.buildIcon('quote', $r('app.media.ic_editor_quote'), hPad)
       this.buildIcon('hr', $r('app.media.ic_editor_hr'), hPad)
       this.buildIcon('orderedList', $r('app.media.ic_editor_ol'), hPad)
@@ -81,13 +94,53 @@ export struct EditorQuickActionBar {
       this.buildIcon('strike', $r('app.media.ic_editor_strike'), hPad)
       this.buildIcon('italic', $r('app.media.ic_editor_italic'), hPad)
     }
-    .width('100%')
     .height(EditorQuickActionBar.BAR_HEIGHT)
-    .padding({ left: EditorQuickActionBar.BAR_PADDING_H, right: EditorQuickActionBar.BAR_PADDING_H })
-    .justifyContent(FlexAlign.SpaceBetween)
+    .justifyContent(justify)
     .alignItems(VerticalAlign.Center)
     .backgroundColor($r('app.color.surface_muted'))
     .focusable(false)
+  }
+
+  @Builder
+  private buildScrollableBar(hPad: number) {
+    Scroll() {
+      Row() {
+        this.buildIcon('link', $r('app.media.ic_editor_link'), hPad)
+        this.buildIcon('image', $r('app.media.ic_image'), hPad, $r('app.color.primary_text'))
+        this.buildIcon('quote', $r('app.media.ic_editor_quote'), hPad)
+        this.buildIcon('hr', $r('app.media.ic_editor_hr'), hPad)
+        this.buildIcon('orderedList', $r('app.media.ic_editor_ol'), hPad)
+        this.buildIcon('bulletList', $r('app.media.ic_editor_ul'), hPad)
+        this.buildIcon('bold', $r('app.media.ic_editor_bold'), hPad)
+        this.buildIcon('strike', $r('app.media.ic_editor_strike'), hPad)
+        this.buildIcon('italic', $r('app.media.ic_editor_italic'), hPad)
+      }
+      .height(EditorQuickActionBar.BAR_HEIGHT)
+      .alignItems(VerticalAlign.Center)
+      .backgroundColor($r('app.color.surface_muted'))
+      .focusable(false)
+    }
+    .width('100%')
+    .height(EditorQuickActionBar.BAR_HEIGHT)
+    .padding({ left: EditorQuickActionBar.BAR_PADDING_H, right: EditorQuickActionBar.BAR_PADDING_H })
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.None)
+    .align(Alignment.Start)
+    .focusable(false)
+  }
+
+  @Builder
+  private buildBar(hPad: number) {
+    if (this.needsHorizontalScroll(hPad)) {
+      this.buildScrollableBar(hPad)
+    } else {
+      Row() {
+        this.buildActionRow(hPad, FlexAlign.SpaceBetween)
+      }
+      .width('100%')
+      .padding({ left: EditorQuickActionBar.BAR_PADDING_H, right: EditorQuickActionBar.BAR_PADDING_H })
+    }
   }
 
   build() {

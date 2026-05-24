@@ -1,4 +1,5 @@
 import type { MarkdownBlock, MarkdownInline } from '../common/utils/MarkdownUtils'
+import { CodeHighlight, type CodeHighlightToken, type CodeHighlightTokenKind } from '../common/utils/CodeHighlight'
 import { KatexFormulaPreview } from '../components/KatexFormulaPreview'
 import { KatexUtils } from '../common/utils/KatexUtils'
 import { fileUri } from '@kit.CoreFileKit'
@@ -148,6 +149,44 @@ export struct NoteEditMarkdownBlocksView {
     return `${block.type}:${block.language}:${block.content.slice(0, 48)}:${index}`
   }
 
+  private codeTokenColor(kind: CodeHighlightTokenKind): ResourceColor {
+    if (kind === 'comment') {
+      return this.tertiaryTextColor()
+    }
+    if (kind === 'string' || kind === 'keyword') {
+      return this.accentTextColor()
+    }
+    if (kind === 'number') {
+      return '#E67E22'
+    }
+    return this.primaryTextColor()
+  }
+
+  @Builder
+  private buildInlineCodeTokenSpans(content: string) {
+    ForEach(CodeHighlight.highlight(content), (token: CodeHighlightToken, index: number) => {
+      Span(token.text)
+        .fontFamily('monospace')
+        .fontColor(this.codeTokenColor(token.kind))
+        .backgroundColor(this.codeBackgroundColor())
+    }, (token: CodeHighlightToken, index: number) => `${token.kind}:${token.text.slice(0, 16)}:${index}`)
+  }
+
+  @Builder
+  private buildHighlightedCode(code: string, fontSize: number | Resource, lineHeight: number) {
+    Text() {
+      ForEach(CodeHighlight.highlight(code), (token: CodeHighlightToken, index: number) => {
+        Span(token.text)
+          .fontFamily('monospace')
+          .fontColor(this.codeTokenColor(token.kind))
+      }, (token: CodeHighlightToken, index: number) => `${token.kind}:${token.text.slice(0, 16)}:${index}`)
+    }
+    .fontSize(fontSize)
+    .lineHeight(lineHeight)
+    .copyOption(CopyOptions.LocalDevice)
+    .width('100%')
+  }
+
   @Builder
   private buildInlineText(inlines: MarkdownInline[], rawContent: string, fontSize: number | Resource,
     fontColor: ResourceColor, lineHeight: number, fontWeight: FontWeight = FontWeight.Regular) {
@@ -185,10 +224,7 @@ export struct NoteEditMarkdownBlocksView {
         .fontStyle(FontStyle.Italic)
         .fontColor(defaultColor)
     } else if (inline.type === 'inline_code') {
-      Span(inline.content)
-        .fontFamily('monospace')
-        .fontColor(defaultColor)
-        .backgroundColor(this.codeBackgroundColor())
+      this.buildInlineCodeTokenSpans(inline.content)
     } else if (inline.type === 'strikethrough') {
       Span(inline.content)
         .fontColor(defaultColor)
@@ -262,13 +298,7 @@ export struct NoteEditMarkdownBlocksView {
             .fontColor(this.tertiaryTextColor())
             .copyOption(CopyOptions.LocalDevice)
         }
-        Text(block.content)
-          .fontSize($r('app.float.caption_font_size'))
-          .fontColor(this.primaryTextColor())
-          .fontFamily('monospace')
-          .lineHeight(this.contentLineHeight(22))
-          .copyOption(CopyOptions.LocalDevice)
-          .width('100%')
+        this.buildHighlightedCode(block.content, $r('app.float.caption_font_size'), this.contentLineHeight(22))
       }
       .width('100%')
       .padding(14)

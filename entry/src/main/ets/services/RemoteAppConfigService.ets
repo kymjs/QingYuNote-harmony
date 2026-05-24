@@ -112,6 +112,39 @@ export class RemoteAppConfigService {
     }
   }
 
+  /** 笔记 AI：先校验 `ai_version` 闭区间，命中且 `ai == true` 时展示 AI 入口。 */
+  static async readAiConfigFromCache(filesDir: string): Promise<boolean> {
+    if (filesDir.length === 0) {
+      return false
+    }
+    const path = `${filesDir}/${REMOTE_APP_CONFIG_CACHE_FILE}`
+    try {
+      if (!fs.accessSync(path)) {
+        return false
+      }
+      const stat = fs.statSync(path)
+      if (stat.size <= 0) {
+        return false
+      }
+      const content = fs.readTextSync(path, { encoding: 'utf-8' })
+      const config = JSON.parse(content) as Record<string, Object>
+      const bounds = parseVersionRangeBounds(config['ai_version'])
+      if (bounds === null) {
+        return false
+      }
+      const current = (await getAppVersionName()).trim()
+      if (current.length === 0) {
+        return false
+      }
+      if (!isVersionInClosedInterval(current, bounds.min, bounds.max)) {
+        return false
+      }
+      return config['ai'] === true
+    } catch (_) {
+      return false
+    }
+  }
+
   static isCacheFileExists(filesDir: string): boolean {
     if (filesDir.length === 0) {
       return false

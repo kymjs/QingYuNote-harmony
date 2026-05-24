@@ -60,7 +60,8 @@ export class MarkdownUtils {
       .replace(/\\\[[\s\S]*?\\\]/g, ' ')
       .replace(/\\\([\s\S]*?\\\)/g, ' ')
       .replace(/(?<!\\)\$[^$\n]+(?<!\\)\$/g, ' ')
-      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/```\w*\n[\s\S]*?\n```/g, ' ')
+      .replace(/```([^`\n]+)```/g, '$1')
       .replace(/`([^`]+)`/g, '$1')
       .replace(/^>\s?/gm, '')
       .replace(/^#+\s?/gm, '')
@@ -184,8 +185,8 @@ export class MarkdownUtils {
 
     for (const line of lines) {
       const trimmed = line.trim()
-      if (trimmed.startsWith('```')) {
-        if (inCodeBlock) {
+      if (inCodeBlock) {
+        if (MarkdownUtils.isCodeFenceCloser(trimmed)) {
           blocks.push({
             type: 'code',
             content: codeLines.join('\n'),
@@ -197,14 +198,14 @@ export class MarkdownUtils {
           codeLanguage = ''
           inCodeBlock = false
         } else {
-          flushAll()
-          inCodeBlock = true
-          codeLanguage = trimmed.slice(3).trim()
+          codeLines.push(line)
         }
         continue
       }
-      if (inCodeBlock) {
-        codeLines.push(line)
+      if (MarkdownUtils.isCodeFenceOpener(trimmed)) {
+        flushAll()
+        inCodeBlock = true
+        codeLanguage = MarkdownUtils.codeFenceLanguage(trimmed)
         continue
       }
       if (inMathBlock) {
@@ -410,7 +411,11 @@ export class MarkdownUtils {
         continue
       }
       if (nextToken.type === 'inline_code') {
-        const closingIndex = content.indexOf('`', nextToken.index + 1)
+        const isTripleFence = nextToken.marker === '```'
+        const markerLength = isTripleFence ? 3 : 1
+        const closingIndex = isTripleFence
+          ? content.indexOf('```', nextToken.index + 3)
+          : content.indexOf('`', nextToken.index + 1)
         if (closingIndex === -1) {
           MarkdownUtils.pushInline(inlines, {
             type: 'text',
@@ -419,12 +424,22 @@ export class MarkdownUtils {
           })
           break
         }
+        const codeContent = content.slice(nextToken.index + markerLength, closingIndex)
+        if (isTripleFence && codeContent.includes('\n')) {
+          MarkdownUtils.pushInline(inlines, {
+            type: 'text',
+            content: content.slice(nextToken.index, nextToken.index + markerLength),
+            href: ''
+          })
+          cursor = nextToken.index + markerLength
+          continue
+        }
         MarkdownUtils.pushInline(inlines, {
           type: 'inline_code',
-          content: content.slice(nextToken.index + 1, closingIndex),
+          content: codeContent,
           href: ''
         })
-        cursor = closingIndex + 1
+        cursor = closingIndex + markerLength
         continue
       }
       if (nextToken.type === 'link') {
@@ -491,6 +506,7 @@ export class MarkdownUtils {
       }
     }
 
+    updateCandidate('inline_code', content.indexOf('```', from), '```')
     updateCandidate('inline_code', content.indexOf('`', from), '`')
     updateCandidate('math_inline', content.indexOf('\\(', from), '\\(')
     const dollarIndex = MarkdownUtils.findInlineDollarStart(content, from)
@@ -569,8 +585,23 @@ export class MarkdownUtils {
     return -1
   }
 
+  /** 多行代码块开围栏：独立一行且仅为 ``` 或 ```语言标识。 */
+  static isCodeFenceOpener(trimmed: string): boolean {
+    return /^```\w*$/.test(trimmed)
+  }
+
+  /** 多行代码块闭围栏：独立一行且仅为 ```。 */
+  static isCodeFenceCloser(trimmed: string): boolean {
+    return trimmed === '```'
+  }
+
+  static codeFenceLanguage(trimmed: string): string {
+    const match = trimmed.match(/^```(\w*)$/)
+    return match?.[1] ?? ''
+  }
+
   private static containsInlineMarkers(content: string): boolean {
-    return content.includes('`') || content.includes('[') || content.includes('*') || content.includes('_')
+    return content.includes('`') || content.includes('```') || content.includes('[') || content.includes('*') || content.includes('_')
       || content.includes('~') || content.includes('$') || content.includes('\\(')
   }
 

@@ -189,6 +189,26 @@
       "value": "正在加载…"
     },
     {
+      "name": "recycle_bin_clear_all_title",
+      "value": "清空回收站"
+    },
+    {
+      "name": "recycle_bin_clear_all_message",
+      "value": "是否清理回收站中的所有笔记？"
+    },
+    {
+      "name": "recycle_bin_clear_all_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "recycle_bin_clear_all_restore",
+      "value": "全部还原"
+    },
+    {
+      "name": "recycle_bin_clear_all_delete",
+      "value": "全部删除"
+    },
+    {
       "name": "permission_internet_reason",
       "value": "用于连接用户配置的 WebDAV 服务进行笔记同步"
     },

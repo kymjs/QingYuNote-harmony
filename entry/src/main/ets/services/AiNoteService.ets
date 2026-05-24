@@ -1,0 +1,222 @@
+import { http } from '@kit.NetworkKit'
+import { AiNotePrompt } from './AiNotePrompt'
+import { AiTagService } from './AiTagService'
+import { NoteApiClient } from './NoteApiClient'
+
+interface ChatMessage {
+  role: string
+  content: string
+}
+
+interface ChatCompletionRequest {
+  model: string
+  temperature: number
+  max_tokens: number
+  reasoning_split: boolean
+  messages: ChatMessage[]
+}
+
+interface MiniMaxAssistantPayload {
+  content: string
+  reasoningContent: string
+  finishReason: string
+}
+
+export class AiNoteService {
+  private static instance: AiNoteService = new AiNoteService()
+
+  static getInstance(): AiNoteService {
+    return AiNoteService.instance
+  }
+
+  async optimizeContent(content: string): Promise<string> {
+    const trimmed = content.trim()
+    if (trimmed.length === 0) {
+      throw new Error('笔记正文为空，无法优化')
+    }
+    return AiNoteService.chatPlainText(
+      AiNotePrompt.OPTIMIZE_SYSTEM,
+      AiNotePrompt.buildOptimizeUserMessage(trimmed),
+      0.3,
+      8192
+    )
+  }
+
+  async summarizeLink(url: string): Promise<string> {
+    const link = url.trim()
+    if (link.length === 0) {
+      throw new Error('请输入有效链接')
+    }
+    const excerpt = await AiNoteService.fetchPageExcerpt(link)
+    return AiNoteService.chatPlainText(
+      AiNotePrompt.LINK_SUMMARY_SYSTEM,
+      AiNotePrompt.buildLinkSummaryUserMessage(link, excerpt),
+      0.4,
+      1024
+    )
+  }
+
+  private static async chatPlainText(
+    system: string,
+    user: string,
+    temperature: number,
+    maxTokens: number
+  ): Promise<string> {
+    const config = await NoteApiClient.getInstance().fetchAiTagConfig()
+    if (config === null) {
+      throw new Error('未登录或服务不可用')
+    }
+    const base = config.base_url.replace(/\/+$/, '')
+    const url = `${base}/chat/completions`
+    const messages: ChatMessage[] = [
+      { role: 'system', content: system },
+      { role: 'user', content: user }
+    ]
+    const body: ChatCompletionRequest = {
+      model: config.model,
+      temperature: temperature,
+      max_tokens: maxTokens,
+      reasoning_split: true,
+      messages: messages
+    }
+    const req = http.createHttp()
+    try {
+      const resp = await req.request(url, {
+        method: http.RequestMethod.POST,
+        header: {
+          'Authorization': `Bearer ${config.token_plan_key}`,
+          'Content-Type': 'application/json; charset=utf-8'
+        },
+        extraData: JSON.stringify(body),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 20000,
+        readTimeout: 90000
+      })
+      if (resp.responseCode < 200 || resp.responseCode >= 300) {
+        const text = (resp.result as string) ?? ''
+        throw new Error(`AI 请求失败：HTTP ${resp.responseCode} ${text.slice(0, 200)}`)
+      }
+      const text = (resp.result as string) ?? ''
+      let obj: Object | null = null
+      try {
+        obj = JSON.parse(text) as Object
+      } catch (_) {
+        throw new Error('AI 响应解析失败')
+      }
+      AiNoteService.ensureMiniMaxResponseOk(obj, text)
+      const assistant = AiNoteService.extractAssistantPayload(obj)
+      let bodyText = AiTagService.extractAnswerBody(assistant.content)
+      if (bodyText.length === 0 && assistant.reasoningContent.length > 0) {
+        bodyText = AiTagService.extractAnswerBody(assistant.reasoningContent)
+      }
+      const result = bodyText.trim()
+      if (result.length === 0) {
+        throw new Error('AI 未返回有效内容')
+      }
+      return result
+    } finally {
+      req.destroy()
+    }
+  }
+
+  private static async fetchPageExcerpt(linkUrl: string): Promise<string> {
+    const req = http.createHttp()
+    try {
+      const resp = await req.request(linkUrl, {
+        method: http.RequestMethod.GET,
+        header: {
+          'User-Agent': 'QingyuNotes/1.0'
+        },
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 12000,
+        readTimeout: 20000
+      })
+      if (resp.responseCode < 200 || resp.responseCode >= 400) {
+        return ''
+      }
+      const html = (resp.result as string) ?? ''
+      if (html.length === 0) {
+        return ''
+      }
+      let text = html
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      const runes = Array.from(text)
+      if (runes.length > 6000) {
+        text = runes.slice(0, 6000).join('')
+      }
+      return text
+    } catch (_) {
+      return ''
+    } finally {
+      req.destroy()
+    }
+  }
+
+  private static ensureMiniMaxResponseOk(data: Object, rawText: string): void {
+    const record = data as Record<string, Object>
+    const baseResp = record['base_resp']
+    if (baseResp !== undefined && baseResp !== null) {
+      const br = baseResp as Record<string, Object>
+      const code = Number(br['status_code'] ?? 0)
+      if (code !== 0) {
+        const msg = `${br['status_msg'] ?? ''}`
+        throw new Error(`MiniMax 接口错误(${code})：${msg}`)
+      }
+    }
+    if (record['error'] !== undefined && record['error'] !== null) {
+      throw new Error(`MiniMax 接口错误：${JSON.stringify(record['error']).slice(0, 200)}`)
+    }
+    const choices = record['choices']
+    if (!Array.isArray(choices) || choices.length === 0) {
+      throw new Error(`MiniMax 响应无 choices，摘要：${rawText.slice(0, 280)}`)
+    }
+  }
+
+  private static extractAssistantPayload(data: Object): MiniMaxAssistantPayload {
+    const empty: MiniMaxAssistantPayload = { content: '', reasoningContent: '', finishReason: '' }
+    const record = data as Record<string, Object>
+    const choices = record['choices']
+    if (!Array.isArray(choices) || choices.length === 0) {
+      return empty
+    }
+    const first = choices[0] as Record<string, Object>
+    const finishReason = `${first['finish_reason'] ?? ''}`
+    const message = first['message'] as Record<string, Object> | undefined
+    if (message === undefined) {
+      return { content: '', reasoningContent: '', finishReason: finishReason }
+    }
+    return {
+      content: AiNoteService.normalizeMessageContent(message['content']),
+      reasoningContent: AiNoteService.normalizeMessageContent(message['reasoning_content']),
+      finishReason: finishReason
+    }
+  }
+
+  private static normalizeMessageContent(content: Object | undefined): string {
+    if (content === undefined || content === null) {
+      return ''
+    }
+    if (typeof content === 'string') {
+      return content
+    }
+    if (Array.isArray(content)) {
+      let buf = ''
+      const parts = content as Object[]
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]
+        if (typeof part === 'object' && part !== null) {
+          const p = part as Record<string, Object>
+          if (typeof p['text'] === 'string') {
+            buf += p['text'] as string
+          }
+        }
+      }
+      return buf
+    }
+    return `${content}`
+  }
+}

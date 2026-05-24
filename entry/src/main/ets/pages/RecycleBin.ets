@@ -11,6 +11,19 @@ struct RecycleBinPage {
   @State pageWidth: number = 360
   /** 还原/删除后递增，强制 ForEach 与列表数据源同步刷新 */
   @State listRevision: number = 0
+  private loadingCount: number = 0
+
+  private beginLoading(): void {
+    this.loadingCount += 1
+    this.loading = this.loadingCount > 0
+  }
+
+  private endLoading(): void {
+    if (this.loadingCount > 0) {
+      this.loadingCount -= 1
+    }
+    this.loading = this.loadingCount > 0
+  }
 
   aboutToAppear(): void {
     void this.loadList(true)
@@ -20,10 +33,10 @@ struct RecycleBinPage {
     void this.loadList(true)
   }
 
-  /** @param showLoading 为 false 时仅更新列表，不用全屏 Loading，避免侧滑操作后界面状态不刷新 */
-  private async loadList(showLoading: boolean = true): Promise<void> {
-    if (showLoading) {
-      this.loading = true
+  /** @param trackLoading 为 true 时计入全屏 Loading；读取/还原/删除任一进行中均保持 Loading。 */
+  private async loadList(trackLoading: boolean = true): Promise<void> {
+    if (trackLoading) {
+      this.beginLoading()
     }
     try {
       const context = AppContextHolder.tryGetContext()
@@ -39,8 +52,8 @@ struct RecycleBinPage {
       this.notes = [...result.notes]
       this.listRevision += 1
     } finally {
-      if (showLoading) {
-        this.loading = false
+      if (trackLoading) {
+        this.endLoading()
       }
     }
   }
@@ -64,22 +77,92 @@ struct RecycleBinPage {
   }
 
   private async handleRestore(note: Note): Promise<void> {
+    this.beginLoading()
     try {
       await NoteRepository.getInstance().restoreRecycleBinNote(note.id)
       await this.reloadRecycleListAfterMutation()
     } catch (error) {
       console.error(JSON.stringify(error))
       this.showUserMessage('还原失败，请稍后重试')
+    } finally {
+      this.endLoading()
     }
   }
 
   private async handlePermanentDelete(note: Note): Promise<void> {
+    this.beginLoading()
     try {
       await NoteRepository.getInstance().setRecycleBinNoteDeletedTimePermanent(note.id)
       await this.reloadRecycleListAfterMutation()
     } catch (error) {
       console.error(JSON.stringify(error))
       this.showUserMessage('删除失败，请稍后重试')
+    } finally {
+      this.endLoading()
+    }
+  }
+
+  private async handleRestoreAll(): Promise<void> {
+    const ids = this.notes.map((note: Note) => note.id)
+    if (ids.length === 0) {
+      return
+    }
+    this.beginLoading()
+    try {
+      for (const id of ids) {
+        await NoteRepository.getInstance().restoreRecycleBinNote(id)
+      }
+      await this.reloadRecycleListAfterMutation()
+    } catch (error) {
+      console.error(JSON.stringify(error))
+      this.showUserMessage('还原失败，请稍后重试')
+      await this.reloadRecycleListAfterMutation()
+    } finally {
+      this.endLoading()
+    }
+  }
+
+  private async handlePermanentDeleteAll(): Promise<void> {
+    const ids = this.notes.map((note: Note) => note.id)
+    if (ids.length === 0) {
+      return
+    }
+    this.beginLoading()
+    try {
+      for (const id of ids) {
+        await NoteRepository.getInstance().setRecycleBinNoteDeletedTimePermanent(id)
+      }
+      await this.reloadRecycleListAfterMutation()
+    } catch (error) {
+      console.error(JSON.stringify(error))
+      this.showUserMessage('删除失败，请稍后重试')
+      await this.reloadRecycleListAfterMutation()
+    } finally {
+      this.endLoading()
+    }
+  }
+
+  private async showClearAllConfirmDialog(): Promise<void> {
+    if (this.notes.length === 0) {
+      return
+    }
+    try {
+      const result = await this.getUIContext().getPromptAction().showDialog({
+        title: $r('app.string.recycle_bin_clear_all_title'),
+        message: $r('app.string.recycle_bin_clear_all_message'),
+        buttons: [
+          { text: $r('app.string.recycle_bin_clear_all_cancel'), color: '#8E8E93' },
+          { text: $r('app.string.recycle_bin_clear_all_restore'), color: '#007AFF' },
+          { text: $r('app.string.recycle_bin_clear_all_delete'), color: '#FF3B30' }
+        ]
+      })
+      if (result.index === 1) {
+        await this.handleRestoreAll()
+      } else if (result.index === 2) {
+        await this.handlePermanentDeleteAll()
+      }
+    } catch (error) {
+      console.error(JSON.stringify(error))
     }
   }
 
@@ -120,6 +203,27 @@ struct RecycleBinPage {
       .height('100%')
       .alignItems(VerticalAlign.Center)
       .justifyContent(FlexAlign.Start)
+
+      Row() {
+        Image($r('app.media.ic_recycle_clear_all'))
+          .width($r('app.float.toolbar_back_icon_size'))
+          .height($r('app.float.toolbar_back_icon_size'))
+          .objectFit(ImageFit.Contain)
+          .opacity(this.notes.length === 0 ? 0.35 : 1)
+      }
+      .height('100%')
+      .padding({
+        left: $r('app.float.toolbar_icon_button_padding_h'),
+        right: $r('app.float.toolbar_icon_button_padding_h')
+      })
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .backgroundColor($r('app.color.surface_muted'))
+      .borderRadius($r('app.float.pill_radius'))
+      .enabled(!this.loading && this.notes.length > 0)
+      .onClick(() => {
+        void this.showClearAllConfirmDialog()
+      })
     }
     .width('100%')
     .height($r('app.float.toolbar_height'))

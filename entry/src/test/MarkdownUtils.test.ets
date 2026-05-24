@@ -32,6 +32,21 @@ export default function markdownUtilsTest() {
       expect(blocks[1].type).assertEqual('divider')
     })
 
+    it('should parse inline triple-backtick code in paragraph', 0, () => {
+      const blocks = MarkdownUtils.parseBlocks('文本 ```inline code``` 结束')
+      expect(blocks.length).assertEqual(1)
+      expect(blocks[0].type).assertEqual('paragraph')
+      expect(blocks[0].inlines.some((i) => i.type === 'inline_code' && i.content === 'inline code')).assertTrue()
+    })
+
+    it('should not treat same-line inline fence as multiline opener', 0, () => {
+      const blocks = MarkdownUtils.parseBlocks('```inline only```')
+      expect(blocks.length).assertEqual(1)
+      expect(blocks[0].type).assertEqual('paragraph')
+      expect(blocks[0].inlines[0].type).assertEqual('inline_code')
+      expect(blocks[0].inlines[0].content).assertEqual('inline only')
+    })
+
     it('should parse strikethrough inline', 0, () => {
       const blocks = MarkdownUtils.parseBlocks('~~删除线~~')
       expect(blocks.length).assertEqual(1)

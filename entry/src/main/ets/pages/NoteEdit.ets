@@ -11,6 +11,10 @@ import {
   buildEditorLinkInsertDialogContent,
   type EditorLinkInsertDialogParams
 } from '../dialogs/EditorLinkInsertDialog'
+import {
+  buildEditorAiLinkExtractDialogContent,
+  type EditorAiLinkExtractDialogParams
+} from '../dialogs/EditorAiLinkExtractDialog'
 import type { Note } from '../common/model/Note'
 import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
@@ -27,6 +31,8 @@ import { NoteEditPreviewPane } from './NoteEditPreviewPane'
 import { NoteEditMarkdownBlocksView } from './NoteEditMarkdownBlocksView'
 import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
 import { AiTagService } from '../services/AiTagService'
+import { AiNoteService } from '../services/AiNoteService'
+import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { NoteFolderTree, type FolderSidebarRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 
 interface NoteEditParams {
@@ -54,6 +60,7 @@ struct NoteEdit {
   @State saveStatus: string = '未保存'
   @State previewMode: string = 'split'
   @State pageWidth: number = 360
+  @State pageHeight: number = 780
   @State lastSavedAt: number = 0
   @State noteCreatedAt: number = 0
   @State shareProfile: ProfileBody | null = null
@@ -64,6 +71,11 @@ struct NoteEdit {
   @State tagPool: string[] = []
   @State tagMenuVisible: boolean = false
   @State aiTagCreating: boolean = false
+  @State aiFeatureEnabled: boolean = false
+  @State aiMenuVisible: boolean = false
+  @State aiNoteWorking: boolean = false
+  @State aiUndoAvailable: boolean = false
+  private aiUndoBaselineContent: string | null = null
   @State parentId: string = ''
   @State allNotes: Note[] = []
   @State expandedFolderIds: string[] = []
@@ -154,6 +166,7 @@ struct NoteEdit {
     void this.refreshAllNotes()
     void this.loadQuickActionBarPref()
     void this.loadFolderModePref()
+    void this.loadAiFeatureConfig()
     void this.initKeyboardAvoidArea()
   }
 
@@ -190,6 +203,91 @@ struct NoteEdit {
     if (!this.folderModeEnabled) {
       this.folderMovePopupVisible = false
     }
+  }
+
+  private async loadAiFeatureConfig(): Promise<void> {
+    const filesDir = this.filesDirCache.length > 0
+      ? this.filesDirCache
+      : (this.obtainUiAbilityContext()?.filesDir ?? '')
+    this.aiFeatureEnabled = await RemoteAppConfigService.readAiConfigFromCache(filesDir)
+  }
+
+  private shouldShowMobileAiBar(): boolean {
+    return !this.isSplitMode() &&
+      this.previewMode === 'edit' &&
+      this.aiFeatureEnabled &&
+      hasEditorTitleOrBody(this.title, this.content)
+  }
+
+  private static readonly FLOAT_MENU_WIDTH: number = 154
+  private static readonly FLOAT_MENU_GAP: number = 8
+  private static readonly AI_MENU_HEIGHT: number = 96
+  private static readonly TAG_MENU_ITEM_HEIGHT: number = 44
+  private static readonly TAG_MENU_MAX_VISIBLE_ITEMS: number = 5
+
+  /** 悬浮按钮在屏幕上半部时菜单向下展开，否则向上展开。 */
+  private floatMenuShowBelow(): boolean {
+    const buttonCenterY = this.tagBarY + this.tagBarHeight / 2
+    const screenHeight = this.pageHeight > 0 ? this.pageHeight : 780
+    return buttonCenterY < screenHeight / 2
+  }
+
+  private floatMenuPosX(menuWidth: number = NoteEdit.FLOAT_MENU_WIDTH): number {
+    let x = this.tagBarX + this.tagBarWidth - menuWidth
+    if (x < 8) {
+      x = 8
+    }
+    const maxX = this.pageWidth - menuWidth - 8
+    if (x > maxX) {
+      x = maxX
+    }
+    return x
+  }
+
+  private tagMenuEstimatedHeight(): number {
+    const visibleCount = this.tagPool.length === 0
+      ? 1
+      : Math.min(this.tagPool.length, NoteEdit.TAG_MENU_MAX_VISIBLE_ITEMS)
+    const listHeight = visibleCount * NoteEdit.TAG_MENU_ITEM_HEIGHT
+    return listHeight + 120
+  }
+
+  private tagMenuPosY(): number {
+    const menuHeight = this.tagMenuEstimatedHeight()
+    if (this.floatMenuShowBelow()) {
+      return this.tagBarY + this.tagBarHeight + NoteEdit.FLOAT_MENU_GAP
+    }
+    return this.tagBarY - menuHeight - NoteEdit.FLOAT_MENU_GAP
+  }
+
+  private aiMenuPosY(): number {
+    let menuHeight = NoteEdit.AI_MENU_HEIGHT
+    if (this.aiUndoAvailable) {
+      menuHeight += 44
+    }
+    if (this.floatMenuShowBelow()) {
+      return this.tagBarY + this.tagBarHeight + NoteEdit.FLOAT_MENU_GAP
+    }
+    return this.tagBarY - menuHeight - NoteEdit.FLOAT_MENU_GAP
+  }
+
+  private captureAiUndoBaseline(contentBeforeChange: string): void {
+    if (this.aiUndoBaselineContent === null) {
+      this.aiUndoBaselineContent = contentBeforeChange
+      this.aiUndoAvailable = true
+    }
+  }
+
+  private onAiUndo(): void {
+    if (this.aiNoteWorking || this.aiUndoBaselineContent === null) {
+      return
+    }
+    this.content = this.aiUndoBaselineContent
+    this.aiUndoBaselineContent = null
+    this.aiUndoAvailable = false
+    this.aiMenuVisible = false
+    this.handleContentChange()
+    this.showPreviewMessage('已撤回 AI 修改')
   }
 
   private saveStatusBarClickable(): boolean {
@@ -389,6 +487,10 @@ struct NoteEdit {
     this.captureContentCaretFromSelection()
     if (action === 'link') {
       this.openLinkInsertDialog()
+      return
+    }
+    if (action === 'image') {
+      void this.insertImage()
       return
     }
     const caret = this.currentContentCaret()
@@ -593,6 +695,8 @@ struct NoteEdit {
   }
 
   private async loadNote(): Promise<void> {
+    this.aiUndoBaselineContent = null
+    this.aiUndoAvailable = false
     await NoteRepository.getInstance().init()
     if (!this.noteId) {
       this.previewMode = this.pageWidth >= 600 ? 'split' : 'edit'
@@ -1060,8 +1164,10 @@ struct NoteEdit {
     this.previewMode = mode
     if (mode === 'preview') {
       this.preparePreviewForCurrentMode(this.content, true)
+      this.aiMenuVisible = false
     } else if (mode === 'edit') {
       this.tagMenuVisible = false
+      this.aiMenuVisible = false
       this.folderMovePopupVisible = false
       this.stopPathCaptionMarquee()
     }
@@ -1911,12 +2017,270 @@ struct NoteEdit {
     })
   }
 
-  /**
-   * 移动端预览模式下的标签栏 Builder：
-   * - 标签图标 + 下拉箭头 + 当前标签 Chips（无标签时显示"标签"）
-   * - 仅当 `hasEditorTitleOrBody` 为 true 时展示
-   * - 悬浮窗形式，支持手指拖动到屏幕任意位置
-   */
+  @Builder
+  buildAiDropdown() {
+    Column() {
+      Row() {
+        if (this.aiNoteWorking) {
+          LoadingProgress()
+            .width(20)
+            .height(20)
+            .color($r('app.color.accent'))
+        } else {
+          SymbolGlyph($r('sys.symbol.wand_and_stars'))
+            .fontSize(16)
+            .fontColor([$r('app.color.accent')])
+        }
+        Text(this.aiNoteWorking ? 'AI 处理中…' : 'AI优化语句')
+          .fontSize($r('app.float.body_font_size'))
+          .fontColor($r('app.color.accent'))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+      .onClick(() => {
+        if (!this.aiNoteWorking) {
+          void this.onAiOptimizeContent()
+        }
+      })
+      Divider()
+        .color($r('app.color.card_border'))
+        .strokeWidth(1)
+      Row() {
+        SymbolGlyph($r('sys.symbol.link'))
+          .fontSize(16)
+          .fontColor([$r('app.color.accent')])
+        Text('AI提取链接')
+          .fontSize($r('app.float.body_font_size'))
+          .fontColor($r('app.color.accent'))
+          .margin({ left: 8 })
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+      .onClick(() => {
+        if (!this.aiNoteWorking) {
+          this.aiMenuVisible = false
+          this.openAiLinkExtractDialog()
+        }
+      })
+      if (this.aiUndoAvailable) {
+        Divider()
+          .color($r('app.color.card_border'))
+          .strokeWidth(1)
+        Row() {
+          SymbolGlyph($r('sys.symbol.undo'))
+            .fontSize(16)
+            .fontColor([$r('app.color.accent')])
+          Text('撤回AI修改')
+            .fontSize($r('app.float.body_font_size'))
+            .fontColor($r('app.color.accent'))
+            .margin({ left: 8 })
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+        .onClick(() => {
+          if (!this.aiNoteWorking) {
+            this.onAiUndo()
+          }
+        })
+      }
+    }
+    .width(154)
+    .backgroundColor($r('app.color.card_background'))
+    .borderRadius(12)
+    .border({ width: 1, color: $r('app.color.card_border') })
+    .shadow({
+      radius: 12,
+      color: $r('app.color.shadow_color'),
+      offsetX: 0,
+      offsetY: 4
+    })
+  }
+
+  private async onAiOptimizeContent(): Promise<void> {
+    if (this.aiNoteWorking) {
+      return
+    }
+    if (this.content.trim().length === 0) {
+      this.showPreviewMessage('笔记正文为空，无法优化')
+      return
+    }
+    this.aiNoteWorking = true
+    this.aiMenuVisible = false
+    const before = this.content
+    try {
+      const optimized = await AiNoteService.getInstance().optimizeContent(this.content)
+      this.captureAiUndoBaseline(before)
+      this.content = optimized
+      this.handleContentChange()
+      this.showPreviewMessage('AI 已优化笔记正文')
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'AI 优化失败，请稍后重试'
+      this.showPreviewMessage(msg)
+      Logger.error('NoteEdit', `onAiOptimizeContent failed: ${msg}`)
+    } finally {
+      this.aiNoteWorking = false
+    }
+  }
+
+  private openAiLinkExtractDialog(): void {
+    const ui = this.getUIContext()
+    let holder: ComponentContent<EditorAiLinkExtractDialogParams> | undefined = undefined
+    const params: EditorAiLinkExtractDialogParams = {
+      onCancel: (): void => {
+        if (holder !== undefined) {
+          try {
+            ui.getPromptAction().closeCustomDialog(holder)
+          } catch (_) {
+            // ignore
+          }
+        }
+      },
+      onConfirm: (url: string): void => {
+        if (holder !== undefined) {
+          try {
+            ui.getPromptAction().closeCustomDialog(holder)
+          } catch (_) {
+            // ignore
+          }
+        }
+        void this.onAiExtractLink(url)
+      }
+    }
+    holder = new ComponentContent(ui, wrapBuilder(buildEditorAiLinkExtractDialogContent), params)
+    try {
+      ui.getPromptAction().openCustomDialog(holder, {
+        alignment: DialogAlignment.Center,
+        autoCancel: false
+      })
+    } catch (error) {
+      Logger.warn('NoteEdit', `openAiLinkExtractDialog: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private async onAiExtractLink(url: string): Promise<void> {
+    if (this.aiNoteWorking || url.trim().length === 0) {
+      return
+    }
+    this.aiNoteWorking = true
+    this.aiMenuVisible = false
+    const before = this.content
+    try {
+      const summary = await AiNoteService.getInstance().summarizeLink(url.trim())
+      this.captureAiUndoBaseline(before)
+      const existing = this.content
+      const separator = existing.trim().length === 0 ? '' : '\n\n'
+      this.content = `${existing}${separator}${summary}`
+      this.handleContentChange()
+      this.showPreviewMessage('AI 已生成链接摘要并写入正文')
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'AI 提取链接失败，请稍后重试'
+      this.showPreviewMessage(msg)
+      Logger.error('NoteEdit', `onAiExtractLink failed: ${msg}`)
+    } finally {
+      this.aiNoteWorking = false
+    }
+  }
+
+  @Builder
+  buildDraggableAiBar() {
+    Stack() {
+      Row({ space: 4 }) {
+        Row() {
+          Stack({ alignContent: Alignment.Center }) {
+            Image($r('app.media.ic_ai_float'))
+              .width(24)
+              .height(24)
+              .objectFit(ImageFit.Contain)
+              .opacity(this.aiNoteWorking ? 0.35 : 1)
+            if (this.aiNoteWorking) {
+              LoadingProgress()
+                .width(18)
+                .height(18)
+                .color($r('app.color.accent'))
+            }
+          }
+        }
+        .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+        .backgroundColor($r('app.color.surface_muted'))
+        .borderRadius(18)
+        .onClick(() => {
+          if (this.aiNoteWorking) {
+            return
+          }
+          this.aiMenuVisible = !this.aiMenuVisible
+          if (this.aiMenuVisible) {
+            this.tagMenuVisible = false
+          }
+        })
+        .shadow({
+          radius: 18,
+          color: '#2A000000',
+          offsetX: 0,
+          offsetY: 3
+        })
+      }
+      .onAreaChange((_, currentArea: Area) => {
+        this.tagBarWidth = Number.parseFloat(`${currentArea.width}`) || 120
+        this.tagBarHeight = Number.parseFloat(`${currentArea.height}`) || 32
+        if (!this.tagBarInitialized) {
+          const cardPadding = 18
+          const toolbarHeight = 69
+          const safeAreaTop = 44
+          const defaultRight = 8
+          this.tagBarX = this.pageWidth - this.tagBarWidth - cardPadding - defaultRight
+          this.tagBarY = toolbarHeight + safeAreaTop - 1.5 * this.tagBarHeight
+          this.tagBarInitialized = true
+        }
+      })
+      .position({ x: this.tagBarX, y: this.tagBarY })
+      .gesture(
+        PanGesture()
+          .onActionStart((event: GestureEvent) => {
+            this.lastPanOffsetX = event.offsetX
+            this.lastPanOffsetY = event.offsetY
+          })
+          .onActionUpdate((event: GestureEvent) => {
+            const safeAreaTop = 44
+            const safeAreaBottom = 34
+            const screenHeight = this.pageHeight > 0 ? this.pageHeight : 780
+            const deltaX = event.offsetX - this.lastPanOffsetX
+            const deltaY = event.offsetY - this.lastPanOffsetY
+            this.lastPanOffsetX = event.offsetX
+            this.lastPanOffsetY = event.offsetY
+            let newX = this.tagBarX + deltaX
+            let newY = this.tagBarY + deltaY
+            if (newX < 0) {
+              newX = 0
+            }
+            if (newX > this.pageWidth - this.tagBarWidth) {
+              newX = this.pageWidth - this.tagBarWidth
+            }
+            if (newY < safeAreaTop) {
+              newY = safeAreaTop
+            }
+            if (newY > screenHeight - this.tagBarHeight - safeAreaBottom) {
+              newY = screenHeight - this.tagBarHeight - safeAreaBottom
+            }
+            this.tagBarX = newX
+            this.tagBarY = newY
+          })
+          .onActionEnd((_: GestureEvent) => {
+            this.lastPanOffsetX = 0
+            this.lastPanOffsetY = 0
+          })
+      )
+
+      if (this.aiMenuVisible) {
+        Column() {
+          this.buildAiDropdown()
+        }
+        .position({ x: this.floatMenuPosX(), y: this.aiMenuPosY() })
+        .zIndex(999)
+      }
+    }
+  }
+
   /**
    * 供 NoteEditPreviewPane 的 @BuilderParam 使用。
    * 传入子组件时必须用箭头函数包装（`(): void => { this.noteEditPreviewTagBarSlot() }`），
@@ -1962,6 +2326,9 @@ struct NoteEdit {
       .onClick(() => {
         void this.refreshTagPool()
         this.tagMenuVisible = !this.tagMenuVisible
+        if (this.tagMenuVisible) {
+          this.aiMenuVisible = false
+        }
       })
     }
     .shadow({
@@ -2008,6 +2375,9 @@ struct NoteEdit {
         .onClick(() => {
           void this.refreshTagPool()
           this.tagMenuVisible = !this.tagMenuVisible
+          if (this.tagMenuVisible) {
+            this.aiMenuVisible = false
+          }
         })
         .shadow({
           radius: 18,
@@ -2040,7 +2410,7 @@ struct NoteEdit {
           .onActionUpdate((event: GestureEvent) => {
             const safeAreaTop = 44
             const safeAreaBottom = 34
-            const screenHeight = 780
+            const screenHeight = this.pageHeight > 0 ? this.pageHeight : 780
             // 计算增量：当前偏移 - 上次偏移
             const deltaX = event.offsetX - this.lastPanOffsetX
             const deltaY = event.offsetY - this.lastPanOffsetY
@@ -2068,6 +2438,14 @@ struct NoteEdit {
             this.lastPanOffsetY = 0
           })
       )
+
+      if (this.tagMenuVisible) {
+        Column() {
+          this.buildTagDropdown()
+        }
+        .position({ x: this.floatMenuPosX(), y: this.tagMenuPosY() })
+        .zIndex(999)
+      }
     }
   }
 
@@ -2172,7 +2550,7 @@ struct NoteEdit {
           .alignItems(HorizontalAlign.Start)
           .padding({ left: 8, right: 8 })
 
-          if (this.isSplitMode()) {
+          if (this.isSplitMode() && !this.quickActionBarEnabled) {
             Row() {
               Text('图')
                 .fontSize(16)
@@ -2214,15 +2592,17 @@ struct NoteEdit {
                   .onClick(() => {
                     this.switchMode('preview')
                   })
-                Image($r('app.media.ic_image'))
-                  .width(30)
-                  .height(30)
-                  .margin({ right: 5, left: 5 })
-                  .padding(3)
-                  .fillColor(Color.White)
-                  .onClick(() => {
-                    void this.insertImage()
-                  })
+                if (!this.quickActionBarEnabled) {
+                  Image($r('app.media.ic_image'))
+                    .width(30)
+                    .height(30)
+                    .margin({ right: 5, left: 5 })
+                    .padding(3)
+                    .fillColor(Color.White)
+                    .onClick(() => {
+                      void this.insertImage()
+                    })
+                }
               }
               Image($r('app.media.ic_share'))
                 .width(30)
@@ -2366,14 +2746,6 @@ struct NoteEdit {
       })
       .backgroundColor($r('app.color.app_background'))
 
-      if (this.tagMenuVisible) {
-        Column() {
-          this.buildTagDropdown()
-        }
-        .position({ x: this.pageWidth - 174, y: 69 })
-        .zIndex(999)
-      }
-
       if (this.folderMovePopupVisible && this.saveStatusBarClickable()) {
         Stack({ alignContent: Alignment.TopStart }) {
           Column()
@@ -2407,6 +2779,15 @@ struct NoteEdit {
           .zIndex(998)
       }
 
+      // 移动端编辑模式下的可拖动悬浮 AI 按钮（预览模式隐藏）
+      if (this.shouldShowMobileAiBar()) {
+        Stack() {
+          this.buildDraggableAiBar()
+        }
+          .position({ x: 0, y: 0 })
+          .zIndex(998)
+      }
+
       Scroll(this.shareScroller) {
         this.buildShareExportCard()
       }
@@ -2430,12 +2811,19 @@ struct NoteEdit {
       if (this.tagMenuVisible) {
         this.tagMenuVisible = false
       }
+      if (this.aiMenuVisible) {
+        this.aiMenuVisible = false
+      }
     })
     .onAreaChange((_, value) => {
       const nextWidth = Number.parseFloat(`${value.width}`) || 360
+      const nextHeight = Number.parseFloat(`${value.height}`) || 780
       const wasSplitMode = this.isSplitMode()
       if (Math.abs(this.pageWidth - nextWidth) >= 1) {
         this.pageWidth = nextWidth
+      }
+      if (Math.abs(this.pageHeight - nextHeight) >= 1) {
+        this.pageHeight = nextHeight
       }
       const nextSplitMode = this.isSplitMode()
       const nextPreviewMode = nextSplitMode ? 'split' : (this.previewMode === 'preview' ? 'preview' : 'edit')
