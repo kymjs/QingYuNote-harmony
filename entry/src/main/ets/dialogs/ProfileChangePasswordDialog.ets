@@ -106,7 +106,7 @@ export struct ProfileChangePasswordDialog {
     } else {
       body['new_password'] = n
     }
-    const err = await NoteApiClient.getInstance().patchProfile(body)
+    const err = await NoteApiClient.getInstance().patchProfile(body, false)
     this.saving = false
     if (err !== null) {
       this.showToast(this.mapPatchError(err))

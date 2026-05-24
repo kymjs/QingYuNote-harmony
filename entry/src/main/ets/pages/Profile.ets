@@ -700,7 +700,8 @@ struct Profile {
   private async patchSingleField(fieldKey: string, value: string): Promise<void> {
     const body: Record<string, Object> = {}
     body[fieldKey] = value.trim()
-    const err = await NoteApiClient.getInstance().patchProfile(body)
+    // 不在 patchProfile 内刷新缓存，由 reload() 统一拉取，避免与 void fetchProfile 并发。
+    const err = await NoteApiClient.getInstance().patchProfile(body, false)
     if (err !== null) {
       this.showToast(this.mapErr(err))
       return
