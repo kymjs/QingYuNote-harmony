@@ -4,6 +4,8 @@ import type { SyncPolicy, WebDAVConfig, WebDAVProvider } from '../common/model/N
 import { util } from '@kit.ArkTS'
 import { Logger } from '../common/utils/Logger'
 import { buildQingyuCloudWebDavConfig } from './QingyuCloudConfigHelper'
+import { NoteSettingsService } from './NoteSettingsService'
+import { NoteSettingsRemoteSync } from './NoteSettingsRemoteSync'
 
 const PREFERENCES_NAME = 'qingyu_preferences'
 const TAG_LIST_KEY = 'note_tags'
@@ -662,58 +664,52 @@ export class PreferencesService {
     }
   }
 
-  async getNoteQuickActionBarEnabled(): Promise<boolean> {
+  readLegacyNoteSettingsFlags(): { quick: boolean, folder: boolean } {
     try {
       const store = this.ensureStore()
-      return store.getSync(NOTE_QUICK_ACTION_BAR_ENABLED_KEY, true) as boolean
+      return {
+        quick: store.getSync(NOTE_QUICK_ACTION_BAR_ENABLED_KEY, true) as boolean,
+        folder: store.getSync(NOTE_FOLDER_MODE_ENABLED_KEY, false) as boolean
+      }
+    } catch (_) {
+      return { quick: true, folder: false }
+    }
+  }
+
+  async writeLegacyNoteSettingsFlags(quick: boolean, folder: boolean): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(NOTE_QUICK_ACTION_BAR_ENABLED_KEY, quick)
+      store.putSync(NOTE_FOLDER_MODE_ENABLED_KEY, folder)
+      await store.flush()
     } catch (error) {
       Logger.warn(
         'PreferencesService',
-        `getNoteQuickActionBarEnabled failed: ${this.describeError(error as Object)}`
+        `writeLegacyNoteSettingsFlags failed: ${this.describeError(error as Object)}`
       )
-      return true
     }
+  }
+
+  async getNoteQuickActionBarEnabled(): Promise<boolean> {
+    return await NoteSettingsService.getInstance().getNoteQuickActionBarEnabled()
   }
 
   async setNoteQuickActionBarEnabled(enabled: boolean): Promise<void> {
-    try {
-      const store = this.ensureStore()
-      store.putSync(NOTE_QUICK_ACTION_BAR_ENABLED_KEY, enabled)
-      await store.flush()
-    } catch (error) {
-      Logger.warn(
-        'PreferencesService',
-        `setNoteQuickActionBarEnabled failed: ${this.describeError(error as Object)}`
-      )
-      throw this.toRuntimeError(error as Object)
-    }
+    await NoteSettingsService.getInstance().setNoteQuickActionBarEnabled(enabled)
+    await NoteSettingsRemoteSync.getInstance().pushIfPossible(
+      await NoteSettingsService.getInstance().exportDocument()
+    )
   }
 
   async getNoteFolderModeEnabled(): Promise<boolean> {
-    try {
-      const store = this.ensureStore()
-      return store.getSync(NOTE_FOLDER_MODE_ENABLED_KEY, false) as boolean
-    } catch (error) {
-      Logger.warn(
-        'PreferencesService',
-        `getNoteFolderModeEnabled failed: ${this.describeError(error as Object)}`
-      )
-      return false
-    }
+    return await NoteSettingsService.getInstance().getNoteFolderModeEnabled()
   }
 
   async setNoteFolderModeEnabled(enabled: boolean): Promise<void> {
-    try {
-      const store = this.ensureStore()
-      store.putSync(NOTE_FOLDER_MODE_ENABLED_KEY, enabled)
-      await store.flush()
-    } catch (error) {
-      Logger.warn(
-        'PreferencesService',
-        `setNoteFolderModeEnabled failed: ${this.describeError(error as Object)}`
-      )
-      throw this.toRuntimeError(error as Object)
-    }
+    await NoteSettingsService.getInstance().setNoteFolderModeEnabled(enabled)
+    await NoteSettingsRemoteSync.getInstance().pushIfPossible(
+      await NoteSettingsService.getInstance().exportDocument()
+    )
   }
 
   async getHomeSidebarFilterMode(): Promise<'tag' | 'folder'> {

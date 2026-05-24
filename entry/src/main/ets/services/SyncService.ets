@@ -11,6 +11,7 @@ import { Logger } from '../common/utils/Logger'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { AppContextHolder } from './AppContextHolder'
 import { SyncConstants } from '../common/constants/SyncConstants'
+import { NoteSettingsRemoteSync } from './NoteSettingsRemoteSync'
 
 const TOMBSTONE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const FULL_SYNC_CONCURRENCY = 3
@@ -413,6 +414,7 @@ export class SyncService {
       Logger.warn('SyncService',
         `performFullSync ensureNotesDirectory failed (check WebDAVClient qingyu path + HEAD/PROPFIND diagnostics): ${this.describeError(error as Object)}`)
     }
+    await NoteSettingsRemoteSync.getInstance().syncWithRemote()
     const remoteIndexSnapshot = await WebDAVClient.getInstance().getRemoteIndexSnapshot()
     const remoteIndexEntries = remoteIndexSnapshot.noteEntries
     const permanentDeletedIds = remoteIndexSnapshot.permanentlyDeletedNoteIds

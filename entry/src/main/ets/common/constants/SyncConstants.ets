@@ -2,6 +2,8 @@
 export class SyncConstants {
   /** 同步目录根下元数据文件名，由服务端写失效日期，客户端仅合并三方标识字段。 */
   static readonly qingyuCloudMetaFile: string = '.qingyu-cloud.json'
+  /** 笔记设置页开关 JSON，与 Flutter `SyncConstants.noteSettingsFile` 一致。 */
+  static readonly noteSettingsFile: string = '.qingyu-note-settings.json'
   static readonly qingyuCloudFieldExpiresAt: string = 'expiresAt'
   static readonly qingyuCloudFieldPlatformUserId: string = 'platformUserId'
   /** 轻羽云未开通/过期时 `SyncService` 通过 EventHub 通知 UI 弹窗。 */

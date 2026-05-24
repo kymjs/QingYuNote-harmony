@@ -20,6 +20,7 @@ import { PathUtils } from '../common/utils/PathUtils'
 import { TimeUtils } from '../common/utils/TimeUtils'
 import { Logger } from '../common/utils/Logger'
 import { SyncConstants } from '../common/constants/SyncConstants'
+import { NoteSettingsDocument } from '../common/model/NoteSettingsDocument'
 interface HeaderOverrides {
   contentType?: string
   modifiedAt?: string
@@ -761,6 +762,47 @@ export class WebDAVClient {
     const config = await this.requireConfig()
     const directoryUrl = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
     return `${directoryUrl}${encodeURIComponent(WebDAVClient._remoteIndexFileName)}`
+  }
+
+  private async remoteNoteSettingsUrl(): Promise<string> {
+    const config = await this.requireConfig()
+    return PathUtils.joinRemotePathFileUrl(
+      config.baseUrl,
+      config.notesDir,
+      SyncConstants.noteSettingsFile
+    )
+  }
+
+  /** GET 远端笔记设置；404 返回 `null`。 */
+  async fetchNoteSettingsDocument(): Promise<NoteSettingsDocument | null> {
+    const response = await this.sendRequest(
+      await this.remoteNoteSettingsUrl(),
+      http.RequestMethod.GET
+    )
+    if (response.responseCode === 404) {
+      return null
+    }
+    if (response.responseCode >= 400) {
+      throw new Error(`Note settings download failed with status ${response.responseCode}`)
+    }
+    const rawBody = this.responseBodyToText(response.result).trim()
+    if (rawBody.length === 0) {
+      return null
+    }
+    const decoded = JSON.parse(rawBody) as Record<string, Object>
+    return NoteSettingsDocument.fromJsonRecord(decoded)
+  }
+
+  async uploadNoteSettingsDocument(doc: NoteSettingsDocument): Promise<void> {
+    const response = await this.sendRequest(
+      await this.remoteNoteSettingsUrl(),
+      http.RequestMethod.PUT,
+      JSON.stringify(doc.toJsonRecord()),
+      { contentType: 'application/json; charset=utf-8' }
+    )
+    if (response.responseCode >= 400) {
+      throw new Error(`Note settings upload failed with status ${response.responseCode}`)
+    }
   }
 
   /** 索引 GET 失败时返回空快照（不抛），供列表合并与全量同步容错。 */
