@@ -34,6 +34,7 @@ import { AiTagService } from '../services/AiTagService'
 import { AiNoteService } from '../services/AiNoteService'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
+import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { NoteFolderTree, type FolderSidebarRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 
 interface NoteEditParams {
@@ -132,6 +133,7 @@ struct NoteEdit {
   private shareCardHeight: number = 0
   /** 缓存 ability `filesDir`，避免预览中多张图片重复解析上下文。 */
   private filesDirCache: string = ''
+  private lifecycle = new PageLifecycle()
   private static readonly SHARE_CARD_ID: string = 'note_share_export_card'
   private static readonly SHARE_SLOGAN: string = '记录本身，就是意义。   ——轻羽云笔记'
   private static readonly SHARE_INTRO: string =
@@ -156,6 +158,7 @@ struct NoteEdit {
   }
 
   aboutToAppear(): void {
+    this.lifecycle.appear()
     const ctx = this.obtainUiAbilityContext()
     if (ctx !== undefined) {
       this.filesDirCache = ctx.filesDir
@@ -172,6 +175,7 @@ struct NoteEdit {
   }
 
   aboutToDisappear(): void {
+    this.lifecycle.disappear()
     if (this.keyboardWindow !== undefined) {
       try {
         this.keyboardWindow.off('keyboardHeightChange', this.onKeyboardHeightChange)
@@ -193,14 +197,23 @@ struct NoteEdit {
 
   private async loadQuickActionBarPref(): Promise<void> {
     await this.ensurePreferencesInitialized()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     this.quickActionBarEnabled =
       await PreferencesService.getInstance().getNoteQuickActionBarEnabled()
   }
 
   private async loadFolderModePref(): Promise<void> {
     await this.ensurePreferencesInitialized()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     this.folderModeEnabled =
       await PreferencesService.getInstance().getNoteFolderModeEnabled()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     if (!this.folderModeEnabled) {
       this.folderMovePopupVisible = false
     }
@@ -210,7 +223,10 @@ struct NoteEdit {
     const filesDir = this.filesDirCache.length > 0
       ? this.filesDirCache
       : (this.obtainUiAbilityContext()?.filesDir ?? '')
-    this.aiFeatureEnabled = await RemoteAppConfigService.readAiConfigFromCache(filesDir)
+    const enabled = await RemoteAppConfigService.readAiConfigFromCache(filesDir)
+    if (this.lifecycle.isActive()) {
+      this.aiFeatureEnabled = enabled
+    }
   }
 
   private shouldShowMobileAiBar(): boolean {
@@ -702,6 +718,9 @@ struct NoteEdit {
     this.aiUndoBaselineContent = null
     this.aiUndoAvailable = false
     await NoteRepository.getInstance().init()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     if (!this.noteId) {
       this.previewMode = this.pageWidth >= 600 ? 'split' : 'edit'
       this.preparePreviewForCurrentMode(this.content)
@@ -709,6 +728,9 @@ struct NoteEdit {
       return
     }
     const note = await NoteRepository.getInstance().getNote(this.noteId)
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     if (!note) {
       this.preparePreviewForCurrentMode(this.content)
       return
@@ -734,7 +756,10 @@ struct NoteEdit {
 
   private async refreshAllNotes(): Promise<void> {
     await NoteRepository.getInstance().init()
-    this.allNotes = await NoteRepository.getInstance().listNotes()
+    const notes = await NoteRepository.getInstance().listNotes()
+    if (this.lifecycle.isActive()) {
+      this.allNotes = notes
+    }
   }
 
   private expandedFolderIdSet(): Set<string> {

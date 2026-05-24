@@ -32,6 +32,7 @@ import {
   AvatarCropEmitPath
 } from '../common/constants/AvatarCropConstants'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
+import { PageLifecycle } from '../common/utils/PageLifecycle'
 
 /** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展 */
 interface RouterWithOptionalClear {
@@ -53,14 +54,24 @@ struct Profile {
   @State bindBusy: boolean = false
   /** 本地缓存的远程配置中 pay 字段为 true */
   @State payConfigReady: boolean = false
+  private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
+    this.lifecycle.appear()
     void this.bootstrap()
   }
+
+  aboutToDisappear(): void {
+    this.lifecycle.disappear()
+  }
+
   private async bootstrap(): Promise<void> {
     const context = AppContextHolder.tryGetContext()
     if (context !== undefined) {
       await PreferencesService.getInstance().init(context)
+    }
+    if (!this.lifecycle.isActive()) {
+      return
     }
     const filesDir = context?.filesDir ?? ''
     this.payConfigReady = await RemoteAppConfigService.readPayConfigFromCache(filesDir)
@@ -69,6 +80,9 @@ struct Profile {
 
   private async reload(): Promise<void> {
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     if (tok === null || tok.length === 0) {
       this.loading = false
       this.loadError = '请先登录'
@@ -81,11 +95,14 @@ struct Profile {
     this.loadError = ''
     const cachedRaw = await PreferencesService.getInstance().getCachedUserProfile()
     const cached = cachedRaw !== null ? cachedRaw as ProfileBody : null
-    if (cached !== null) {
+    if (cached !== null && this.lifecycle.isActive()) {
       this.profile = cached
     }
     const p = await NoteApiClient.getInstance().fetchProfile()
     const uid = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     this.loading = false
     const resolved = p ?? cached
     if (resolved === null) {
@@ -537,7 +554,9 @@ struct Profile {
 
   private async reloadAfterPasswordChanged(): Promise<void> {
     await this.reload()
-    this.showToast('密码已更新')
+    if (this.lifecycle.isActive()) {
+      this.showToast('密码已更新')
+    }
   }
 
   private openPhoneSmsEdit(): void {
@@ -571,7 +590,9 @@ struct Profile {
 
   private async reloadAfterPhoneSaved(): Promise<void> {
     await this.reload()
-    this.showToast('已保存')
+    if (this.lifecycle.isActive()) {
+      this.showToast('已保存')
+    }
   }
 
   private openRedeemDialog(): void {

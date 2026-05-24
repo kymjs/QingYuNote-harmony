@@ -227,7 +227,7 @@ struct BindPhone {
     const body: Record<string, Object> = {}
     body['phone'] = p
     body['sms_verify_code'] = c
-    let err = await NoteApiClient.getInstance().patchProfile(body)
+    let err = await NoteApiClient.getInstance().patchProfile(body, false)
     if (err === 'phone_bound_to_other') {
       this.submitting = false
       let dlg: promptAction.ShowDialogSuccessResponse
@@ -249,7 +249,7 @@ struct BindPhone {
       }
       this.submitting = true
       body['unbind_phone_from_other'] = true
-      err = await NoteApiClient.getInstance().patchProfile(body)
+      err = await NoteApiClient.getInstance().patchProfile(body, false)
     }
     if (err !== null) {
       this.submitting = false
@@ -258,7 +258,7 @@ struct BindPhone {
     }
     const pwBody: Record<string, Object> = {}
     pwBody['new_password'] = pw
-    err = await NoteApiClient.getInstance().patchProfile(pwBody)
+    err = await NoteApiClient.getInstance().patchProfile(pwBody, true)
     this.submitting = false
     if (err !== null) {
       this.showToast(this.mapPatchError(err))

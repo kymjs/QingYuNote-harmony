@@ -21,6 +21,7 @@ import {
 } from '../common/utils/NoteFolderTree'
 import { SyncConstants } from '../common/constants/SyncConstants'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
+import { PageLifecycle } from '../common/utils/PageLifecycle'
 
 /** 与 HomeDrawerLayer 内 DRAWER_SPAN 一致，用于全屏横向拖动手势计算行程。 */
 const DRAWER_OFFSCREEN_PAD = 20
@@ -70,8 +71,10 @@ struct Index {
   private cloudSyncNotConfiguredHandler = (): void => {
     this.showUserMessage('当前未配置云服务')
   }
+  private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
+    this.lifecycle.appear()
     try {
       AppContextHolder.getContext().eventHub.on(SyncConstants.qingyuSyncBlockedEvent, this.qingyuBlockedHandler)
       AppContextHolder.getContext().eventHub.on(SyncConstants.cloudSyncNotConfiguredToastEvent,
@@ -83,6 +86,7 @@ struct Index {
   }
 
   aboutToDisappear(): void {
+    this.lifecycle.disappear()
     try {
       AppContextHolder.getContext().eventHub.off(SyncConstants.qingyuSyncBlockedEvent, this.qingyuBlockedHandler)
       AppContextHolder.getContext().eventHub.off(SyncConstants.cloudSyncNotConfiguredToastEvent,
@@ -119,8 +123,14 @@ struct Index {
 
   private async handleIndexPageShow(): Promise<void> {
     await this.ensureLoggedInOrRedirectToLogin()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     void this.navigateToBindPhoneIfNeeded()
     await tryAutoProvisionQingyuCloudOnHomeEntry()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     void this.refreshCloudSyncConfiguredState()
     if (!this.hasShownOnce) {
       this.hasShownOnce = true
@@ -132,7 +142,9 @@ struct Index {
       return
     }
     await this.loadNotes(false)
-    this.lastPageShowNotesReloadAtMs = Date.now()
+    if (this.lifecycle.isActive()) {
+      this.lastPageShowNotesReloadAtMs = Date.now()
+    }
   }
 
   /** 退出登录后若仍停留在首页栈，则拉回登录页 */
@@ -156,13 +168,27 @@ struct Index {
     if (context) {
       await PreferencesService.getInstance().init(context)
     }
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     await tryAutoProvisionQingyuCloudOnHomeEntry()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     await this.refreshCloudSyncConfiguredState()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     await this.loadNotes(this.notes.length === 0)
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     /** 与版本检查并行启动同步，避免「检查更新」阻塞云同步开始时间。 */
     void this.startStartupSyncIfNeeded()
     await runAppUpdateCheckOnLaunch(this.getUIContext())
-    void this.navigateToBindPhoneIfNeeded()
+    if (this.lifecycle.isActive()) {
+      void this.navigateToBindPhoneIfNeeded()
+    }
   }
 
   private bindPhoneNavigationActive: boolean = false
@@ -204,6 +230,9 @@ struct Index {
 
   private async loadNotes(showLoading: boolean = false): Promise<void> {
     if (showLoading) {
+      if (!this.lifecycle.isActive()) {
+        return
+      }
       this.loading = true
     }
     try {
@@ -213,20 +242,28 @@ struct Index {
       }
       await NoteRepository.getInstance().init()
       const listedNotes = await NoteRepository.getInstance().listNotes()
+      if (!this.lifecycle.isActive()) {
+        return
+      }
       this.allNotes = listedNotes
       await this.ensurePreferencesInitialized()
       this.folderModeEnabled =
         await PreferencesService.getInstance().getNoteFolderModeEnabled()
       let filterMode = await PreferencesService.getInstance().getHomeSidebarFilterMode()
+      if (!this.lifecycle.isActive()) {
+        return
+      }
       if (!this.folderModeEnabled && filterMode === 'folder') {
         filterMode = 'tag'
         await PreferencesService.getInstance().setHomeSidebarFilterMode('tag')
       }
       this.filterMode = filterMode
       await this.refreshTagCatalog(listedNotes)
-      this.applyTagFilter()
+      if (this.lifecycle.isActive()) {
+        this.applyTagFilter()
+      }
     } finally {
-      if (showLoading) {
+      if (showLoading && this.lifecycle.isActive()) {
         this.loading = false
       }
     }
@@ -265,15 +302,22 @@ struct Index {
       const snap = await PreferencesService.getInstance().getSavedCustomWebDAVConfigSnapshot()
       const customReady = snap !== null && snap.enabled
       if (customReady) {
-        this.cloudSyncConfigured = true
+        if (this.lifecycle.isActive()) {
+          this.cloudSyncConfigured = true
+        }
         return
       }
       const status =
         await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus(previewQingyuForHomeSubscription)
+      if (!this.lifecycle.isActive()) {
+        return
+      }
       const purchased = status.kind === 'lifetime' || status.kind === 'active'
       this.cloudSyncConfigured = purchased
     } catch (_) {
-      this.cloudSyncConfigured = true
+      if (this.lifecycle.isActive()) {
+        this.cloudSyncConfigured = true
+      }
     }
   }
 

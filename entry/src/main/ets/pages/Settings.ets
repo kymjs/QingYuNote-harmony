@@ -3,6 +3,7 @@ import { AppContextHolder } from '../services/AppContextHolder'
 import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
 import { runAppUpdateCheckManually } from '../services/AppUpdateUi'
+import { PageLifecycle } from '../common/utils/PageLifecycle'
 
 /** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展，用于退出登录后避免返回敏感页。 */
 interface RouterWithOptionalClear {
@@ -16,9 +17,15 @@ struct Settings {
   @State accountSubId: string = ''
   /** 与 Flutter `SettingsHubPage` 对齐：游客模式下不展示退出登录 */
   @State guestMode: boolean = false
+  private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
+    this.lifecycle.appear()
     void this.loadSettingsState()
+  }
+
+  aboutToDisappear(): void {
+    this.lifecycle.disappear()
   }
 
   onPageShow(): void {
@@ -30,7 +37,13 @@ struct Settings {
     if (context) {
       await PreferencesService.getInstance().init(context)
     }
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     this.guestMode = await PreferencesService.getInstance().isGuestMode()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     this.accountSubId = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
   }
 

@@ -1,17 +1,26 @@
 import { Want } from '@kit.AbilityKit'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { getAppVersionName } from '../services/AppUpdateService'
+import { PageLifecycle } from '../common/utils/PageLifecycle'
 
 @Entry
 @Component
 struct About {
   /** 异步拉取包 `versionName` 后追加，如 ` v1.0.1`；未就绪前不展示占位版本号。 */
   @State versionSuffix: string = ''
+  private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
+    this.lifecycle.appear()
     void getAppVersionName().then((v: string) => {
-      this.versionSuffix = ` v${v}`
+      if (this.lifecycle.isActive()) {
+        this.versionSuffix = ` v${v}`
+      }
     })
+  }
+
+  aboutToDisappear(): void {
+    this.lifecycle.disappear()
   }
 
   private openOfficialSite(): void {

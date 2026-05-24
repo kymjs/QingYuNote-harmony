@@ -228,7 +228,7 @@ export struct ProfilePhoneSmsDialog {
     const body: Record<string, Object> = {}
     body['phone'] = phone
     body['sms_verify_code'] = code
-    let err = await NoteApiClient.getInstance().patchProfile(body)
+    let err = await NoteApiClient.getInstance().patchProfile(body, false)
     if (err === 'phone_bound_to_other') {
       this.saving = false
       let dlg: promptAction.ShowDialogSuccessResponse
@@ -250,7 +250,9 @@ export struct ProfilePhoneSmsDialog {
       }
       this.saving = true
       body['unbind_phone_from_other'] = true
-      err = await NoteApiClient.getInstance().patchProfile(body)
+      err = await NoteApiClient.getInstance().patchProfile(body, true)
+    } else if (err === null) {
+      void NoteApiClient.getInstance().fetchProfile()
     }
     this.saving = false
     if (err !== null) {

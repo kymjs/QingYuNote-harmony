@@ -1,6 +1,7 @@
 import type { CreateNoteInput, Note } from '../common/model/Note'
 import { NoteFolderTree, type FolderManageRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 import { NoteRepository } from '../services/NoteRepository'
+import { PageLifecycle } from '../common/utils/PageLifecycle'
 
 @Entry
 @Component
@@ -43,23 +44,35 @@ struct FolderManage {
   private readonly dropBorderWidth: number = 2
   private rowAreaHeights: Map<string, number> = new Map()
   private rowAreaWindowTops: Map<string, number> = new Map()
+  private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
+    this.lifecycle.appear()
     void this.loadNotes()
   }
 
+  aboutToDisappear(): void {
+    this.lifecycle.disappear()
+  }
+
   private async loadNotes(): Promise<void> {
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     this.loading = true
     await NoteRepository.getInstance().init()
     const list = await NoteRepository.getInstance().listNotes()
     const allList = await NoteRepository.getInstance().listAllNotes()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     this.notes = list
     this.rows = NoteFolderTree.visibleManageRows(list, allList)
     this.loading = false
   }
 
   private showUserMessage(message: string): void {
-    if (`${message ?? ''}`.trim().length === 0) {
+    if (`${message ?? ''}`.trim().length === 0 || !this.lifecycle.isActive()) {
       return
     }
     try {

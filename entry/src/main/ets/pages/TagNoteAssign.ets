@@ -1,5 +1,6 @@
 import type { Note } from '../common/model/Note'
 import { NoteRepository } from '../services/NoteRepository'
+import { PageLifecycle } from '../common/utils/PageLifecycle'
 
 interface TagNoteAssignParams {
   tagName?: string
@@ -19,14 +20,23 @@ struct TagNoteAssign {
   @State rows: TagAssignRow[] = []
   @State saving: boolean = false
   @State loading: boolean = true
+  private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
+    this.lifecycle.appear()
     const params = this.getUIContext().getRouter().getParams() as TagNoteAssignParams
     this.tagName = `${params?.tagName ?? ''}`.trim()
     void this.loadNotes()
   }
 
+  aboutToDisappear(): void {
+    this.lifecycle.disappear()
+  }
+
   private async loadNotes(): Promise<void> {
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     this.loading = true
     try {
       await NoteRepository.getInstance().init()
@@ -41,14 +51,18 @@ struct TagNoteAssign {
           selected: note.tags.includes(tag)
         })
       }
-      this.rows = nextRows
+      if (this.lifecycle.isActive()) {
+        this.rows = nextRows
+      }
     } finally {
-      this.loading = false
+      if (this.lifecycle.isActive()) {
+        this.loading = false
+      }
     }
   }
 
   private showUserMessage(message: string): void {
-    if (message.trim().length === 0) {
+    if (message.trim().length === 0 || !this.lifecycle.isActive()) {
       return
     }
     try {
@@ -112,13 +126,17 @@ struct TagNoteAssign {
         await repo.saveDraft(row.noteId, { tags: nextTags })
       }
       this.showUserMessage('已保存')
-      this.getUIContext().getRouter().back()
+      if (this.lifecycle.isActive()) {
+        this.getUIContext().getRouter().back()
+      }
     } catch (error) {
       console.error(JSON.stringify(error))
       this.showUserMessage('保存失败，请稍后重试')
     } finally {
       repo.endBulkNotification()
-      this.saving = false
+      if (this.lifecycle.isActive()) {
+        this.saving = false
+      }
     }
   }
 

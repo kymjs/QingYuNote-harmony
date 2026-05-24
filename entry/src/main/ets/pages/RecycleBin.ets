@@ -1,6 +1,7 @@
 import type { Note } from '../common/model/Note'
 import { NoteRepository } from '../services/NoteRepository'
 import { AppContextHolder } from '../services/AppContextHolder'
+import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PreferencesService } from '../services/PreferencesService'
 
 @Entry
@@ -12,6 +13,7 @@ struct RecycleBinPage {
   /** 还原/删除后递增，强制 ForEach 与列表数据源同步刷新 */
   @State listRevision: number = 0
   private loadingCount: number = 0
+  private lifecycle = new PageLifecycle()
 
   private beginLoading(): void {
     this.loadingCount += 1
@@ -26,7 +28,12 @@ struct RecycleBinPage {
   }
 
   aboutToAppear(): void {
+    this.lifecycle.appear()
     void this.loadList(true)
+  }
+
+  aboutToDisappear(): void {
+    this.lifecycle.disappear()
   }
 
   onPageShow(): void {
@@ -36,6 +43,9 @@ struct RecycleBinPage {
   /** @param trackLoading 为 true 时计入全屏 Loading；读取/还原/删除任一进行中均保持 Loading。 */
   private async loadList(trackLoading: boolean = true): Promise<void> {
     if (trackLoading) {
+      if (!this.lifecycle.isActive()) {
+        return
+      }
       this.beginLoading()
     }
     try {
@@ -49,10 +59,13 @@ struct RecycleBinPage {
       }
       await NoteRepository.getInstance().init()
       const result = await NoteRepository.getInstance().listRecycleBinNotesMergedWithRemote()
+      if (!this.lifecycle.isActive()) {
+        return
+      }
       this.notes = [...result.notes]
       this.listRevision += 1
     } finally {
-      if (trackLoading) {
+      if (trackLoading && this.lifecycle.isActive()) {
         this.endLoading()
       }
     }
@@ -63,7 +76,7 @@ struct RecycleBinPage {
   }
 
   private showUserMessage(message: string): void {
-    if (message.trim().length === 0) {
+    if (message.trim().length === 0 || !this.lifecycle.isActive()) {
       return
     }
     try {
@@ -85,7 +98,9 @@ struct RecycleBinPage {
       console.error(JSON.stringify(error))
       this.showUserMessage('还原失败，请稍后重试')
     } finally {
-      this.endLoading()
+      if (this.lifecycle.isActive()) {
+        this.endLoading()
+      }
     }
   }
 
@@ -98,7 +113,9 @@ struct RecycleBinPage {
       console.error(JSON.stringify(error))
       this.showUserMessage('删除失败，请稍后重试')
     } finally {
-      this.endLoading()
+      if (this.lifecycle.isActive()) {
+        this.endLoading()
+      }
     }
   }
 
@@ -118,7 +135,9 @@ struct RecycleBinPage {
       this.showUserMessage('还原失败，请稍后重试')
       await this.reloadRecycleListAfterMutation()
     } finally {
-      this.endLoading()
+      if (this.lifecycle.isActive()) {
+        this.endLoading()
+      }
     }
   }
 
@@ -138,7 +157,9 @@ struct RecycleBinPage {
       this.showUserMessage('删除失败，请稍后重试')
       await this.reloadRecycleListAfterMutation()
     } finally {
-      this.endLoading()
+      if (this.lifecycle.isActive()) {
+        this.endLoading()
+      }
     }
   }
 

@@ -964,8 +964,9 @@ export class NoteApiClient {
   /**
    * PATCH /api/v1/me/profile；body 仅含需要修改的字段。
    * 返回 null 表示成功，否则为服务端 `error` 代码。
+   * @param refreshProfile 成功后是否刷新本地 profile 缓存（多步绑定/改号时中间步可传 false，减少并发请求）。
    */
-  async patchProfile(body: Record<string, Object>): Promise<string | null> {
+  async patchProfile(body: Record<string, Object>, refreshProfile: boolean = true): Promise<string | null> {
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (tok === null || tok.length === 0) {
       return 'not_logged_in'
@@ -974,34 +975,51 @@ export class NoteApiClient {
     if (keys.length === 0) {
       return null
     }
-    const req = http.createHttp()
-    try {
-      const resp = await req.request(this.joinUrl('/api/v1/me/profile'), {
-        // NetStack 的 RequestMethod 无 PATCH 枚举，与 WebDAVClient 一样用字符串断言。
-        method: 'PATCH' as http.RequestMethod,
-        header: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json; charset=utf-8',
-          'Authorization': `Bearer ${tok}`
-        },
-        extraData: JSON.stringify(body),
-        expectDataType: http.HttpDataType.STRING,
-        connectTimeout: 15000,
-        readTimeout: 20000
-      })
-      const code = resp.responseCode
-      const text = (resp.result as string) ?? ''
-      if (code >= 200 && code < 300) {
-        void this.fetchProfile()
-        return null
+    const payload = JSON.stringify(body)
+    let waitMs = 0
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (waitMs > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, waitMs))
       }
-      return NoteApiClient.parseErrorCode(text)
-    } catch (e) {
-      Logger.warn('NoteApiClient', `patchProfile failed: ${JSON.stringify(e)}`)
-      return 'network_error'
-    } finally {
-      req.destroy()
+      const req = http.createHttp()
+      try {
+        const headers = await this.buildCommonHeaders()
+        headers['Content-Type'] = 'application/json; charset=utf-8'
+        headers['Authorization'] = `Bearer ${tok}`
+        const resp = await req.request(this.joinUrl('/api/v1/me/profile'), {
+          // NetStack 的 RequestMethod 无 PATCH 枚举，与 WebDAVClient 一样用字符串断言。
+          method: 'PATCH' as http.RequestMethod,
+          header: headers,
+          extraData: payload,
+          expectDataType: http.HttpDataType.STRING,
+          connectTimeout: 15000,
+          readTimeout: 20000
+        })
+        const code = resp.responseCode
+        const text = (resp.result as string) ?? ''
+        if (code >= 200 && code < 300) {
+          if (refreshProfile) {
+            void this.fetchProfile()
+          }
+          return null
+        }
+        const errCode = NoteApiClient.parseErrorCode(text)
+        // 4xx 为业务错误，不重试。
+        if (code >= 400 && code < 500) {
+          Logger.warn('NoteApiClient', `patchProfile HTTP ${code} error=${errCode} body=${text.slice(0, 400)}`)
+          return errCode
+        }
+        Logger.warn('NoteApiClient',
+          `patchProfile HTTP ${code} attempt=${attempt + 1}/3 error=${errCode} body=${text.slice(0, 400)}`)
+        waitMs = attempt < 2 ? 450 : 0
+      } catch (e) {
+        Logger.warn('NoteApiClient', `patchProfile request failed attempt=${attempt + 1}/3: ${JSON.stringify(e)}`)
+        waitMs = attempt < 2 ? 450 : 0
+      } finally {
+        req.destroy()
+      }
     }
+    return 'network_error'
   }
 
   /**

@@ -47,13 +47,24 @@ struct CloudSyncSettings {
   @State payConfigReady: boolean = false
   private storedEncryptedPassword: string = ''
   private passwordTouched: boolean = false
+  /** 页面是否仍在前台；异步回调返回前若已返回上一页则不再更新 @State，避免崩溃。 */
+  private pageActive: boolean = false
 
   aboutToAppear(): void {
+    this.pageActive = true
     void this.loadSettings()
+  }
+
+  aboutToDisappear(): void {
+    this.pageActive = false
   }
 
   onPageShow(): void {
     void this.reloadGuestAndQingyuCard()
+  }
+
+  private isPageActive(): boolean {
+    return this.pageActive
   }
 
   private async reloadGuestAndQingyuCard(): Promise<void> {
@@ -61,9 +72,15 @@ struct CloudSyncSettings {
     if (context) {
       await PreferencesService.getInstance().init(context)
     }
+    if (!this.isPageActive()) {
+      return
+    }
     this.guestMode = await PreferencesService.getInstance().isGuestMode()
     const filesDir = context?.filesDir ?? ''
     this.payConfigReady = await RemoteAppConfigService.readPayConfigFromCache(filesDir)
+    if (!this.isPageActive()) {
+      return
+    }
     if (this.selectedProvider !== 'qingyu_cloud' || !this.payConfigReady) {
       return
     }
@@ -79,11 +96,17 @@ struct CloudSyncSettings {
     if (context) {
       await PreferencesService.getInstance().init(context)
     }
+    if (!this.isPageActive()) {
+      return
+    }
     this.guestMode = await PreferencesService.getInstance().isGuestMode()
     const filesDir = context?.filesDir ?? ''
     this.payConfigReady = await RemoteAppConfigService.readPayConfigFromCache(filesDir)
     const policy = await PreferencesService.getInstance().getSyncPolicy()
     const hasSavedCustom = await PreferencesService.getInstance().hasSavedCustomWebDAVConfig()
+    if (!this.isPageActive()) {
+      return
+    }
     if (hasSavedCustom) {
       this.selectedProvider = 'webdav'
       const snap = await PreferencesService.getInstance().getSavedCustomWebDAVConfigSnapshot()
@@ -105,6 +128,9 @@ struct CloudSyncSettings {
   }
 
   private async refreshQingyuSubscriptionCard(): Promise<void> {
+    if (!this.isPageActive()) {
+      return
+    }
     if (this.selectedProvider !== 'qingyu_cloud') {
       return
     }
@@ -125,15 +151,23 @@ struct CloudSyncSettings {
       }
       const status =
         await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus(previewQingyu)
+      if (!this.isPageActive()) {
+        return
+      }
       this.applyQingyuSubscriptionStatus(status)
     } catch (error) {
+      if (!this.isPageActive()) {
+        return
+      }
       Logger.warn('CloudSyncSettings', `refreshQingyuSubscriptionCard failed: ${this.describeError(error as Object)}`)
       this.qingyuSubHint = '暂时无法获取云服务状态'
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
       this.qingyuSubButtonLabel = '立即续期'
     } finally {
-      this.qingyuSubLoading = false
+      if (this.isPageActive()) {
+        this.qingyuSubLoading = false
+      }
     }
   }
 
@@ -329,6 +363,9 @@ struct CloudSyncSettings {
 
   private async handleSaveAndClose(): Promise<void> {
     await this.handleSave()
+    if (!this.isPageActive()) {
+      return
+    }
     this.getUIContext().getRouter().back()
   }
 
@@ -336,6 +373,9 @@ struct CloudSyncSettings {
   private async handleConfirmQingyuService(): Promise<void> {
     try {
       const payload = await this.handleSave()
+      if (!this.isPageActive()) {
+        return
+      }
       if (payload.config.provider === 'qingyu_cloud' && payload.config.enabled) {
         this.showUserMessage('已使用轻羽云作为同步服务')
       }
@@ -346,7 +386,7 @@ struct CloudSyncSettings {
   }
 
   private showUserMessage(message: string): void {
-    if (message.trim().length === 0) {
+    if (message.trim().length === 0 || !this.isPageActive()) {
       return
     }
     try {
@@ -360,10 +400,16 @@ struct CloudSyncSettings {
   }
 
   private async handleTestConnection(): Promise<void> {
+    if (!this.isPageActive()) {
+      return
+    }
     this.testing = true
     Logger.info('CloudSyncSettings', 'handleTestConnection start')
     try {
       const payload = await this.handleSave()
+      if (!this.isPageActive()) {
+        return
+      }
       if (!payload.config.enabled) {
         if (this.selectedProvider === 'qingyu_cloud') {
           this.showUserMessage('轻羽云同步未开启或暂时无法获取连接信息，请稍后重试')
@@ -376,6 +422,9 @@ struct CloudSyncSettings {
       }
       Logger.info('CloudSyncSettings', 'handleTestConnection save completed, invoking WebDAVClient.testConnection')
       const success = await WebDAVClient.getInstance().testConnection()
+      if (!this.isPageActive()) {
+        return
+      }
       Logger.info('CloudSyncSettings', `handleTestConnection result: success=${success}`)
       this.showUserMessage(success ? '连接测试成功' : '连接测试失败')
       if (success && this.selectedProvider === 'qingyu_cloud') {
@@ -389,8 +438,10 @@ struct CloudSyncSettings {
         this.showUserMessage('连接测试失败')
       }
     } finally {
-      this.testing = false
-      Logger.info('CloudSyncSettings', `handleTestConnection finish: testing=${this.testing}`)
+      if (this.isPageActive()) {
+        this.testing = false
+        Logger.info('CloudSyncSettings', `handleTestConnection finish: testing=${this.testing}`)
+      }
     }
   }
 

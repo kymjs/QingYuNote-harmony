@@ -10,6 +10,7 @@ import {
   AvatarCropEmitCancel,
   AvatarCropEmitPath
 } from '../common/constants/AvatarCropConstants'
+import { PageLifecycle } from '../common/utils/PageLifecycle'
 
 /** 裁剪圆直径（vp） */
 const CROP_DIAMETER_VP = 300
@@ -29,8 +30,10 @@ struct AvatarCrop {
   private panBaseTy: number = 0
   private imgWp: number = 1
   private imgHp: number = 1
+  private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
+    this.lifecycle.appear()
     try {
       const p = this.getUIContext().getRouter().getParams() as Record<string, Object>
       const u = p['uri']
@@ -39,6 +42,10 @@ struct AvatarCrop {
       this.uriStr = ''
     }
     void this.loadImageSize()
+  }
+
+  aboutToDisappear(): void {
+    this.lifecycle.disappear()
   }
 
   private refreshDispAndClamp(): void {
@@ -70,6 +77,9 @@ struct AvatarCrop {
       const info = pm.getImageInfoSync()
       const dd = display.getDefaultDisplaySync()
       const dpi = dd.densityPixels > 0 ? dd.densityPixels : 480
+      if (!this.lifecycle.isActive()) {
+        return
+      }
       this.imgWp = pxToVp(info.size.width, dpi)
       this.imgHp = pxToVp(info.size.height, dpi)
       this.zoomScale = 1
@@ -78,8 +88,10 @@ struct AvatarCrop {
       this.refreshDispAndClamp()
     } catch (e) {
       Logger.warn('AvatarCrop', `loadImageSize failed: ${JSON.stringify(e)}`)
-      this.imgWp = 0
-      this.imgHp = 0
+      if (this.lifecycle.isActive()) {
+        this.imgWp = 0
+        this.imgHp = 0
+      }
     } finally {
       if (pm !== null) {
         try {

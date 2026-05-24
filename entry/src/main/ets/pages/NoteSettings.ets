@@ -1,5 +1,6 @@
 import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
+import { PageLifecycle } from '../common/utils/PageLifecycle'
 
 @Entry
 @Component
@@ -7,9 +8,15 @@ struct NoteSettings {
   @State quickActionBarEnabled: boolean = true
   @State folderModeEnabled: boolean = false
   @State loading: boolean = true
+  private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
+    this.lifecycle.appear()
     void this.loadSettings()
+  }
+
+  aboutToDisappear(): void {
+    this.lifecycle.disappear()
   }
 
   onPageShow(): void {
@@ -21,11 +28,19 @@ struct NoteSettings {
     if (context) {
       await PreferencesService.getInstance().init(context)
     }
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     this.quickActionBarEnabled =
       await PreferencesService.getInstance().getNoteQuickActionBarEnabled()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     this.folderModeEnabled =
       await PreferencesService.getInstance().getNoteFolderModeEnabled()
-    this.loading = false
+    if (this.lifecycle.isActive()) {
+      this.loading = false
+    }
   }
 
   private async setQuickActionBarEnabled(enabled: boolean): Promise<void> {
@@ -34,7 +49,9 @@ struct NoteSettings {
       await PreferencesService.getInstance().init(context)
     }
     await PreferencesService.getInstance().setNoteQuickActionBarEnabled(enabled)
-    this.quickActionBarEnabled = enabled
+    if (this.lifecycle.isActive()) {
+      this.quickActionBarEnabled = enabled
+    }
   }
 
   private toggleQuickActionBar(): void {
@@ -50,7 +67,9 @@ struct NoteSettings {
     if (!enabled) {
       await PreferencesService.getInstance().setHomeSidebarFilterMode('tag')
     }
-    this.folderModeEnabled = enabled
+    if (this.lifecycle.isActive()) {
+      this.folderModeEnabled = enabled
+    }
   }
 
   private toggleFolderMode(): void {

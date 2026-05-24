@@ -2,6 +2,7 @@ import type { Note } from '../common/model/Note'
 import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
+import { PageLifecycle } from '../common/utils/PageLifecycle'
 
 @Entry
 @Component
@@ -10,9 +11,15 @@ struct TagManage {
   @State newTag: string = ''
   @State saving: boolean = false
   private activeNotes: Note[] = []
+  private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
+    this.lifecycle.appear()
     void this.loadData()
+  }
+
+  aboutToDisappear(): void {
+    this.lifecycle.disappear()
   }
 
   private async loadData(): Promise<void> {
@@ -20,6 +27,9 @@ struct TagManage {
     this.activeNotes = await NoteRepository.getInstance().listNotes()
     await this.ensurePreferencesInitialized()
     const storedTags = await PreferencesService.getInstance().getNoteTags()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     const mergedTags = this.normalizeTags(this.extractTagsFromNotes(this.activeNotes).concat(storedTags))
     this.tags = mergedTags
   }
@@ -75,7 +85,7 @@ struct TagManage {
   }
 
   private showUserMessage(message: string): void {
-    if (message.trim().length === 0) {
+    if (message.trim().length === 0 || !this.lifecycle.isActive()) {
       return
     }
     try {
@@ -148,7 +158,9 @@ struct TagManage {
       }
       this.showUserMessage('保存标签失败，请稍后重试')
     } finally {
-      this.saving = false
+      if (this.lifecycle.isActive()) {
+        this.saving = false
+      }
     }
   }
 

@@ -12,6 +12,7 @@ import { QingyuRechargePlans } from '../common/constants/QingyuRechargePlans'
 import { QingyuHuaweiIapProducts } from '../common/constants/QingyuHuaweiIapProducts'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
+import { PageLifecycle } from '../common/utils/PageLifecycle'
 
 /**
  * 轻羽云服务 — 会员档位；支持华为应用内支付（IAP）与支付宝 App 支付。
@@ -23,13 +24,19 @@ struct QingyuCloudRecharge {
   @State applying: boolean = false
   /** 与 Flutter 充值页一致：`active` / `lifetime` 为「续期」，否则「开通」。 */
   @State payPrimaryCtaLabel: string = '开  通'
+  private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
+    this.lifecycle.appear()
     const context = AppContextHolder.tryGetContext()
     if (context) {
       void PreferencesService.getInstance().init(context)
     }
     void this.refreshPayPrimaryCtaLabel()
+  }
+
+  aboutToDisappear(): void {
+    this.lifecycle.disappear()
   }
 
   onPageShow(): void {
@@ -41,7 +48,13 @@ struct QingyuCloudRecharge {
     if (context) {
       await PreferencesService.getInstance().init(context)
     }
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     if (await PreferencesService.getInstance().isGuestMode()) {
+      if (!this.lifecycle.isActive()) {
+        return
+      }
       this.payPrimaryCtaLabel = '开  通'
       return
     }
@@ -56,17 +69,25 @@ struct QingyuCloudRecharge {
       }
       const status =
         await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus(previewQingyu)
+      if (!this.lifecycle.isActive()) {
+        return
+      }
       if (status.kind === 'active' || status.kind === 'lifetime') {
         this.payPrimaryCtaLabel = '续  期'
       } else {
         this.payPrimaryCtaLabel = '开  通'
       }
     } catch (_) {
-      this.payPrimaryCtaLabel = '开  通'
+      if (this.lifecycle.isActive()) {
+        this.payPrimaryCtaLabel = '开  通'
+      }
     }
   }
 
   private showToast(message: string): void {
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     try {
       this.getUIContext().getPromptAction().showToast({
         message,
@@ -180,7 +201,9 @@ struct QingyuCloudRecharge {
       }
       void QingyuHuaweiIapPayService.finishPurchase(ctx, pay)
     } finally {
-      this.applying = false
+      if (this.lifecycle.isActive()) {
+        this.applying = false
+      }
       void this.refreshPayPrimaryCtaLabel()
     }
   }
@@ -270,7 +293,9 @@ struct QingyuCloudRecharge {
         this.showToast('支付成功')
       }
     } finally {
-      this.applying = false
+      if (this.lifecycle.isActive()) {
+        this.applying = false
+      }
       void this.refreshPayPrimaryCtaLabel()
     }
   }
