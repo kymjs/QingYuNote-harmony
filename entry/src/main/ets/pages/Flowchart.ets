@@ -5,7 +5,7 @@ import { BusinessError } from '@kit.BasicServicesKit'
 import { image } from '@kit.ImageKit'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import { fileIo, fileUri } from '@kit.CoreFileKit'
-import { common } from '@kit.AbilityKit'
+import { common, Configuration } from '@kit.AbilityKit'
 import { FlowchartService } from '../services/FlowchartService'
 import { NoteRepository } from '../services/NoteRepository'
 import { AppContextHolder } from '../services/AppContextHolder'
@@ -131,6 +131,22 @@ struct FlowchartPage {
     this.lifecycle.disappear()
     this.clearDragVisual()
     void this.saveIfDirty()
+  }
+
+  onConfigurationUpdate(_config: Configuration): void {
+    if (this.canvasReady) {
+      this.redrawCanvas()
+    }
+  }
+
+  private colorResourceToHex(name: string): string {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext
+    const argb = context.resourceManager.getColorByNameSync(name)
+    const toHex = (value: number): string => value.toString(16).padStart(2, '0')
+    const r = (argb >>> 16) & 0xFF
+    const g = (argb >>> 8) & 0xFF
+    const b = argb & 0xFF
+    return `#${toHex(r)}${toHex(g)}${toHex(b)}`
   }
 
   private async loadGraph(): Promise<void> {
@@ -1588,9 +1604,9 @@ struct FlowchartPage {
     const ctx = this.canvasContext
     const w = 4000
     const h = 4000
-    ctx.fillStyle = '#FFFFFF'
+    ctx.fillStyle = this.colorResourceToHex('editor_background')
     ctx.fillRect(0, 0, w, h)
-    ctx.strokeStyle = '#E0E0E0'
+    ctx.strokeStyle = this.colorResourceToHex('divider')
     ctx.lineWidth = 0.5
     for (let x = 0; x <= w; x += 24) {
       ctx.beginPath()
@@ -2258,7 +2274,7 @@ struct FlowchartPage {
               .height('100%')
               .clip(true)
               .alignContent(Alignment.TopStart)
-              .backgroundColor('#FFFFFF')
+              .backgroundColor($r('app.color.editor_background'))
               .id('flowchartExportHost')
 
               if (!this.paletteExpanded) {
