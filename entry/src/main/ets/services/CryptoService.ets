@@ -6,6 +6,7 @@ const KEY_SEED = 'qingyu-notes-key'
 const AAD_SEED = 'qingyu-aad'
 const NOTE_KEY_PREFIX = 'zhangtaodeqingyuliulanqi-'
 const NOTE_AAD_SEED = 'qingyu-note-rsa-aad'
+const FLOWCHART_AAD_SEED = 'qingyu-flowchart-aad'
 const GCM_AUTH_TAG_LENGTH = 16
 
 interface ErrorLike {
@@ -50,6 +51,28 @@ export class CryptoService {
     } catch (error) {
       Logger.warn('CryptoService', `decryptNoteText failed: ${this.describeError(error)}`)
       return ''
+    }
+  }
+
+  async encryptFlowchartText(plainText: string, userId: string): Promise<string> {
+    const trimmedUserId = userId.trim()
+    if (plainText.length === 0 || trimmedUserId.length === 0) {
+      return plainText
+    }
+    return this.encryptTextWithKey(plainText, await this.deriveNoteEncryptionKey(trimmedUserId), FLOWCHART_AAD_SEED)
+  }
+
+  async decryptFlowchartText(cipherText: string, userId: string): Promise<string> {
+    const trimmedUserId = userId.trim()
+    if (cipherText.length === 0 || trimmedUserId.length === 0) {
+      return cipherText
+    }
+    try {
+      const key = await this.deriveNoteEncryptionKey(trimmedUserId)
+      return await this.decryptTextWithKey(cipherText, key, FLOWCHART_AAD_SEED)
+    } catch (error) {
+      Logger.warn('CryptoService', `decryptFlowchartText failed: ${this.describeError(error)}`)
+      return cipherText
     }
   }
 

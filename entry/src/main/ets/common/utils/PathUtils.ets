@@ -12,6 +12,10 @@ export class PathUtils {
     return `${noteId}.md`
   }
 
+  static fileNameForFlowchart(noteId: string): string {
+    return `${noteId}.qy`
+  }
+
   static joinRemoteFileUrl(baseUrl: string, notesDir: string, noteId: string): string {
     const cleanBase = PathUtils.normalizeBaseUrl(baseUrl)
     const cleanDir = PathUtils.normalizeNotesDir(notesDir)

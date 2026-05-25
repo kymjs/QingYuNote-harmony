@@ -18,6 +18,7 @@
     "pages/AvatarCrop",
     "pages/TagManage",
     "pages/FolderManage",
-    "pages/TagNoteAssign"
+    "pages/TagNoteAssign",
+    "pages/Flowchart"
   ]
 }

@@ -7,6 +7,7 @@ import { NoteContentEncryptionService } from './NoteContentEncryptionService'
 
 const NOTES_DIR = 'notes'
 const NOTE_FILE_SUFFIX = '.md'
+const FLOWCHART_FILE_SUFFIX = '.qy'
 const NOTE_FILE_NAME_REGEX = /^[a-f0-9-]{36}\.md$/i
 
 export class FileService {
@@ -41,6 +42,52 @@ export class FileService {
 
   getNotePath(noteId: string): string {
     return `${this.baseDir}/${noteId}${NOTE_FILE_SUFFIX}`
+  }
+
+  getFlowchartPath(noteId: string): string {
+    return `${this.baseDir}/${noteId}${FLOWCHART_FILE_SUFFIX}`
+  }
+
+  flowchartFileExists(noteId: string): boolean {
+    try {
+      return fs.accessSync(this.getFlowchartPath(noteId))
+    } catch (_) {
+      return false
+    }
+  }
+
+  async readFlowchartFile(noteId: string): Promise<string> {
+    try {
+      const filePath = this.getFlowchartPath(noteId)
+      if (!fs.accessSync(filePath)) {
+        return ''
+      }
+      return await fs.readText(filePath, { encoding: 'utf-8' })
+    } catch (error) {
+      Logger.warn('FileService', `readFlowchartFile failed: noteId=${noteId}`)
+      return ''
+    }
+  }
+
+  async writeFlowchartFile(noteId: string, content: string): Promise<void> {
+    await this.ensureBaseDir()
+    const filePath = this.getFlowchartPath(noteId)
+    const file = fs.openSync(filePath, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
+    try {
+      await fs.write(file.fd, content, { encoding: 'utf-8' })
+    } finally {
+      fs.closeSync(file)
+    }
+  }
+
+  async deleteFlowchartFile(noteId: string): Promise<void> {
+    try {
+      const filePath = this.getFlowchartPath(noteId)
+      if (fs.accessSync(filePath)) {
+        fs.unlinkSync(filePath)
+      }
+    } catch (_) {
+    }
   }
 
   async readNoteFile(noteId: string): Promise<string> {
@@ -205,6 +252,7 @@ export class FileService {
       if (fs.accessSync(filePath)) {
         fs.unlinkSync(filePath)
       }
+      await this.deleteFlowchartFile(noteId)
     } catch (error) {
       Logger.warn('FileService', `deleteNoteFile failed: noteId=${noteId}, error=${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)

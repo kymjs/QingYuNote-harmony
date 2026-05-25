@@ -247,6 +247,7 @@ export class SyncService {
           contentLength: note.content.length
         })
         await this.syncImagesForNote(note, rawContent)
+        await this.uploadFlowchartSidecarIfNeeded(noteId, note)
         if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced',
           uploaded.remoteModified || note.lastOperationAt, note.lastOperationAt)) {
           NoteRepository.getInstance().notifyNotesChanged()
@@ -274,6 +275,7 @@ export class SyncService {
           contentLength: note.content.length
         })
         await this.syncImagesForNote(note, rawContent)
+        await this.uploadFlowchartSidecarIfNeeded(noteId, note)
         if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced',
           uploaded.remoteModified || note.lastOperationAt, note.lastOperationAt)) {
           NoteRepository.getInstance().notifyNotesChanged()
@@ -295,6 +297,7 @@ export class SyncService {
           return remotePermanent
         }
         await NoteRepository.getInstance().overwriteFromRemote(noteId, remoteContent, remoteStat.remoteModified)
+        await this.downloadFlowchartSidecarIfRemote(noteId)
         await this.downloadImagesForNote(noteId, remoteContent)
         return {
           noteId,
@@ -664,6 +667,7 @@ export class SyncService {
       return tombstonePurge
     }
     await NoteRepository.getInstance().overwriteFromRemote(noteId, remoteContent, remoteModified)
+    await this.downloadFlowchartSidecarIfRemote(noteId)
     await this.downloadImagesForNote(noteId, remoteContent)
     return {
       noteId,
@@ -679,6 +683,9 @@ export class SyncService {
    * 视为空草稿，不应 PUT 到远端。
    */
   private isLocallyEmptyNote(note: Note): boolean {
+    if (note.type_ === 2) {
+      return false
+    }
     if (note.deletedTime !== 0) {
       return false
     }
@@ -688,6 +695,35 @@ export class SyncService {
     }
     const t = note.title.trim()
     return t.length === 0 || t === '未命名笔记'
+  }
+
+  private async uploadFlowchartSidecarIfNeeded(noteId: string, note: Note): Promise<void> {
+    if (note.type_ !== 2) {
+      return
+    }
+    if (!FileService.getInstance().flowchartFileExists(noteId)) {
+      return
+    }
+    const raw = await FileService.getInstance().readFlowchartFile(noteId)
+    if (raw.trim().length === 0) {
+      return
+    }
+    await WebDAVClient.getInstance().uploadFlowchart(noteId, raw, note.lastOperationAt)
+  }
+
+  private async downloadFlowchartSidecarIfRemote(noteId: string): Promise<void> {
+    try {
+      const stat = await WebDAVClient.getInstance().getFlowchartRemoteStat(noteId)
+      if (!stat.exists) {
+        return
+      }
+      const raw = await WebDAVClient.getInstance().downloadFlowchart(noteId)
+      if (raw.length > 0) {
+        await FileService.getInstance().writeFlowchartFile(noteId, raw)
+      }
+    } catch (error) {
+      Logger.warn('SyncService', `flowchart download skipped: ${JSON.stringify(error)}`)
+    }
   }
 
   private async safeRemoteStat(noteId: string): Promise<RemoteStatSnapshot> {

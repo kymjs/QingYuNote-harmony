@@ -177,6 +177,14 @@
       "value": "文件管理"
     },
     {
+      "name": "flowchart_title",
+      "value": "流程图"
+    },
+    {
+      "name": "save",
+      "value": "保存"
+    },
+    {
       "name": "recycle_bin_title",
       "value": "回收站"
     },
@@ -215,6 +223,10 @@
     {
       "name": "permission_network_info_reason",
       "value": "用于判断当前网络状态和仅 Wi-Fi 同步策略"
+    },
+    {
+      "name": "permission_vibrate_reason",
+      "value": "用于流程图节点长按拖动时的触觉反馈"
     },
     {
       "name": "login_title",

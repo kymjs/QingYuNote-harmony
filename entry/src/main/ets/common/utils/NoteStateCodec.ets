@@ -159,7 +159,7 @@ export class NoteStateCodec {
     return NoteStateCodec.serializeNoteFile(note)
   }
 
-  static createDefaultState(noteId: string, title: string, now: number = Date.now()): NoteStateBlock {
+  static createDefaultState(noteId: string, title: string, now: number = Date.now(), type: number = 1): NoteStateBlock {
     return {
       id: noteId,
       title,
@@ -182,7 +182,7 @@ export class NoteStateCodec {
       rsa: 0,
       imageRefs: [],
       deletedTime: 0,
-      type_: 1
+      type_: type
     }
   }
 

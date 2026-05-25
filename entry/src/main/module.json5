@@ -33,7 +33,7 @@
           ],
           "when": "always"
         }
-      },     {
+      },           {
         "name": "ohos.permission.GET_NETWORK_INFO",
         "reason": "$string:permission_network_info_reason",
         "usedScene": {
@@ -41,6 +41,16 @@
             "EntryAbility"
           ],
           "when": "always"
+        }
+      },
+      {
+        "name": "ohos.permission.VIBRATE",
+        "reason": "$string:permission_vibrate_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
         }
       }
     ],

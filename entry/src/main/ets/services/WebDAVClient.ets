@@ -440,6 +440,77 @@ export class WebDAVClient {
     if (!this.isDeferRemoteIndexMerge()) {
       await this.removeNoteFromRemoteIndex(noteId)
     }
+    await this.deleteFlowchartRemote(noteId)
+  }
+
+  private async flowchartUrl(noteId: string): Promise<string> {
+    const config = await this.requireConfig()
+    return PathUtils.joinRemotePathFileUrl(
+      config.baseUrl,
+      config.notesDir,
+      PathUtils.fileNameForFlowchart(noteId)
+    )
+  }
+
+  async getFlowchartRemoteStat(noteId: string): Promise<RemoteNoteStat> {
+    const targetUrl = await this.flowchartUrl(noteId)
+    const response = await this.sendRequest(targetUrl, http.RequestMethod.HEAD)
+    if (response.responseCode === 404) {
+      return { exists: false, remoteModified: 0, eTag: '', contentLength: 0 }
+    }
+    if (response.responseCode >= 400) {
+      throw new Error(`Flowchart stat failed with status ${response.responseCode}`)
+    }
+    return {
+      exists: true,
+      remoteModified: TimeUtils.normalizeRemoteTimestamp(
+        TimeUtils.fromHttpDate(this.pickHeader(response.header, 'last-modified'))
+      ),
+      eTag: this.pickHeader(response.header, 'etag'),
+      contentLength: Number.parseInt(this.pickHeader(response.header, 'content-length') || '0', 10)
+    }
+  }
+
+  async downloadFlowchart(noteId: string): Promise<string> {
+    const targetUrl = await this.flowchartUrl(noteId)
+    const response = await this.sendRequest(targetUrl, http.RequestMethod.GET)
+    if (response.responseCode >= 400) {
+      throw new Error(`Flowchart download failed with status ${response.responseCode}`)
+    }
+    return `${response.result ?? ''}`
+  }
+
+  async uploadFlowchart(noteId: string, content: string, lastModified: number): Promise<RemoteNoteStat> {
+    const targetUrl = await this.flowchartUrl(noteId)
+    const response = await this.sendRequest(targetUrl, http.RequestMethod.PUT, content, {
+      contentType: 'application/octet-stream',
+      modifiedAt: `${lastModified}`
+    })
+    if (response.responseCode >= 400) {
+      throw new Error(`Flowchart upload failed with status ${response.responseCode}`)
+    }
+    const remoteModified = TimeUtils.normalizeRemoteTimestamp(
+      TimeUtils.fromHttpDate(this.pickHeader(response.header, 'last-modified')) > 0 ?
+        TimeUtils.fromHttpDate(this.pickHeader(response.header, 'last-modified')) : lastModified
+    )
+    return {
+      exists: response.responseCode >= 200 && response.responseCode < 300,
+      remoteModified,
+      eTag: this.pickHeader(response.header, 'etag'),
+      contentLength: content.length
+    }
+  }
+
+  async deleteFlowchart(noteId: string): Promise<void> {
+    await this.deleteFlowchartRemote(noteId)
+  }
+
+  private async deleteFlowchartRemote(noteId: string): Promise<void> {
+    const targetUrl = await this.flowchartUrl(noteId)
+    const response = await this.sendRequest(targetUrl, http.RequestMethod.DELETE)
+    if (response.responseCode >= 400 && response.responseCode !== 404) {
+      throw new Error(`Flowchart delete failed with status ${response.responseCode}`)
+    }
   }
 
   async uploadImage(fileName: string, bytes: ArrayBuffer): Promise<void> {

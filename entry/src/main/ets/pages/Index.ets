@@ -521,7 +521,8 @@ struct Index {
       pool = pool.filter((note: Note) => {
         const title = `${note.title ?? ''}`.toLowerCase()
         const summaryText = `${note.summary ?? ''}`.toLowerCase()
-        return title.includes(q) || summaryText.includes(q)
+        const contentText = `${note.content ?? ''}`.toLowerCase()
+        return title.includes(q) || summaryText.includes(q) || contentText.includes(q)
       })
     }
     this.updateNotes(pool)
@@ -607,6 +608,37 @@ struct Index {
       console.error(JSON.stringify(error))
       this.showUserMessage(this.formatActionError('打开文件管理', error))
     }
+  }
+
+  private async openFlowchart(noteId: string, focusQuery: string = ''): Promise<void> {
+    this.drawerCloseNonce += 1
+    try {
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/Flowchart',
+        params: {
+          noteId,
+          focusQuery
+        }
+      })
+    } catch (error) {
+      console.error(JSON.stringify(error))
+      this.showUserMessage(this.formatActionError('打开流程图', error))
+    }
+  }
+
+  private async openFlowchartFromDrawer(): Promise<void> {
+    const note = await NoteRepository.getInstance().createFlowchartNote()
+    await this.openFlowchart(note.id)
+  }
+
+  private async openNoteFromList(note: Note): Promise<void> {
+    if (note.type_ === 2) {
+      const q = this.searchQuery.trim()
+      await this.openFlowchart(note.id, q)
+      return
+    }
+    const hasBody = `${note.content ?? ''}`.trim().length > 0
+    await this.openEditor(note.id, hasBody)
   }
 
   private async openRecycleBin(): Promise<void> {
@@ -1080,8 +1112,7 @@ struct Index {
     }
     .padding({ left: 6, right: 6 })
     .onClick(() => {
-      const hasBody = note.content.trim().length > 0
-      void this.openEditor(note.id, hasBody)
+      void this.openNoteFromList(note)
     })
     .width('100%')
   }
@@ -1199,6 +1230,9 @@ struct Index {
         },
         onOpenFolderManage: (): void => {
           void this.openFolderManage()
+        },
+        onOpenFlowchart: (): void => {
+          void this.openFlowchartFromDrawer()
         },
         onOpenRecycleBin: (): void => {
           void this.openRecycleBin()

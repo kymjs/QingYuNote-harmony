@@ -8,6 +8,9 @@ import { NoteFolderTree } from '../common/utils/NoteFolderTree'
 import { NoteSortUtils } from '../common/utils/NoteSortUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { IdUtils } from '../common/utils/IdUtils'
+import type { FlowchartGraphModel } from '../common/model/FlowchartGraph'
+import { flowchartSearchSummary, flowchartSearchableText } from '../common/model/FlowchartGraph'
+import { FlowchartService } from './FlowchartService'
 import { DatabaseService } from './DatabaseService'
 import { FileService } from './FileService'
 import { AppContextHolder } from './AppContextHolder'
@@ -116,6 +119,58 @@ export class NoteRepository {
     this.bumpVersion()
     this.scheduleSyncHandler?.(id)
     return note
+  }
+
+  async createFlowchartNote(title: string = ''): Promise<Note> {
+    await this.init()
+    const now = Date.now()
+    const id = IdUtils.uuid()
+    const resolvedTitle = title.trim().length > 0 ? title.trim() : '未命名流程图'
+    const state = NoteStateCodec.createDefaultState(id, resolvedTitle, now, 2)
+    state.userData = '{"kind":"flowchart","formatVersion":1}'
+    const note = this.createNoteFromState(state, '', {
+      noteId: id,
+      remoteModified: 0,
+      deleted: false,
+      deletedAt: 0,
+      lastOperationAt: now,
+      syncStatus: 'pending'
+    }, [])
+    await FileService.getInstance().writeNoteFile(note)
+    await FlowchartService.getInstance().save(FlowchartService.getInstance().emptyGraph(), id)
+    await DatabaseService.getInstance().upsertSyncState(this.toSyncState(note))
+    this.bumpVersion()
+    this.scheduleSyncHandler?.(id)
+    return note
+  }
+
+  async saveFlowchartNote(id: string, graph: FlowchartGraphModel, title?: string): Promise<Note> {
+    await this.init()
+    const existing = await this.getNote(id)
+    if (!existing) {
+      throw new Error(`Note ${id} does not exist`)
+    }
+    await FlowchartService.getInstance().save(graph, id)
+    const searchable = flowchartSearchableText(graph)
+    const resolvedTitle = (title ?? existing.title ?? '').trim()
+    const nextTitle = resolvedTitle.length > 0 ? resolvedTitle : '未命名流程图'
+    const now = Date.now()
+    const updated = this.cloneNote(existing)
+    updated.title = nextTitle
+    updated.content = searchable
+    updated.summary = flowchartSearchSummary(graph)
+    updated.type_ = 2
+    updated.localModified = now
+    updated.deleted = false
+    updated.deletedAt = 0
+    updated.lastOperationAt = now
+    updated.syncStatus = 'pending'
+    updated.updatedAt = now
+    await FileService.getInstance().writeNoteFile(updated)
+    await DatabaseService.getInstance().upsertSyncState(this.toSyncState(updated))
+    this.bumpVersion()
+    this.scheduleSyncHandler?.(id)
+    return updated
   }
 
   async getNote(id: string): Promise<Note | null> {
