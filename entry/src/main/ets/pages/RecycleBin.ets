@@ -2,6 +2,7 @@ import type { Note } from '../common/model/Note'
 import { NoteRepository } from '../services/NoteRepository'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { PreferencesService } from '../services/PreferencesService'
 
 @Entry
@@ -14,6 +15,7 @@ struct RecycleBinPage {
   @State listRevision: number = 0
   private loadingCount: number = 0
   private lifecycle = new PageLifecycle()
+  private closeGuard = new PageCloseGuard()
 
   private beginLoading(): void {
     this.loadingCount += 1
@@ -29,6 +31,7 @@ struct RecycleBinPage {
 
   aboutToAppear(): void {
     this.lifecycle.appear()
+    this.closeGuard.reset()
     void this.loadList(true)
   }
 
@@ -191,6 +194,17 @@ struct RecycleBinPage {
     return `${this.listRevision}:${note.id}:${note.title}:${note.summary}:${note.updatedAt}:${note.deleted}:${note.deletedTime}`
   }
 
+  private handleToolbarBack(): void {
+    this.closeGuard.runBack(() => {
+      this.getUIContext().getRouter().back()
+    }, 'RecycleBinPage')
+  }
+
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
+  }
+
   @Builder
   private buildToolbar() {
     Row() {
@@ -210,7 +224,7 @@ struct RecycleBinPage {
       .backgroundColor($r('app.color.surface_muted'))
       .borderRadius($r('app.float.pill_radius'))
       .onClick(() => {
-        this.getUIContext().getRouter().back()
+        this.handleToolbarBack()
       })
 
       Row() {

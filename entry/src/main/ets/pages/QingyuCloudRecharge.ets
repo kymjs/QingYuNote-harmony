@@ -13,6 +13,7 @@ import { QingyuHuaweiIapProducts } from '../common/constants/QingyuHuaweiIapProd
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
 /**
  * 轻羽云服务 — 会员档位；支持华为应用内支付（IAP）与支付宝 App 支付。
@@ -25,9 +26,11 @@ struct QingyuCloudRecharge {
   /** 与 Flutter 充值页一致：`active` / `lifetime` 为「续期」，否则「开通」。 */
   @State payPrimaryCtaLabel: string = '开  通'
   private lifecycle = new PageLifecycle()
+  private closeGuard = new PageCloseGuard()
 
   aboutToAppear(): void {
     this.lifecycle.appear()
+    this.closeGuard.reset()
     const context = AppContextHolder.tryGetContext()
     if (context) {
       void PreferencesService.getInstance().init(context)
@@ -406,6 +409,17 @@ struct QingyuCloudRecharge {
     .margin({ top: 8, bottom: 8 })
   }
 
+  private handleToolbarBack(): void {
+    this.closeGuard.runBack(() => {
+      this.getUIContext().getRouter().back()
+    }, 'QingyuCloudRecharge')
+  }
+
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
+  }
+
   build() {
     Column() {
       Row() {
@@ -420,7 +434,7 @@ struct QingyuCloudRecharge {
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
         .onClick(() => {
-          this.getUIContext().getRouter().back()
+          this.handleToolbarBack()
         })
 
         Column({ space: 4 }) {

@@ -1,6 +1,7 @@
 import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
 @Entry
 @Component
@@ -9,9 +10,11 @@ struct NoteSettings {
   @State folderModeEnabled: boolean = false
   @State loading: boolean = true
   private lifecycle = new PageLifecycle()
+  private closeGuard = new PageCloseGuard()
 
   aboutToAppear(): void {
     this.lifecycle.appear()
+    this.closeGuard.reset()
     void this.loadSettings()
   }
 
@@ -76,6 +79,17 @@ struct NoteSettings {
     void this.setFolderModeEnabled(!this.folderModeEnabled)
   }
 
+  private handleToolbarBack(): void {
+    this.closeGuard.runBack(() => {
+      this.getUIContext().getRouter().back()
+    }, 'NoteSettings')
+  }
+
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
+  }
+
   build() {
     Column() {
       Row() {
@@ -95,7 +109,7 @@ struct NoteSettings {
         .backgroundColor($r('app.color.surface_muted'))
         .borderRadius($r('app.float.pill_radius'))
         .onClick(() => {
-          this.getUIContext().getRouter().back()
+          this.handleToolbarBack()
         })
 
         Row() {

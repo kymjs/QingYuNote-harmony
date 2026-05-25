@@ -35,6 +35,7 @@ import { AiNoteService } from '../services/AiNoteService'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { NoteFolderTree, type FolderSidebarRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 
 interface NoteEditParams {
@@ -134,6 +135,7 @@ struct NoteEdit {
   /** 缓存 ability `filesDir`，避免预览中多张图片重复解析上下文。 */
   private filesDirCache: string = ''
   private lifecycle = new PageLifecycle()
+  private closeGuard = new PageCloseGuard()
   private static readonly SHARE_CARD_ID: string = 'note_share_export_card'
   private static readonly SHARE_SLOGAN: string = '记录本身，就是意义。   ——轻羽云笔记'
   private static readonly SHARE_INTRO: string =
@@ -159,6 +161,7 @@ struct NoteEdit {
 
   aboutToAppear(): void {
     this.lifecycle.appear()
+    this.closeGuard.reset()
     const ctx = this.obtainUiAbilityContext()
     if (ctx !== undefined) {
       this.filesDirCache = ctx.filesDir
@@ -862,15 +865,31 @@ struct NoteEdit {
     }
   }
 
-  private async handleBack(): Promise<void> {
+  /** 拦截系统返回键，与工具栏返回一致。 */
+  onBackPress(): boolean {
+    this.handleBack()
+    return true
+  }
+
+  private handleBack(): void {
+    if (!this.closeGuard.tryBeginClose()) {
+      return
+    }
     if (this.saveTimer !== -1) {
       clearTimeout(this.saveTimer)
       this.saveTimer = -1
     }
-    // Let the latest input event flush into bound state before saving.
-    await new Promise<void>((resolve: () => void) => setTimeout(() => resolve(), 0))
-    await this.handleAutoSave()
     this.getUIContext().getRouter().back()
+    void this.flushAndAutoSaveAfterLeave()
+  }
+
+  private async flushAndAutoSaveAfterLeave(): Promise<void> {
+    await new Promise<void>((resolve: () => void) => setTimeout(() => resolve(), 0))
+    try {
+      await this.handleAutoSave()
+    } catch (error) {
+      Logger.warn('NoteEdit', `flushAndAutoSaveAfterLeave failed: ${JSON.stringify(error)}`)
+    }
   }
 
   private mobileFullPreviewChrome(): boolean {
@@ -2507,7 +2526,7 @@ struct NoteEdit {
           .backgroundColor($r('app.color.surface_muted'))
           .borderRadius($r('app.float.pill_radius'))
           .onClick(() => {
-            void this.handleBack()
+            this.handleBack()
           })
 
           Column({ space: 4 }) {

@@ -3,6 +3,7 @@ import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
 @Entry
 @Component
@@ -12,9 +13,11 @@ struct TagManage {
   @State saving: boolean = false
   private activeNotes: Note[] = []
   private lifecycle = new PageLifecycle()
+  private closeGuard = new PageCloseGuard()
 
   aboutToAppear(): void {
     this.lifecycle.appear()
+    this.closeGuard.reset()
     void this.loadData()
   }
 
@@ -164,6 +167,17 @@ struct TagManage {
     }
   }
 
+  private handleToolbarBack(): void {
+    this.closeGuard.runBack(() => {
+      this.getUIContext().getRouter().back()
+    }, 'TagManage')
+  }
+
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
+  }
+
   @Builder
   private buildTagItem(tag: string) {
     Row({ space: 10 }) {
@@ -208,7 +222,7 @@ struct TagManage {
         .backgroundColor($r('app.color.surface_muted'))
         .borderRadius($r('app.float.pill_radius'))
         .onClick(() => {
-          this.getUIContext().getRouter().back()
+          this.handleToolbarBack()
         })
 
         Row() {

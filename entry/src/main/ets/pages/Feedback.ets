@@ -2,11 +2,13 @@ import { common } from '@kit.AbilityKit'
 import { fileIo, fileUri } from '@kit.CoreFileKit'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import { Logger } from '../common/utils/Logger'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
 @Entry
 @Component
 struct Feedback {
   @State pageWidth: number = 360
+  private closeGuard = new PageCloseGuard()
 
   private get isWideLayout(): boolean {
     return this.pageWidth >= 600
@@ -69,6 +71,17 @@ struct Feedback {
     }
   }
 
+  private handleToolbarBack(): void {
+    this.closeGuard.runBack(() => {
+      this.getUIContext().getRouter().back()
+    }, 'Feedback')
+  }
+
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
+  }
+
   build() {
     Column() {
       Row() {
@@ -88,7 +101,7 @@ struct Feedback {
         .backgroundColor($r('app.color.surface_muted'))
         .borderRadius($r('app.float.pill_radius'))
         .onClick(() => {
-          this.getUIContext().getRouter().back()
+          this.handleToolbarBack()
         })
 
         Row() {

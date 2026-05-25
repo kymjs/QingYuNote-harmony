@@ -1,4 +1,5 @@
 import { webview } from '@kit.ArkWeb'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
 interface H5WebContainerParams {
   title?: string
@@ -12,6 +13,7 @@ struct H5WebContainer {
   @State webUrl: string = 'about:blank'
   @State isLoading: boolean = false
   private webController: webview.WebviewController = new webview.WebviewController()
+  private closeGuard = new PageCloseGuard()
 
   private shouldShowLoadingOverlay(): boolean {
     return this.isLoading &&
@@ -19,6 +21,7 @@ struct H5WebContainer {
   }
 
   aboutToAppear(): void {
+    this.closeGuard.reset()
     try {
       const params = this.getUIContext().getRouter().getParams() as H5WebContainerParams
       const titleRaw = params?.title
@@ -49,6 +52,17 @@ struct H5WebContainer {
     }
   }
 
+  private handleToolbarBack(): void {
+    this.closeGuard.runBack(() => {
+      this.getUIContext().getRouter().back()
+    }, 'H5WebContainer')
+  }
+
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
+  }
+
   build() {
     Column() {
       Row() {
@@ -68,7 +82,7 @@ struct H5WebContainer {
         .backgroundColor($r('app.color.surface_muted'))
         .borderRadius($r('app.float.pill_radius'))
         .onClick(() => {
-          this.getUIContext().getRouter().back()
+          this.handleToolbarBack()
         })
 
         Row() {
