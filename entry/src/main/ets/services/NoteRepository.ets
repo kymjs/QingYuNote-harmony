@@ -125,7 +125,7 @@ export class NoteRepository {
     await this.init()
     const now = Date.now()
     const id = IdUtils.uuid()
-    const resolvedTitle = title.trim().length > 0 ? title.trim() : '未命名流程图'
+    const resolvedTitle = title.trim().length > 0 ? title.trim() : '未命名知识图谱'
     const state = NoteStateCodec.createDefaultState(id, resolvedTitle, now, 2)
     state.userData = '{"kind":"flowchart","formatVersion":1}'
     const note = this.createNoteFromState(state, '', {
@@ -153,7 +153,7 @@ export class NoteRepository {
     await FlowchartService.getInstance().save(graph, id)
     const searchable = flowchartSearchableText(graph)
     const resolvedTitle = (title ?? existing.title ?? '').trim()
-    const nextTitle = resolvedTitle.length > 0 ? resolvedTitle : '未命名流程图'
+    const nextTitle = resolvedTitle.length > 0 ? resolvedTitle : '未命名知识图谱'
     const now = Date.now()
     const updated = this.cloneNote(existing)
     updated.title = nextTitle

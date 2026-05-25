@@ -2,8 +2,13 @@ import componentSnapshot from '@ohos.arkui.componentSnapshot'
 import { util } from '@kit.ArkTS'
 import { vibrator } from '@kit.SensorServiceKit'
 import { BusinessError } from '@kit.BasicServicesKit'
+import { image } from '@kit.ImageKit'
+import { photoAccessHelper } from '@kit.MediaLibraryKit'
+import { fileIo, fileUri } from '@kit.CoreFileKit'
+import { common } from '@kit.AbilityKit'
 import { FlowchartService } from '../services/FlowchartService'
 import { NoteRepository } from '../services/NoteRepository'
+import { AppContextHolder } from '../services/AppContextHolder'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { FlowchartLayoutEngine } from '../common/utils/FlowchartLayoutEngine'
 import { Logger } from '../common/utils/Logger'
@@ -29,6 +34,7 @@ import {
   FLOWCHART_SHAPE_TYPES,
   createEmptyFlowchartGraph,
   createFlowchartPosition,
+  cloneFlowchartGraph,
   flowchartFirstMatchingNodeId
 } from '../common/model/FlowchartGraph'
 import { FlowchartShapePath } from '../common/utils/FlowchartShapePath'
@@ -40,7 +46,7 @@ const FLOWCHART_LOG_TAG = 'FlowchartPage'
 @Component
 struct FlowchartPage {
   @State graph: FlowchartGraphModel = createEmptyFlowchartGraph()
-  @State noteTitle: string = '流程图'
+  @State noteTitle: string = '未命名知识图谱'
   @State noteId: string = ''
   @State focusQuery: string = ''
   @State loading: boolean = true
@@ -52,6 +58,8 @@ struct FlowchartPage {
   @State editTitle: string = ''
   @State editDescription: string = ''
   @State showEditDialog: boolean = false
+  @State showNoteTitleDialog: boolean = false
+  @State editNoteTitleInput: string = ''
   @State editingNodeId: string = ''
   @State touchMoved: boolean = false
   @State graphRevision: number = 0
@@ -65,8 +73,9 @@ struct FlowchartPage {
   @State connectDraftToX: number = 0
   @State connectDraftToY: number = 0
   @State pageWidth: number = 360
-  @State showNoteTitleDialog: boolean = false
-  @State editNoteTitle: string = ''
+  @State historyRevision: number = 0
+  private undoStack: FlowchartGraphModel[] = []
+  private redoStack: FlowchartGraphModel[] = []
   private touchMode: number = 0
   private lastEditedNodeId: string = ''
   private pinchStartScale: number = 1
@@ -134,7 +143,7 @@ struct FlowchartPage {
     const loaded = await FlowchartService.getInstance().load(this.noteId)
     if (this.lifecycle.isActive()) {
       this.graph = loaded
-      this.noteTitle = note?.title ?? '流程图'
+      this.noteTitle = note?.title ?? '未命名知识图谱'
       this.loading = false
       Logger.info(FLOWCHART_LOG_TAG,
         `loadGraph noteId=${this.noteId} nodes=${loaded.nodes.length} edges=${loaded.edges.length} ` +
@@ -184,6 +193,7 @@ struct FlowchartPage {
   }
 
   private applyAlignedLayout(): void {
+    this.pushUndo()
     this.graph = FlowchartLayoutEngine.applyAlignedLayout(this.graph, this.isPhoneLayout())
     this.graphRevision++
     this.markDirty()
@@ -197,30 +207,120 @@ struct FlowchartPage {
     }
   }
 
-  private openNoteTitleDialog(): void {
-    this.editNoteTitle = this.noteTitle
-    this.showNoteTitleDialog = true
+  private pushUndo(): void {
+    this.undoStack.push(cloneFlowchartGraph(this.graph))
+    if (this.undoStack.length > 20) {
+      this.undoStack.shift()
+    }
+    this.redoStack = []
+    this.historyRevision++
   }
 
-  private saveNoteTitleDialog(): void {
-    const title = this.editNoteTitle.trim()
-    if (title.length > 0) {
-      this.noteTitle = title
-      this.markDirty()
+  private undo(): void {
+    if (this.undoStack.length === 0) {
+      return
     }
-    this.showNoteTitleDialog = false
+    this.redoStack.push(cloneFlowchartGraph(this.graph))
+    this.graph = this.undoStack.pop() as FlowchartGraphModel
+    this.selectedNodeId = ''
+    this.markDirty()
+    this.graphRevision++
+    this.scheduleCanvasRedraw()
+    this.historyRevision++
+  }
+
+  private redo(): void {
+    if (this.redoStack.length === 0) {
+      return
+    }
+    this.undoStack.push(cloneFlowchartGraph(this.graph))
+    this.graph = this.redoStack.pop() as FlowchartGraphModel
+    this.selectedNodeId = ''
+    this.markDirty()
+    this.graphRevision++
+    this.scheduleCanvasRedraw()
+    this.historyRevision++
+  }
+
+  private canUndo(): boolean {
+    return this.undoStack.length > 0
+  }
+
+  private canRedo(): boolean {
+    return this.redoStack.length > 0
+  }
+
+  private obtainUiAbilityContext(): common.UIAbilityContext | undefined {
+    const host = this.getUIContext().getHostContext()
+    if (host !== undefined) {
+      return host as common.UIAbilityContext
+    }
+    return AppContextHolder.tryGetContext()
   }
 
   private async exportImage(): Promise<void> {
+    const previousSelection = this.selectedNodeId
+    if (previousSelection.length > 0) {
+      this.selectedNodeId = ''
+      this.graphRevision++
+      await new Promise<void>((resolve) => setTimeout(() => resolve(), 80))
+    }
     try {
+      const snap = this.getUIContext().getComponentSnapshot()
       const opts: componentSnapshot.SnapshotOptions = { waitUntilRenderFinished: true }
-      const pixelMap = await componentSnapshot.get('flowchartCanvas', opts)
-      // 保存到相册需权限；此处先完成截图能力，后续可接 photoAccessHelper
-      pixelMap.release()
-      this.showUserMessage('已生成画布截图')
+      const pixelMap = await snap.get('flowchartExportHost', opts)
+      const packer = image.createImagePacker()
+      let pngBuf: ArrayBuffer
+      try {
+        pngBuf = await packer.packToData(pixelMap, {
+          format: 'image/png',
+          quality: 100,
+          desiredDynamicRange: image.PackingDynamicRange.SDR
+        })
+      } finally {
+        try {
+          await pixelMap.release()
+        } catch (_) {
+          // ignore
+        }
+      }
+      const context = this.obtainUiAbilityContext()
+      if (context === undefined) {
+        this.showUserMessage('导出失败，请稍后重试')
+        return
+      }
+      const cachePath = `${context.cacheDir}/flowchart_export_${Date.now()}.png`
+      const f = fileIo.openSync(cachePath,
+        fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC)
+      fileIo.writeSync(f.fd, pngBuf)
+      fileIo.closeSync(f)
+      const helper = photoAccessHelper.getPhotoAccessHelper(context)
+      const srcFileUris: Array<string> = [fileUri.getUriFromPath(cachePath)]
+      const photoCreationConfigs: Array<photoAccessHelper.PhotoCreationConfig> = [
+        {
+          title: `knowledge_graph_${Date.now()}`,
+          fileNameExtension: 'png',
+          photoType: photoAccessHelper.PhotoType.IMAGE,
+          subtype: photoAccessHelper.PhotoSubtype.DEFAULT
+        }
+      ]
+      const destUris: Array<string> = await helper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs)
+      if (destUris.length > 0) {
+        const src = fileIo.openSync(cachePath, fileIo.OpenMode.READ_ONLY)
+        const dest = await fileIo.open(destUris[0], fileIo.OpenMode.WRITE_ONLY)
+        await fileIo.copyFile(src.fd, dest.fd)
+        fileIo.closeSync(src)
+        fileIo.closeSync(dest)
+        this.showUserMessage('图片已保存到相册')
+      }
     } catch (error) {
       console.error(`exportImage failed: ${JSON.stringify(error)}`)
       this.showUserMessage('导出失败，请稍后重试')
+    } finally {
+      if (previousSelection.length > 0) {
+        this.selectedNodeId = previousSelection
+        this.graphRevision++
+      }
     }
   }
 
@@ -811,6 +911,7 @@ struct FlowchartPage {
   }
 
   private addNode(shape: FlowchartShapeType): void {
+    this.pushUndo()
     const index = this.graph.nodes.length
     const isArrow = shape === 'arrowRight' || shape === 'arrowLeft'
     const width = isArrow ? 160 : 120
@@ -852,6 +953,7 @@ struct FlowchartPage {
   }
 
   private addLineNode(lineType: FlowchartLineType): void {
+    this.pushUndo()
     const index = this.graph.nodes.length
     const width = 160
     const height = 32
@@ -933,6 +1035,7 @@ struct FlowchartPage {
     if (from === undefined || to === undefined) {
       return
     }
+    this.pushUndo()
     const edge: FlowchartEdgeModel = {
       id: util.generateRandomUUID(),
       source: fromId,
@@ -964,6 +1067,7 @@ struct FlowchartPage {
     if (this.selectedNodeId.length === 0) {
       return
     }
+    this.pushUndo()
     const id = this.selectedNodeId
     this.graph = {
       version: this.graph.version,
@@ -1109,6 +1213,7 @@ struct FlowchartPage {
     if (this.dragActivated) {
       return
     }
+    this.pushUndo()
     if (this.longPressTimerId >= 0) {
       clearTimeout(this.longPressTimerId)
       this.longPressTimerId = -1
@@ -1143,6 +1248,7 @@ struct FlowchartPage {
   }
 
   private beginEndpointDrag(node: FlowchartNodeModel, index: number): void {
+    this.pushUndo()
     let active = node
     if (!this.hasStoredEndpoints(node) && (this.isLineNode(node) || this.isArrowNode(node))) {
       const ready = this.ensureEndpointProperties(node)
@@ -1482,7 +1588,8 @@ struct FlowchartPage {
     const ctx = this.canvasContext
     const w = 4000
     const h = 4000
-    ctx.clearRect(0, 0, w, h)
+    ctx.fillStyle = '#FFFFFF'
+    ctx.fillRect(0, 0, w, h)
     ctx.strokeStyle = '#E0E0E0'
     ctx.lineWidth = 0.5
     for (let x = 0; x <= w; x += 24) {
@@ -1512,6 +1619,18 @@ struct FlowchartPage {
     }
   }
 
+  private openNoteTitleDialog(): void {
+    this.editNoteTitleInput = this.noteTitle
+    this.showNoteTitleDialog = true
+  }
+
+  private saveNoteTitleDialog(): void {
+    const trimmed = this.editNoteTitleInput.trim()
+    this.noteTitle = trimmed.length > 0 ? trimmed : '未命名知识图谱'
+    this.showNoteTitleDialog = false
+    this.markDirty()
+  }
+
   private openEditDialog(node: FlowchartNodeModel): void {
     this.editingNodeId = node.id
     this.editTitle = node.title
@@ -1526,6 +1645,7 @@ struct FlowchartPage {
       this.showEditDialog = false
       return
     }
+    this.pushUndo()
     this.updateNode({
       id: node.id,
       title: this.editTitle.trim().length > 0 ? this.editTitle.trim() : '输入文本',
@@ -1540,6 +1660,49 @@ struct FlowchartPage {
     })
     this.markNodeEdited(node.id)
     this.showEditDialog = false
+  }
+
+  @Builder
+  private buildHistoryButtons() {
+    Column() {
+      Image($r('app.media.ic_undo'))
+        .width(32)
+        .height(32)
+        .objectFit(ImageFit.Contain)
+        .opacity(this.canUndo() ? 1 : 0.35)
+        .onClick(() => {
+          if (this.canUndo()) {
+            this.undo()
+          }
+        })
+    }
+    .width('100%')
+    .padding({ bottom: 5 })
+    .alignItems(HorizontalAlign.Center)
+    .key(`history_${this.historyRevision}`)
+  }
+
+  @Builder
+  private buildNodeDeleteButton(node: FlowchartNodeModel) {
+    if (this.selectedNodeId !== node.id) {
+      Blank()
+    } else {
+      Stack() {
+        Circle({ width: 24, height: 24 })
+          .fill('#E53935')
+        Text('×')
+          .fontSize(16)
+          .fontColor(Color.White)
+          .fontWeight(FontWeight.Medium)
+      }
+      .width(24)
+      .height(24)
+      .position({
+        x: node.width + FlowchartPage.NODE_LAYER_PAD - 10,
+        y: FlowchartPage.NODE_LAYER_PAD - 10
+      })
+      .onClick(() => this.deleteSelectedNode())
+    }
   }
 
   @Builder
@@ -1565,13 +1728,34 @@ struct FlowchartPage {
   @Builder
   private buildPaletteItem(shape: FlowchartShapeType) {
     Column() {
-      this.buildShapePreview(shape, 36)
+      Image(this.paletteShapeIcon(shape))
+        .width(36)
+        .height(36)
+        .objectFit(ImageFit.Contain)
+        .interpolation(ImageInterpolation.High)
     }
     .width('100%')
     .height(44)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .onClick(() => this.addNode(shape))
+  }
+
+  private paletteShapeIcon(shape: FlowchartShapeType): Resource {
+    switch (shape) {
+      case 'roundedRect':
+        return $r('app.media.ic_palette_01')
+      case 'pill':
+        return $r('app.media.ic_palette_02')
+      case 'diamond':
+        return $r('app.media.ic_palette_03')
+      case 'rectangle':
+        return $r('app.media.ic_palette_04')
+      case 'arrowRight':
+        return $r('app.media.ic_palette_05')
+      default:
+        return $r('app.media.ic_palette_01')
+    }
   }
 
   @Builder
@@ -1726,20 +1910,11 @@ struct FlowchartPage {
 
   @Builder
   private buildLinePreview(lineType: string) {
-    Shape() {
-      Path()
-        .width(48)
-        .height(20)
-        .commands(FlowchartShapePath.lineSegment(4, 10, 44, 10, lineType, 6))
-    }
-    .width(48)
-    .height(20)
-    .viewPort({ x: 0, y: 0, width: 48, height: 20 })
-    .stroke('#212121')
-    .strokeWidth(1.8)
-    .fill(lineType === 'solid' ? Color.Transparent : '#212121')
-    .antiAlias(true)
-    .hitTestBehavior(HitTestMode.None)
+    Image($r('app.media.ic_palette_06'))
+      .width(36)
+      .height(36)
+      .objectFit(ImageFit.Contain)
+      .interpolation(ImageInterpolation.High)
   }
 
   @Builder
@@ -1900,12 +2075,13 @@ struct FlowchartPage {
       if (this.selectedNodeId === node.id && this.isEndpointShape(node)) {
         this.buildEndpointHandle(node, 0)
         this.buildEndpointHandle(node, 1)
-      } else {
+      } else if (this.selectedNodeId === node.id) {
         this.buildAnchor(node, 'top')
         this.buildAnchor(node, 'right')
         this.buildAnchor(node, 'bottom')
         this.buildAnchor(node, 'left')
       }
+      this.buildNodeDeleteButton(node)
     }
     .width(node.width + FlowchartPage.NODE_LAYER_PAD * 2)
     .height(node.height + FlowchartPage.NODE_LAYER_PAD * 2)
@@ -1961,15 +2137,11 @@ struct FlowchartPage {
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.primary_text'))
             .layoutWeight(1)
+            .margin({ left: 8 })
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .textAlign(TextAlign.Center)
-            .gesture(
-              TapGesture({ count: 2 })
-                .onAction(() => {
-                  this.openNoteTitleDialog()
-                })
-            )
+            .textAlign(TextAlign.Start)
+            .onClick(() => this.openNoteTitleDialog())
 
           Button('布局', { buttonStyle: ButtonStyleMode.TEXTUAL })
             .fontSize(14)
@@ -2025,6 +2197,8 @@ struct FlowchartPage {
                 .width('100%')
                 .scrollBar(BarState.Auto)
                 .edgeEffect(EdgeEffect.Spring)
+
+                this.buildHistoryButtons()
 
                 Row() {
                   Text('‹')
@@ -2084,6 +2258,8 @@ struct FlowchartPage {
               .height('100%')
               .clip(true)
               .alignContent(Alignment.TopStart)
+              .backgroundColor('#FFFFFF')
+              .id('flowchartExportHost')
 
               if (!this.paletteExpanded) {
                 this.buildPaletteExpandFab()
@@ -2136,9 +2312,9 @@ struct FlowchartPage {
             Text('编辑标题')
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
-            TextInput({ text: this.editNoteTitle, placeholder: '知识图谱标题' })
+            TextInput({ text: this.editNoteTitleInput, placeholder: '标题' })
               .onChange((v: string) => {
-                this.editNoteTitle = v
+                this.editNoteTitleInput = v
               })
             Row({ space: 12 }) {
               Button('取消')

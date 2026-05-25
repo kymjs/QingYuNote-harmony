@@ -117,7 +117,7 @@ export function flowchartSearchableText(graph: FlowchartGraphModel): string {
 
 export function flowchartSearchSummary(graph: FlowchartGraphModel): string {
   const titles = graph.nodes.map((n) => n.title.trim()).filter((t) => t.length > 0).slice(0, 3)
-  return titles.length > 0 ? titles.join(' · ') : '流程图'
+  return titles.length > 0 ? titles.join(' · ') : '未命名知识图谱'
 }
 
 export function createFlowchartPosition(x: number, y: number): FlowchartNodePosition {
@@ -153,4 +153,54 @@ export function createEmptyFlowchartGraph(): FlowchartGraphModel {
     edges: []
   }
   return graph
+}
+
+export function cloneFlowchartGraph(graph: FlowchartGraphModel): FlowchartGraphModel {
+  const metadata: Record<string, Object> = {}
+  for (const key of Object.keys(graph.metadata)) {
+    metadata[key] = graph.metadata[key]
+  }
+  const nodes: FlowchartNodeModel[] = []
+  for (const node of graph.nodes) {
+    const props: Record<string, Object> = {}
+    for (const key of Object.keys(node.properties)) {
+      props[key] = node.properties[key]
+    }
+    nodes.push({
+      id: node.id,
+      title: node.title,
+      description: node.description,
+      color: node.color,
+      shape: node.shape,
+      position: createFlowchartPosition(node.position.x, node.position.y),
+      width: node.width,
+      height: node.height,
+      rotation: node.rotation,
+      properties: props
+    })
+  }
+  const edges: FlowchartEdgeModel[] = []
+  for (const edge of graph.edges) {
+    const props: Record<string, Object> = {}
+    for (const key of Object.keys(edge.properties)) {
+      props[key] = edge.properties[key]
+    }
+    edges.push({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      label: edge.label,
+      directed: edge.directed,
+      lineType: edge.lineType,
+      sourceAnchor: edge.sourceAnchor,
+      targetAnchor: edge.targetAnchor,
+      properties: props
+    })
+  }
+  return {
+    version: graph.version,
+    metadata: metadata,
+    nodes: nodes,
+    edges: edges
+  }
 }
