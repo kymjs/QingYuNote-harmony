@@ -2,6 +2,7 @@ import type { CreateNoteInput, Note } from '../common/model/Note'
 import { NoteFolderTree, type FolderManageRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 import { NoteRepository } from '../services/NoteRepository'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
 @Entry
 @Component
@@ -45,9 +46,11 @@ struct FolderManage {
   private rowAreaHeights: Map<string, number> = new Map()
   private rowAreaWindowTops: Map<string, number> = new Map()
   private lifecycle = new PageLifecycle()
+  private closeGuard = new PageCloseGuard()
 
   aboutToAppear(): void {
     this.lifecycle.appear()
+    this.closeGuard.reset()
     void this.loadNotes()
   }
 
@@ -846,6 +849,17 @@ struct FolderManage {
     .zIndex(1001)
   }
 
+  private handleToolbarBack(): void {
+    this.closeGuard.runBack(() => {
+      this.getUIContext().getRouter().back()
+    }, 'FolderManage')
+  }
+
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
+  }
+
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       Column() {
@@ -866,7 +880,7 @@ struct FolderManage {
           .backgroundColor($r('app.color.surface_muted'))
           .borderRadius($r('app.float.pill_radius'))
           .onClick(() => {
-            this.getUIContext().getRouter().back()
+            this.handleToolbarBack()
           })
 
           Row() {

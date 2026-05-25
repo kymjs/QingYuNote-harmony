@@ -2,6 +2,7 @@ import { Want } from '@kit.AbilityKit'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { getAppVersionName } from '../services/AppUpdateService'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
 @Entry
 @Component
@@ -9,9 +10,11 @@ struct About {
   /** 异步拉取包 `versionName` 后追加，如 ` v1.0.1`；未就绪前不展示占位版本号。 */
   @State versionSuffix: string = ''
   private lifecycle = new PageLifecycle()
+  private closeGuard = new PageCloseGuard()
 
   aboutToAppear(): void {
     this.lifecycle.appear()
+    this.closeGuard.reset()
     void getAppVersionName().then((v: string) => {
       if (this.lifecycle.isActive()) {
         this.versionSuffix = ` v${v}`
@@ -36,6 +39,17 @@ struct About {
     context.startAbility(want).catch((err: Error) => {
       console.error(`openOfficialSite: ${JSON.stringify(err)}`)
     })
+  }
+
+  private handleToolbarBack(): void {
+    this.closeGuard.runBack(() => {
+      this.getUIContext().getRouter().back()
+    }, 'About')
+  }
+
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
   }
 
   private openMiitBeian(): void {
@@ -72,7 +86,7 @@ struct About {
         .backgroundColor($r('app.color.surface_muted'))
         .borderRadius($r('app.float.pill_radius'))
         .onClick(() => {
-          this.getUIContext().getRouter().back()
+          this.handleToolbarBack()
         })
 
         Row() {

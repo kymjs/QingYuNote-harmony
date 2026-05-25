@@ -1,6 +1,7 @@
 import { AppContextHolder } from '../services/AppContextHolder'
 import { NoteApiClient } from '../services/NoteApiClient'
 import { PreferencesService } from '../services/PreferencesService'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
 /**
  * 重置密码（与 Flutter `ChangePasswordPage` 对齐：短信验证码 + 服务端公开重置接口）。
@@ -21,8 +22,10 @@ struct ChangePassword {
   private cooldownTimerId: number = -1
   private phoneDebounceTimerId: number = -1
   private lastScheduledDigits: string = ''
+  private closeGuard = new PageCloseGuard()
 
   aboutToAppear(): void {
+    this.closeGuard.reset()
     this.captureInitialPhone()
     const d = this.normalizePhoneDigits(this.phone)
     if (d !== this.phone) {
@@ -277,6 +280,17 @@ struct ChangePassword {
     }
   }
 
+  private handleToolbarBack(): void {
+    this.closeGuard.runBack(() => {
+      this.getUIContext().getRouter().back()
+    }, 'ChangePassword')
+  }
+
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
+  }
+
   build() {
     Column() {
       Row() {
@@ -296,7 +310,7 @@ struct ChangePassword {
         .backgroundColor($r('app.color.surface_muted'))
         .borderRadius($r('app.float.pill_radius'))
         .onClick(() => {
-          this.getUIContext().getRouter().back()
+          this.handleToolbarBack()
         })
 
         Row() {

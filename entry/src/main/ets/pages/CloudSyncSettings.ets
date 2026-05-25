@@ -49,14 +49,26 @@ struct CloudSyncSettings {
   private passwordTouched: boolean = false
   /** 页面是否仍在前台；异步回调返回前若已返回上一页则不再更新 @State，避免崩溃。 */
   private pageActive: boolean = false
+  /** 防止连续快速返回导致多次 pop 或并发保存后返回。 */
+  private closing: boolean = false
+  /** 防止并发 handleSave（快速返回时后台保存与显式保存互斥）。 */
+  private saveInFlight: boolean = false
 
   aboutToAppear(): void {
     this.pageActive = true
+    this.closing = false
     void this.loadSettings()
   }
 
   aboutToDisappear(): void {
     this.pageActive = false
+    this.closing = true
+  }
+
+  /** 拦截系统返回键，与工具栏返回按钮共用单次关闭逻辑。 */
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
   }
 
   onPageShow(): void {
@@ -231,9 +243,9 @@ struct CloudSyncSettings {
   }
 
 
-  private async buildConfigPayload(): Promise<SettingsPayload> {
+  private async buildConfigPayload(skipRemoteQingyuFetch: boolean = false): Promise<SettingsPayload> {
     if (this.selectedProvider === 'qingyu_cloud') {
-      return await this.buildQingyuPayload()
+      return await this.buildQingyuPayload(skipRemoteQingyuFetch)
     }
     return await this.buildWebDAVPayload()
   }
@@ -274,12 +286,31 @@ struct CloudSyncSettings {
     return payload
   }
 
-  private async buildQingyuPayload(): Promise<SettingsPayload> {
+  private buildQingyuIntentOnlyPayload(policy: SyncPolicy): SettingsPayload {
+    return {
+      config: {
+        baseUrl: '',
+        username: '',
+        encryptedPassword: '',
+        notesDir: this.notesDir.length > 0 ? this.notesDir : '/qingyu-notes/',
+        enabled: true,
+        provider: 'qingyu_cloud'
+      },
+      policy,
+      reusedStoredPassword: false,
+      effectivePasswordPresent: false
+    }
+  }
+
+  private async buildQingyuPayload(skipRemoteQingyuFetch: boolean = false): Promise<SettingsPayload> {
     const policy: SyncPolicy = {
       autoSync: this.autoSync,
       syncIntervalMinutes: Number.parseInt(this.syncIntervalMinutes, 10) || 60,
       wifiOnly: this.wifiOnly,
       debounceSeconds: 5
+    }
+    if (skipRemoteQingyuFetch) {
+      return this.buildQingyuIntentOnlyPayload(policy)
     }
     const cfg = await buildQingyuCloudWebDavConfig()
     if (cfg === null) {
@@ -325,11 +356,16 @@ struct CloudSyncSettings {
     }
   }
 
-  private async handleSave(): Promise<SettingsPayload> {
+  private async handleSave(skipRemoteQingyuFetch: boolean = false): Promise<SettingsPayload> {
+    if (this.saveInFlight) {
+      Logger.warn('CloudSyncSettings', 'handleSave skipped: save already in flight')
+      throw new Error('save already in flight')
+    }
+    this.saveInFlight = true
     Logger.info('CloudSyncSettings',
-      `handleSave start: provider=${this.selectedProvider}, serverUrlEmpty=${this.serverUrl.trim().length === 0}`)
+      `handleSave start: provider=${this.selectedProvider}, serverUrlEmpty=${this.serverUrl.trim().length === 0}, skipRemote=${skipRemoteQingyuFetch}`)
     try {
-      const payload = await this.buildConfigPayload()
+      const payload = await this.buildConfigPayload(skipRemoteQingyuFetch)
       if (payload.config.provider === 'qingyu_cloud' && await PreferencesService.getInstance().isGuestMode()) {
         this.showUserMessage('请先登录后再保存轻羽云同步')
         return payload
@@ -358,15 +394,63 @@ struct CloudSyncSettings {
     } catch (error) {
       Logger.warn('CloudSyncSettings', `handleSave failed: ${this.describeError(error)}`)
       throw this.toRuntimeError(error)
+    } finally {
+      this.saveInFlight = false
+    }
+  }
+
+  private tryBeginClose(): boolean {
+    if (this.closing) {
+      return false
+    }
+    this.closing = true
+    this.pageActive = false
+    return true
+  }
+
+  private popOnce(): void {
+    try {
+      this.getUIContext().getRouter().back()
+    } catch (error) {
+      Logger.warn('CloudSyncSettings', `popOnce failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  private handleToolbarBack(): void {
+    if (!this.tryBeginClose()) {
+      return
+    }
+    // 先 pop，避免等待 GET /qingyu/webdav 期间连按返回触发多次 router.back() → ExitToDesktop。
+    this.popOnce()
+    if (this.selectedProvider === 'qingyu_cloud') {
+      void this.persistSettingsAfterLeave(true)
+    }
+  }
+
+  /** 页面已关闭后在后台持久化；轻羽云返回时不阻塞等待远程 WebDAV 凭据。 */
+  private async persistSettingsAfterLeave(skipRemoteQingyuFetch: boolean): Promise<void> {
+    try {
+      await this.handleSave(skipRemoteQingyuFetch)
+    } catch (error) {
+      Logger.warn('CloudSyncSettings',
+        `persistSettingsAfterLeave failed: ${this.describeError(error)}`)
     }
   }
 
   private async handleSaveAndClose(): Promise<void> {
-    await this.handleSave()
-    if (!this.isPageActive()) {
+    if (!this.tryBeginClose()) {
       return
     }
-    this.getUIContext().getRouter().back()
+    try {
+      await this.handleSave(false)
+    } catch (error) {
+      Logger.warn('CloudSyncSettings', `handleSaveAndClose failed: ${this.describeError(error)}`)
+      this.closing = false
+      this.pageActive = true
+      this.showUserMessage('保存失败，请稍后重试')
+      return
+    }
+    this.popOnce()
   }
 
   /** 轻羽云订阅可用时，将当前选项保存为使用轻羽云同步（无需依赖底部其它保存入口）。 */
@@ -511,11 +595,7 @@ struct CloudSyncSettings {
         .backgroundColor($r('app.color.surface_muted'))
         .borderRadius($r('app.float.pill_radius'))
         .onClick(() => {
-          if (this.selectedProvider === 'qingyu_cloud') {
-            void this.handleSaveAndClose()
-          } else {
-            this.getUIContext().getRouter().back()
-          }
+          this.handleToolbarBack()
         })
 
         Row() {

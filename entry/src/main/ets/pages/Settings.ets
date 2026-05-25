@@ -4,6 +4,7 @@ import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
 import { runAppUpdateCheckManually } from '../services/AppUpdateUi'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
 /** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展，用于退出登录后避免返回敏感页。 */
 interface RouterWithOptionalClear {
@@ -18,9 +19,11 @@ struct Settings {
   /** 与 Flutter `SettingsHubPage` 对齐：游客模式下不展示退出登录 */
   @State guestMode: boolean = false
   private lifecycle = new PageLifecycle()
+  private closeGuard = new PageCloseGuard()
 
   aboutToAppear(): void {
     this.lifecycle.appear()
+    this.closeGuard.reset()
     void this.loadSettingsState()
   }
 
@@ -90,6 +93,17 @@ struct Settings {
     })
   }
 
+  private handleToolbarBack(): void {
+    this.closeGuard.runBack(() => {
+      this.getUIContext().getRouter().back()
+    }, 'Settings')
+  }
+
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
+  }
+
   private openTermsOfService(): void {
     const context = AppContextHolder.tryGetContext()
     if (context === undefined) {
@@ -124,7 +138,7 @@ struct Settings {
         .backgroundColor($r('app.color.surface_muted'))
         .borderRadius($r('app.float.pill_radius'))
         .onClick(() => {
-          this.getUIContext().getRouter().back()
+          this.handleToolbarBack()
         })
 
         Row() {

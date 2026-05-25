@@ -1,6 +1,7 @@
 import type { Note } from '../common/model/Note'
 import { NoteRepository } from '../services/NoteRepository'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
 interface TagNoteAssignParams {
   tagName?: string
@@ -21,9 +22,11 @@ struct TagNoteAssign {
   @State saving: boolean = false
   @State loading: boolean = true
   private lifecycle = new PageLifecycle()
+  private closeGuard = new PageCloseGuard()
 
   aboutToAppear(): void {
     this.lifecycle.appear()
+    this.closeGuard.reset()
     const params = this.getUIContext().getRouter().getParams() as TagNoteAssignParams
     this.tagName = `${params?.tagName ?? ''}`.trim()
     void this.loadNotes()
@@ -127,7 +130,9 @@ struct TagNoteAssign {
       }
       this.showUserMessage('已保存')
       if (this.lifecycle.isActive()) {
-        this.getUIContext().getRouter().back()
+        this.closeGuard.runBack(() => {
+          this.getUIContext().getRouter().back()
+        }, 'TagNoteAssign')
       }
     } catch (error) {
       console.error(JSON.stringify(error))
@@ -138,6 +143,17 @@ struct TagNoteAssign {
         this.saving = false
       }
     }
+  }
+
+  private handleToolbarBack(): void {
+    this.closeGuard.runBack(() => {
+      this.getUIContext().getRouter().back()
+    }, 'TagNoteAssign')
+  }
+
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
   }
 
   @Builder
@@ -159,7 +175,7 @@ struct TagNoteAssign {
       .backgroundColor($r('app.color.surface_muted'))
       .borderRadius($r('app.float.pill_radius'))
       .onClick(() => {
-        this.getUIContext().getRouter().back()
+        this.handleToolbarBack()
       })
 
       Row() {

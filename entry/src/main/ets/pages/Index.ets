@@ -22,6 +22,7 @@ import {
 import { SyncConstants } from '../common/constants/SyncConstants'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
+import { navigateToBindPhoneIfNeeded } from '../common/utils/BindPhoneNavigation'
 
 /** 与 HomeDrawerLayer 内 DRAWER_SPAN 一致，用于全屏横向拖动手势计算行程。 */
 const DRAWER_OFFSCREEN_PAD = 20
@@ -126,7 +127,7 @@ struct Index {
     if (!this.lifecycle.isActive()) {
       return
     }
-    void this.navigateToBindPhoneIfNeeded()
+    void navigateToBindPhoneIfNeeded(this.getUIContext())
     await tryAutoProvisionQingyuCloudOnHomeEntry()
     if (!this.lifecycle.isActive()) {
       return
@@ -187,38 +188,7 @@ struct Index {
     void this.startStartupSyncIfNeeded()
     await runAppUpdateCheckOnLaunch(this.getUIContext())
     if (this.lifecycle.isActive()) {
-      void this.navigateToBindPhoneIfNeeded()
-    }
-  }
-
-  private bindPhoneNavigationActive: boolean = false
-
-  private async navigateToBindPhoneIfNeeded(): Promise<void> {
-    if (this.bindPhoneNavigationActive) {
-      return
-    }
-    try {
-      const loggedIn = await PreferencesService.getInstance().isUserLoggedIn()
-      const guest = await PreferencesService.getInstance().isGuestMode()
-      if (!loggedIn || guest) {
-        return
-      }
-      const profile = await NoteApiClient.getInstance().fetchProfile()
-      if (profile !== null) {
-        const phone = (profile.phone ?? '').trim()
-        if (phone.length === 0) {
-          this.bindPhoneNavigationActive = true
-          try {
-            await this.getUIContext().getRouter().pushUrl({ url: 'pages/BindPhone' })
-          } catch (err) {
-            console.error(`pushUrl BindPhone failed: ${JSON.stringify(err)}`)
-          } finally {
-            this.bindPhoneNavigationActive = false
-          }
-        }
-      }
-    } catch (_) {
-      // Silently ignore profile fetch errors
+      void navigateToBindPhoneIfNeeded(this.getUIContext())
     }
   }
 

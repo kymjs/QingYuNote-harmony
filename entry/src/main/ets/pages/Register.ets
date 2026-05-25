@@ -9,6 +9,7 @@ import {
 } from '../dialogs/RegisterCaptchaDialog'
 import { NoteApiClient } from '../services/NoteApiClient'
 import { PreferencesService } from '../services/PreferencesService'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
 /** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展，进入首页前清空以免返回登录/注册页。 */
 interface RouterWithOptionalClear {
@@ -39,6 +40,7 @@ struct Register {
   private cooldownTimerId: number = -1
   private phoneDebounceTimerId: number = -1
   private lastScheduledDigits: string = ''
+  private closeGuard = new PageCloseGuard()
 
   private obtainUiAbilityContext(): common.UIAbilityContext | undefined {
     const host = this.getUIContext().getHostContext()
@@ -113,6 +115,7 @@ struct Register {
   }
 
   aboutToAppear(): void {
+    this.closeGuard.reset()
     this.captureNavParams()
     void this.loadPendingReturnTarget()
     this.captureInitialPhone()
@@ -418,6 +421,17 @@ struct Register {
     }
   }
 
+  private handleToolbarBack(): void {
+    this.closeGuard.runBack(() => {
+      this.getUIContext().getRouter().back()
+    }, 'Register')
+  }
+
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
+  }
+
   build() {
     Column() {
       Row() {
@@ -437,7 +451,7 @@ struct Register {
         .backgroundColor($r('app.color.surface_muted'))
         .borderRadius($r('app.float.pill_radius'))
         .onClick(() => {
-          this.getUIContext().getRouter().back()
+          this.handleToolbarBack()
         })
 
         Row() {

@@ -33,6 +33,7 @@ import {
 } from '../common/constants/AvatarCropConstants'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
+import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
 /** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展 */
 interface RouterWithOptionalClear {
@@ -55,9 +56,11 @@ struct Profile {
   /** 本地缓存的远程配置中 pay 字段为 true */
   @State payConfigReady: boolean = false
   private lifecycle = new PageLifecycle()
+  private closeGuard = new PageCloseGuard()
 
   aboutToAppear(): void {
     this.lifecycle.appear()
+    this.closeGuard.reset()
     void this.bootstrap()
   }
 
@@ -774,6 +777,17 @@ struct Profile {
     }
   }
 
+  private handleToolbarBack(): void {
+    this.closeGuard.runBack(() => {
+      this.getUIContext().getRouter().back()
+    }, 'Profile')
+  }
+
+  onBackPress(): boolean {
+    this.handleToolbarBack()
+    return true
+  }
+
   @Builder
   groupGap() {
     Column()
@@ -881,7 +895,7 @@ struct Profile {
         .backgroundColor($r('app.color.surface_muted'))
         .borderRadius($r('app.float.pill_radius'))
         .onClick(() => {
-          this.getUIContext().getRouter().back()
+          this.handleToolbarBack()
         })
 
         Row() {
