@@ -24,6 +24,9 @@ export struct EditorQuickActionBar {
   private static readonly BAR_PADDING_H: number = 8
   private static readonly ICON_COUNT: number = 9
   private static readonly ICON_VISUAL_SIZE: number = EditorQuickActionBar.SLOT_SIZE * 0.7
+  /** 加粗/斜体/删除线图标视觉缩小 15%，点击区域仍用 ICON_VISUAL_SIZE 计算。 */
+  private static readonly ICON_VISUAL_SIZE_COMPACT: number =
+    EditorQuickActionBar.ICON_VISUAL_SIZE * 0.85
   private static readonly ICON_PADDING: number = EditorQuickActionBar.SLOT_SIZE * 0.3
   private static readonly ICON_CELL_WIDTH: number =
     EditorQuickActionBar.ICON_VISUAL_SIZE + EditorQuickActionBar.ICON_PADDING * 2
@@ -52,16 +55,45 @@ export struct EditorQuickActionBar {
   }
 
   @Builder
+  private buildSymbolIcon(
+    action: EditorQuickActionType,
+    symbol: Resource,
+    hPad: number,
+    iconColor?: ResourceColor
+  ) {
+    Row() {
+      SymbolGlyph(symbol)
+        .fontSize(20)
+        .fontColor([iconColor ?? $r('app.color.primary_text')])
+    }
+    .width(this.cellWidth(hPad))
+    .height(EditorQuickActionBar.SLOT_SIZE)
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+    .backgroundColor(Color.Transparent)
+    .focusable(false)
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) {
+        this.onBeforeAction()
+      }
+    })
+    .onClick(() => {
+      this.onAction(action)
+    })
+  }
+
+  @Builder
   private buildIcon(
     action: EditorQuickActionType,
     media: Resource,
     hPad: number,
-    imageFill?: ResourceColor
+    imageFill?: ResourceColor,
+    visualSize: number = EditorQuickActionBar.ICON_VISUAL_SIZE
   ) {
     Row() {
       Image(media)
-        .width(EditorQuickActionBar.ICON_VISUAL_SIZE)
-        .height(EditorQuickActionBar.ICON_VISUAL_SIZE)
+        .width(visualSize)
+        .height(visualSize)
         .objectFit(ImageFit.Contain)
         .fillColor(imageFill ?? Color.Transparent)
     }
@@ -84,15 +116,15 @@ export struct EditorQuickActionBar {
   @Builder
   private buildActionRow(hPad: number, justify: FlexAlign) {
     Row() {
-      this.buildIcon('link', $r('app.media.ic_editor_link'), hPad)
-      this.buildIcon('image', $r('app.media.ic_image'), hPad, $r('app.color.primary_text'))
-      this.buildIcon('quote', $r('app.media.ic_editor_quote'), hPad)
-      this.buildIcon('hr', $r('app.media.ic_editor_hr'), hPad)
-      this.buildIcon('orderedList', $r('app.media.ic_editor_ol'), hPad)
-      this.buildIcon('bulletList', $r('app.media.ic_editor_ul'), hPad)
-      this.buildIcon('bold', $r('app.media.ic_editor_bold'), hPad)
-      this.buildIcon('strike', $r('app.media.ic_editor_strike'), hPad)
-      this.buildIcon('italic', $r('app.media.ic_editor_italic'), hPad)
+      this.buildSymbolIcon('link', $r('sys.symbol.link'), hPad)
+      this.buildSymbolIcon('image', $r('sys.symbol.picture'), hPad, $r('app.color.primary_text'))
+      this.buildSymbolIcon('quote', $r('sys.symbol.quote'), hPad)
+      this.buildSymbolIcon('hr', $r('sys.symbol.minus'), hPad)
+      this.buildSymbolIcon('orderedList', $r('sys.symbol.list_number'), hPad)
+      this.buildSymbolIcon('bulletList', $r('sys.symbol.list_bullet'), hPad)
+      this.buildSymbolIcon('bold', $r('sys.symbol.bold'), hPad)
+      this.buildSymbolIcon('strike', $r('sys.symbol.strikethrough'), hPad)
+      this.buildSymbolIcon('italic', $r('sys.symbol.italic'), hPad)
     }
     .height(EditorQuickActionBar.BAR_HEIGHT)
     .justifyContent(justify)
@@ -105,15 +137,15 @@ export struct EditorQuickActionBar {
   private buildScrollableBar(hPad: number) {
     Scroll() {
       Row() {
-        this.buildIcon('link', $r('app.media.ic_editor_link'), hPad)
-        this.buildIcon('image', $r('app.media.ic_image'), hPad, $r('app.color.primary_text'))
-        this.buildIcon('quote', $r('app.media.ic_editor_quote'), hPad)
-        this.buildIcon('hr', $r('app.media.ic_editor_hr'), hPad)
-        this.buildIcon('orderedList', $r('app.media.ic_editor_ol'), hPad)
-        this.buildIcon('bulletList', $r('app.media.ic_editor_ul'), hPad)
-        this.buildIcon('bold', $r('app.media.ic_editor_bold'), hPad)
-        this.buildIcon('strike', $r('app.media.ic_editor_strike'), hPad)
-        this.buildIcon('italic', $r('app.media.ic_editor_italic'), hPad)
+        this.buildSymbolIcon('link', $r('sys.symbol.link'), hPad)
+        this.buildSymbolIcon('image', $r('sys.symbol.picture'), hPad, $r('app.color.primary_text'))
+        this.buildSymbolIcon('quote', $r('sys.symbol.quote'), hPad)
+        this.buildSymbolIcon('hr', $r('sys.symbol.minus'), hPad)
+        this.buildSymbolIcon('orderedList', $r('sys.symbol.list_number'), hPad)
+        this.buildSymbolIcon('bulletList', $r('sys.symbol.list_bullet'), hPad)
+        this.buildSymbolIcon('bold', $r('sys.symbol.bold'), hPad)
+        this.buildSymbolIcon('strike', $r('sys.symbol.strikethrough'), hPad)
+        this.buildSymbolIcon('italic', $r('sys.symbol.italic'), hPad)
       }
       .height(EditorQuickActionBar.BAR_HEIGHT)
       .alignItems(VerticalAlign.Center)

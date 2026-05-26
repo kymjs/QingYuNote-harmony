@@ -2,6 +2,12 @@ import { http } from '@kit.NetworkKit'
 import { AiNotePrompt } from './AiNotePrompt'
 import { AiTagService } from './AiTagService'
 import { NoteApiClient } from './NoteApiClient'
+import { MarkdownUtils } from '../common/utils/MarkdownUtils'
+
+export interface AiLinkSummaryResult {
+  title: string
+  body: string
+}
 
 interface ChatMessage {
   role: string
@@ -42,18 +48,23 @@ export class AiNoteService {
     )
   }
 
-  async summarizeLink(url: string): Promise<string> {
+  async summarizeLink(url: string): Promise<AiLinkSummaryResult> {
     const link = url.trim()
     if (link.length === 0) {
       throw new Error('请输入有效链接')
     }
     const excerpt = await AiNoteService.fetchPageExcerpt(link)
-    return AiNoteService.chatPlainText(
+    const raw = await AiNoteService.chatPlainText(
       AiNotePrompt.LINK_SUMMARY_SYSTEM,
       AiNotePrompt.buildLinkSummaryUserMessage(link, excerpt),
       0.4,
       1024
     )
+    const parts = MarkdownUtils.splitLinkSummary(raw)
+    return {
+      title: parts.title,
+      body: parts.body.length > 0 ? parts.body : raw.trim()
+    }
   }
 
   private static async chatPlainText(

@@ -85,6 +85,14 @@
       "value": "#66000000"
     },
     {
+      "name": "tab_bar_immersive_tint",
+      "value": "#33E5E5E5"
+    },
+    {
+      "name": "tab_bar_immersive_border",
+      "value": "#1AFFFFFF"
+    },
+    {
       "name": "wechat_brand",
       "value": "#FF07C160"
     },

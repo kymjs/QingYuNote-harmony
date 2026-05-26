@@ -1,3 +1,5 @@
+import type { EditorInsertResult } from './EditorMarkdownInsert'
+
 export type MarkdownInlineType =
   'text' | 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link' | 'math_inline'
 
@@ -8,9 +10,15 @@ export interface MarkdownInline {
 }
 
 export type MarkdownBlockType =
-  'heading1' | 'heading2' | 'heading3' | 'quote' | 'unordered_list' | 'ordered_list' | 'code' | 'divider' | 'image' | 'paragraph' | 'math_display'
+  'heading1' | 'heading2' | 'heading3' | 'quote' | 'unordered_list' | 'ordered_list' | 'checkbox_list' | 'code' | 'divider' | 'image' | 'paragraph' | 'math_display'
 
 type MarkdownListBlockType = 'unordered_list' | 'ordered_list'
+
+export interface MarkdownCheckboxItem {
+  checked: boolean
+  inlines: MarkdownInline[]
+  sourceLineIndex: number
+}
 
 export interface MarkdownBlock {
   type: MarkdownBlockType
@@ -18,6 +26,12 @@ export interface MarkdownBlock {
   inlines: MarkdownInline[]
   items: MarkdownInline[][]
   language: string
+  checkboxItems?: MarkdownCheckboxItem[]
+}
+
+export interface LinkSummaryParts {
+  title: string
+  body: string
 }
 
 interface MarkdownToken {
@@ -51,6 +65,35 @@ export class MarkdownUtils {
     return '未命名笔记'
   }
 
+  /** AI 链接摘要：若首段非空行为 Markdown 标题，拆出标题与正文（不含标题行）。 */
+  static splitLinkSummary(summary: string): LinkSummaryParts {
+    const trimmed = summary.trim()
+    if (trimmed.length === 0) {
+      return { title: '', body: '' }
+    }
+    const lines = trimmed.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim()
+      if (line.length === 0) {
+        continue
+      }
+      if (line.startsWith('#')) {
+        const titleText = line.replace(/^#+\s*/, '').trim()
+        const title = titleText.length <= 40 ? titleText : titleText.slice(0, 40)
+        let bodyStart = i + 1
+        while (bodyStart < lines.length && lines[bodyStart].trim().length === 0) {
+          bodyStart++
+        }
+        const body = bodyStart >= lines.length
+          ? ''
+          : lines.slice(bodyStart).join('\n').trim()
+        return { title: title, body: body }
+      }
+      break
+    }
+    return { title: '', body: trimmed }
+  }
+
   static stripMarkdown(content: string): string {
     if (!MarkdownUtils.containsMarkdownMarkers(content)) {
       return content.replace(/\r/g, '').trim()
@@ -74,8 +117,87 @@ export class MarkdownUtils {
       .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
       .replace(/^[-*+]\s+/gm, '')
+      .replace(/^\[[ -]\]\s?/gm, '')
       .replace(/\r/g, '')
       .trim()
+  }
+
+  /** 行首 `[ ]` 为未选中勾选框，`[-]` 为已选中勾选框。 */
+  static isUncheckedCheckboxLine(trimmed: string): boolean {
+    return /^\[ \]/.test(trimmed)
+  }
+
+  static isCheckedCheckboxLine(trimmed: string): boolean {
+    return /^\[-\]/.test(trimmed)
+  }
+
+  static isCheckboxLine(trimmed: string): boolean {
+    return MarkdownUtils.isUncheckedCheckboxLine(trimmed) ||
+      MarkdownUtils.isCheckedCheckboxLine(trimmed)
+  }
+
+  static checkboxLineText(trimmed: string): string {
+    if (MarkdownUtils.isUncheckedCheckboxLine(trimmed)) {
+      return trimmed.replace(/^\[ \]\s?/, '')
+    }
+    if (MarkdownUtils.isCheckedCheckboxLine(trimmed)) {
+      return trimmed.replace(/^\[-\]\s?/, '')
+    }
+    return trimmed
+  }
+
+  static toggleCheckboxLine(content: string, lineIndex: number, checked?: boolean): string {
+    const lines = content.replace(/\r/g, '').split('\n')
+    if (lineIndex < 0 || lineIndex >= lines.length) {
+      return content
+    }
+    const line = lines[lineIndex]
+    const trimmed = line.trimStart()
+    if (!MarkdownUtils.isCheckboxLine(trimmed)) {
+      return content
+    }
+    const wasChecked = MarkdownUtils.isCheckedCheckboxLine(trimmed)
+    const newChecked = checked !== undefined ? checked : !wasChecked
+    const text = MarkdownUtils.checkboxLineText(trimmed)
+    const leading = line.slice(0, line.length - trimmed.length)
+    const marker = newChecked ? '[-]' : '[ ]'
+    lines[lineIndex] = text.length === 0 ? `${leading}${marker}` : `${leading}${marker} ${text}`
+    return lines.join('\n')
+  }
+
+  /** Todo 标签笔记换行时，在新行行首自动插入 `[ ] `。 */
+  static applyTodoCheckboxOnNewline(
+    oldContent: string,
+    newContent: string,
+    caret: number
+  ): EditorInsertResult | null {
+    if (newContent.length <= oldContent.length) {
+      return null
+    }
+    let insertAt = -1
+    for (let i = 0; i < oldContent.length; i++) {
+      if (i >= newContent.length || oldContent[i] !== newContent[i]) {
+        insertAt = i
+        break
+      }
+    }
+    if (insertAt === -1 && newContent.length === oldContent.length + 1) {
+      insertAt = oldContent.length
+    }
+    if (insertAt === -1 || newContent[insertAt] !== '\n') {
+      return null
+    }
+    const lineStart = insertAt + 1
+    const lineEnd = newContent.indexOf('\n', lineStart)
+    const lineContent = lineEnd === -1
+      ? newContent.slice(lineStart)
+      : newContent.slice(lineStart, lineEnd)
+    if (lineContent.startsWith('[ ]') || lineContent.startsWith('[-]')) {
+      return null
+    }
+    const prefix = '[ ] '
+    const updated = `${newContent.slice(0, lineStart)}${prefix}${newContent.slice(lineStart)}`
+    return { text: updated, caret: lineStart + prefix.length }
   }
 
   static summary(content: string, maxLength: number = 100): string {
@@ -95,6 +217,7 @@ export class MarkdownUtils {
     const paragraphLines: string[] = []
     const quoteLines: string[] = []
     const listItems: string[] = []
+    const checkboxItems: MarkdownCheckboxItem[] = []
     let inCodeBlock = false
     const codeLines: string[] = []
     let codeLanguage = ''
@@ -158,6 +281,21 @@ export class MarkdownUtils {
       })
     }
 
+    const flushCheckboxList = (): void => {
+      if (checkboxItems.length === 0) {
+        return
+      }
+      blocks.push({
+        type: 'checkbox_list',
+        content: '',
+        inlines: [],
+        items: [],
+        language: '',
+        checkboxItems: [...checkboxItems]
+      })
+      checkboxItems.length = 0
+    }
+
     const flushList = (): void => {
       if (listItems.length === 0 || !hasActiveList) {
         listItems.length = 0
@@ -181,9 +319,11 @@ export class MarkdownUtils {
       flushParagraph()
       flushQuote()
       flushList()
+      flushCheckboxList()
     }
 
-    for (const line of lines) {
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      const line = lines[lineIndex]
       const trimmed = line.trim()
       if (inCodeBlock) {
         if (MarkdownUtils.isCodeFenceCloser(trimmed)) {
@@ -321,6 +461,22 @@ export class MarkdownUtils {
       }
       if (quoteLines.length > 0) {
         flushQuote()
+      }
+      if (MarkdownUtils.isUncheckedCheckboxLine(trimmed) ||
+        MarkdownUtils.isCheckedCheckboxLine(trimmed)) {
+        flushParagraph()
+        flushList()
+        const checked = MarkdownUtils.isCheckedCheckboxLine(trimmed)
+        const text = MarkdownUtils.checkboxLineText(trimmed)
+        checkboxItems.push({
+          checked,
+          inlines: MarkdownUtils.parseInlines(text),
+          sourceLineIndex: lineIndex
+        })
+        continue
+      }
+      if (checkboxItems.length > 0) {
+        flushCheckboxList()
       }
       if (/^[-*+]\s+/.test(trimmed)) {
         flushParagraph()

@@ -102,6 +102,7 @@ struct NoteEdit {
   @State keyboardHeightVp: number = 0
   /** 正文上次已知光标位置；点击快捷栏时 TextArea 失焦，getCaretOffset 常误报文末。 */
   private contentCaretIndex: number = 0
+  private previousContent: string = ''
   /** 程序化插入期间勿用控制器同步光标（避免把缓存覆盖成文末）。 */
   private suppressContentCaretSync: boolean = false
   private pendingInsertCaret: number = -1
@@ -448,6 +449,18 @@ struct NoteEdit {
   }
 
   private handleContentChange(): void {
+    if (!this.suppressContentCaretSync && this.noteTagsSafe().includes('Todo')) {
+      const oldText = this.previousContent
+      const newText = this.content
+      const caret = this.currentContentCaret()
+      const result = MarkdownUtils.applyTodoCheckboxOnNewline(oldText, newText, caret)
+      if (result !== null) {
+        this.applyContentInsert(result)
+        this.previousContent = result.text
+        return
+      }
+    }
+    this.previousContent = this.content
     if (this.suppressContentCaretSync) {
       if (this.pendingInsertCaret >= 0) {
         this.scheduleApplyCaret(this.pendingInsertCaret)
@@ -590,6 +603,38 @@ struct NoteEdit {
       fromNotes.push(...n.tags)
     }
     this.tagPool = this.normalizeTags(fromNotes.concat(stored).concat(this.noteTags))
+  }
+
+  private onPreviewCheckboxToggle(lineIndex: number, checked: boolean): void {
+    const updated = MarkdownUtils.toggleCheckboxLine(this.content, lineIndex, checked)
+    if (updated === this.content) {
+      return
+    }
+    this.suppressContentCaretSync = true
+    this.content = updated
+    this.previousContent = updated
+    this.scheduleSave()
+    if (this.shouldRenderPreview()) {
+      this.previewDirty = true
+      this.refreshPreviewBlocks(updated)
+    } else {
+      this.previewDirty = true
+    }
+  }
+
+  private applyTodoListEntryDefaults(): void {
+    this.title = '待办事项'
+    void this.onTagChecked('Todo', true)
+    this.content = '[ ] '
+    this.previousContent = this.content
+    this.contentCaretIndex = this.content.length
+    this.scheduleApplyCaret(this.content.length, this.content.length)
+    this.scheduleSave()
+    if (this.shouldRenderPreview()) {
+      this.schedulePreviewRefresh()
+    } else {
+      this.previewDirty = true
+    }
   }
 
   private noteTagsSafe(): string[] {
@@ -749,6 +794,7 @@ struct NoteEdit {
     }
     this.title = note.title
     this.content = note.content
+    this.previousContent = note.content
     this.contentCaretIndex = note.content.length
     this.lastSavedAt = note.updatedAt
     this.noteCreatedAt = note.createdAt
@@ -779,8 +825,10 @@ struct NoteEdit {
       }
       if (action === 'aiLinkExtract') {
         this.openAiLinkExtractDialog()
-      } else if (action === 'insertImage' || action === 'bookScan') {
+      } else if (action === 'insertImage') {
         void this.insertImage()
+      } else if (action === 'todoList') {
+        this.applyTodoListEntryDefaults()
       }
     }, 0)
   }
@@ -1275,6 +1323,35 @@ struct NoteEdit {
       })
     } catch (error) {
       console.error(`showToast failed: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private previewLinkPageTitle(href: string): string {
+    const url = href.trim()
+    const match = url.match(/^https?:\/\/([^/?#]+)/i)
+    if (match !== null && match[1] !== undefined && match[1].length > 0) {
+      return match[1]
+    }
+    return url.length <= 40 ? url : `${url.slice(0, 40)}…`
+  }
+
+  private openPreviewLink(href: string): void {
+    const url = href.trim()
+    if (url.length === 0) {
+      return
+    }
+    try {
+      this.getUIContext().getRouter().pushUrl({
+        url: 'pages/H5WebContainer',
+        params: {
+          title: this.previewLinkPageTitle(url),
+          url: url
+        }
+      }).catch((err: Error) => {
+        Logger.warn('NoteEdit', `openPreviewLink: ${JSON.stringify(err)}`)
+      })
+    } catch (error) {
+      Logger.warn('NoteEdit', `openPreviewLink: ${JSON.stringify(error)}`)
     }
   }
 
@@ -2245,11 +2322,16 @@ struct NoteEdit {
     this.aiMenuVisible = false
     const before = this.content
     try {
-      const summary = await AiNoteService.getInstance().summarizeLink(url.trim())
+      const result = await AiNoteService.getInstance().summarizeLink(url.trim())
       this.captureAiUndoBaseline(before)
       const existing = this.content
       const separator = existing.trim().length === 0 ? '' : '\n\n'
-      this.content = `${existing}${separator}${summary}`
+      const trimmedUrl = url.trim()
+      const linkLine = `完整文章链接为：[${trimmedUrl}](${trimmedUrl})`
+      this.content = `${existing}${separator}${result.body}\n\n${linkLine}`
+      if (this.title.trim().length === 0 && result.title.trim().length > 0) {
+        this.title = result.title.trim()
+      }
       this.handleContentChange()
       this.showPreviewMessage('AI 已生成链接摘要并写入正文')
     } catch (e) {
@@ -2674,23 +2756,21 @@ struct NoteEdit {
                     this.switchMode('preview')
                   })
                 if (!this.quickActionBarEnabled) {
-                  Image($r('app.media.ic_image'))
-                    .width(30)
-                    .height(30)
+                  SymbolGlyph($r('sys.symbol.picture'))
+                    .fontSize(22)
+                    .fontColor([$r('app.color.primary_text')])
                     .margin({ right: 5, left: 5 })
                     .padding(3)
-                    .fillColor(Color.White)
                     .onClick(() => {
                       void this.insertImage()
                     })
                 }
               }
-              Image($r('app.media.ic_share'))
-                .width(30)
-                .height(30)
+              SymbolGlyph($r('sys.symbol.share'))
+                .fontSize(22)
+                .fontColor([$r('app.color.primary_text')])
                 .margin({ right: 5, left: 5 })
                 .padding(3)
-                .fillColor(Color.White)
                 .onClick(() => {
                   void this.runSaveLongImageToGallery()
                 })
@@ -2753,7 +2833,10 @@ struct NoteEdit {
                 }
               },
               onLinkToast: (href: string): void => {
-                this.showPreviewMessage(href)
+                this.openPreviewLink(href)
+              },
+              onCheckboxToggle: (lineIndex: number, checked: boolean): void => {
+                this.onPreviewCheckboxToggle(lineIndex, checked)
               },
               tagBarSlot: (): void => {
                 this.noteEditPreviewTagBarSlot()
@@ -2780,7 +2863,10 @@ struct NoteEdit {
                 }
               },
               onLinkToast: (href: string): void => {
-                this.showPreviewMessage(href)
+                this.openPreviewLink(href)
+              },
+              onCheckboxToggle: (lineIndex: number, checked: boolean): void => {
+                this.onPreviewCheckboxToggle(lineIndex, checked)
               },
               tagBarSlot: (): void => {
                 this.noteEditPreviewTagBarSlot()

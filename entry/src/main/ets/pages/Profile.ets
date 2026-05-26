@@ -40,6 +40,31 @@ interface RouterWithOptionalClear {
   clear?: () => void
 }
 
+@Builder
+function profileMenuCardDefault(): void {
+}
+
+@Component
+struct ProfileMenuCard {
+  @BuilderParam content: () => void = profileMenuCardDefault
+
+  build() {
+    Column({ space: 0 }) {
+      this.content()
+    }
+    .width('100%')
+    .backgroundColor($r('app.color.card_background'))
+    .borderRadius($r('app.float.card_radius'))
+    .border({ width: 1, color: $r('app.color.card_border') })
+    .shadow({
+      radius: 20,
+      color: $r('app.color.shadow_color'),
+      offsetX: 0,
+      offsetY: 4
+    })
+  }
+}
+
 @Entry
 @Component
 struct Profile {
@@ -789,18 +814,10 @@ struct Profile {
   }
 
   @Builder
-  groupGap() {
-    Column()
-      .width('100%')
-      .height(8)
-  }
-
-  @Builder
   rowDivider() {
     Divider()
       .color($r('app.color.divider'))
       .strokeWidth(1)
-      .margin({ left: 16 })
   }
 
   @Builder
@@ -818,7 +835,7 @@ struct Profile {
     }
     .width('100%')
     .padding({
-      left: 16,
+      left: 20,
       right: 16,
       top: 14,
       bottom: 14
@@ -863,7 +880,7 @@ struct Profile {
     }
     .width('100%')
     .padding({
-      left: 16,
+      left: 20,
       right: 16,
       top: 14,
       bottom: 14
@@ -912,10 +929,9 @@ struct Profile {
       .width('100%')
       .height($r('app.float.toolbar_height'))
       .alignItems(VerticalAlign.Center)
-      .padding({ left: 16, right: 16 })
 
       Scroll() {
-        Column() {
+        Column({ space: 12 }) {
           if (this.loading) {
             Text('加载中…')
               .fontSize($r('app.float.body_font_size'))
@@ -927,7 +943,7 @@ struct Profile {
               .fontColor($r('app.color.tertiary_text'))
               .padding({ top: 24, bottom: 24 })
           } else if (this.profile !== null) {
-            Column() {
+            ProfileMenuCard() {
               Row() {
                 if (this.avatarUrlTrim().length > 0 && !this.avatarNetworkLoadFailed) {
                   Image(this.avatarUrlTrim())
@@ -956,7 +972,7 @@ struct Profile {
               }
               .width('100%')
               .padding({
-                left: 16,
+                left: 20,
                 right: 16,
                 top: 12,
                 bottom: 12
@@ -968,39 +984,28 @@ struct Profile {
                 }
               })
             }
-            .width('100%')
-            .backgroundColor($r('app.color.card_background'))
 
-            this.groupGap()
-
-            Column() {
-              this.kvRow(
-                this.membershipTitle(this.profile!),
-                this.membershipRight(this.profile!),
-                !this.isLifetimeVip(this.profile!),
-                false,
-                (): void => {
-                  if (this.isLifetimeVip(this.profile!)) {
-                    return
-                  }
-                  this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
-                    console.error(`Profile push QingyuCloudRecharge: ${JSON.stringify(err)}`)
-                  })
-                },
-                !this.isLifetimeVip(this.profile!)
-              )
+            if (this.payConfigReady) {
+              ProfileMenuCard() {
+                this.kvRow(
+                  this.membershipTitle(this.profile!),
+                  this.membershipRight(this.profile!),
+                  !this.isLifetimeVip(this.profile!),
+                  false,
+                  (): void => {
+                    if (this.isLifetimeVip(this.profile!)) {
+                      return
+                    }
+                    this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
+                      console.error(`Profile push QingyuCloudRecharge: ${JSON.stringify(err)}`)
+                    })
+                  },
+                  !this.isLifetimeVip(this.profile!)
+                )
+              }
             }
-            .visibility(this.payConfigReady?Visibility.Visible:Visibility.None)
-            .width('100%')
-            .backgroundColor($r('app.color.card_background'))
 
-            // this.groupGap()
-            Column()
-              .width('100%')
-              .height(8)
-              .visibility(this.payConfigReady?Visibility.Visible:Visibility.None)
-
-            Column() {
+            ProfileMenuCard() {
               this.kvRow(
                 '姓名',
                 this.displayNickname(),
@@ -1011,12 +1016,8 @@ struct Profile {
                 }
               )
             }
-            .width('100%')
-            .backgroundColor($r('app.color.card_background'))
 
-            this.groupGap()
-
-            Column() {
+            ProfileMenuCard() {
               this.kvRow(
                 this.phoneKvLabel(),
                 this.phoneKvRightValue(),
@@ -1048,12 +1049,8 @@ struct Profile {
                 this.thirdPartyRowInteractive(PROFILE_ACCOUNT_BIND_SUPPORTED_HUAWEI, this.profile!.huawei_linked)
               )
             }
-            .width('100%')
-            .backgroundColor($r('app.color.card_background'))
 
-            this.groupGap()
-
-            Column() {
+            ProfileMenuCard() {
               this.kvRow(
                 '兑换码',
                 '点击兑换',
@@ -1081,18 +1078,12 @@ struct Profile {
                 (): void => {}
               )
             }
-            .width('100%')
-            .backgroundColor($r('app.color.card_background'))
 
-            this.groupGap()
-
-            Column() {
+            ProfileMenuCard() {
               this.dangerNavRow((): void => {
                 void this.confirmDelete()
               })
             }
-            .width('100%')
-            .backgroundColor($r('app.color.card_background'))
 
             Column().height(24)
           }
@@ -1109,6 +1100,10 @@ struct Profile {
     .width('100%')
     .height('100%')
     .alignItems(HorizontalAlign.Start)
-    .backgroundColor($r('app.color.surface_muted'))
+    .padding({
+      left: 16,
+      right: 16
+    })
+    .backgroundColor($r('app.color.app_background'))
   }
 }

@@ -101,7 +101,6 @@ struct H5WebContainer {
       .width('100%')
       .height($r('app.float.toolbar_height'))
       .alignItems(VerticalAlign.Center)
-      .padding({ left: 16, right: 16 })
 
       Stack() {
         Web({ src: this.webUrl, controller: this.webController })
@@ -144,6 +143,10 @@ struct H5WebContainer {
     .width('100%')
     .height('100%')
     .alignItems(HorizontalAlign.Start)
+    .padding({
+      left: 16,
+      right: 16
+    })
     .backgroundColor($r('app.color.app_background'))
   }
 }

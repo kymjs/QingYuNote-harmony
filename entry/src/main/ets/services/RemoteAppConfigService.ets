@@ -35,7 +35,7 @@ function isVersionInClosedInterval(current: string, min: string, max: string): b
 }
 
 /** 与 Flutter `RemoteAppConfigService.configUrl` 一致。 */
-const REMOTE_APP_CONFIG_URL = 'https://cdn.kymjs.com:8843/note/config.json'
+const REMOTE_APP_CONFIG_URL = 'https://cdn.kymjs.com:8843/note/config_hw.json'
 
 /** 与 Flutter `note_remote_config.json` 缓存文件名一致。 */
 const REMOTE_APP_CONFIG_CACHE_FILE = 'note_remote_config.json'

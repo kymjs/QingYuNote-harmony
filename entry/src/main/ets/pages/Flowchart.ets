@@ -1787,34 +1787,35 @@ struct FlowchartPage {
   @Builder
   private buildPaletteItem(shape: FlowchartShapeType) {
     Column() {
-      Image(this.paletteShapeIcon(shape))
-        .width(36)
-        .height(36)
-        .objectFit(ImageFit.Contain)
-        .interpolation(ImageInterpolation.High)
+      if (shape === 'roundedRect') {
+        SymbolGlyph($r('sys.symbol.rectangle'))
+          .fontSize(24)
+          .fontColor([$r('app.color.primary_text')])
+      } else if (shape === 'pill') {
+        SymbolGlyph($r('sys.symbol.oval'))
+          .fontSize(24)
+          .fontColor([$r('app.color.primary_text')])
+      } else if (shape === 'arrowRight') {
+        SymbolGlyph($r('sys.symbol.arrowshape_up'))
+          .fontSize(24)
+          .fontColor([$r('app.color.primary_text')])
+          .rotate({ angle: 90, centerX: '50%', centerY: '50%' })
+      } else if (shape === 'rectangle') {
+        SymbolGlyph($r('sys.symbol.square'))
+          .fontSize(24)
+          .fontColor([$r('app.color.primary_text')])
+      } else if (shape === 'diamond') {
+        SymbolGlyph($r('sys.symbol.square'))
+          .fontSize(24)
+          .fontColor([$r('app.color.primary_text')])
+          .rotate({ angle: 45, centerX: '50%', centerY: '50%' })
+      }
     }
     .width('100%')
     .height(44)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .onClick(() => this.addNode(shape))
-  }
-
-  private paletteShapeIcon(shape: FlowchartShapeType): Resource {
-    switch (shape) {
-      case 'roundedRect':
-        return $r('app.media.ic_palette_01')
-      case 'pill':
-        return $r('app.media.ic_palette_02')
-      case 'diamond':
-        return $r('app.media.ic_palette_03')
-      case 'rectangle':
-        return $r('app.media.ic_palette_04')
-      case 'arrowRight':
-        return $r('app.media.ic_palette_05')
-      default:
-        return $r('app.media.ic_palette_01')
-    }
   }
 
   @Builder
@@ -1969,11 +1970,9 @@ struct FlowchartPage {
 
   @Builder
   private buildLinePreview(lineType: string) {
-    Image($r('app.media.ic_palette_06'))
-      .width(36)
-      .height(36)
-      .objectFit(ImageFit.Contain)
-      .interpolation(ImageInterpolation.High)
+    SymbolGlyph($r('sys.symbol.minus'))
+      .fontSize(24)
+      .fontColor([$r('app.color.primary_text')])
   }
 
   @Builder
@@ -2183,6 +2182,7 @@ struct FlowchartPage {
             right: $r('app.float.toolbar_icon_button_padding_h')
           })
           .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
           .backgroundColor($r('app.color.surface_muted'))
           .borderRadius($r('app.float.pill_radius'))
           .onClick(() => {
@@ -2218,8 +2218,8 @@ struct FlowchartPage {
         }
         .width('100%')
         .height($r('app.float.toolbar_height'))
-        .padding({ left: 12, right: 12 })
         .alignItems(VerticalAlign.Center)
+        .padding({ left: 16, right: 16 })
 
         if (this.loading) {
           LoadingProgress()

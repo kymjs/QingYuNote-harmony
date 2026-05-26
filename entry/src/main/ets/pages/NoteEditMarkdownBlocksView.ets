@@ -1,4 +1,4 @@
-import type { MarkdownBlock, MarkdownInline } from '../common/utils/MarkdownUtils'
+import type { MarkdownBlock, MarkdownCheckboxItem, MarkdownInline } from '../common/utils/MarkdownUtils'
 import { CodeHighlight, type CodeHighlightToken, type CodeHighlightTokenKind } from '../common/utils/CodeHighlight'
 import { KatexFormulaPreview } from '../components/KatexFormulaPreview'
 import { KatexUtils } from '../common/utils/KatexUtils'
@@ -13,6 +13,9 @@ export struct NoteEditMarkdownBlocksView {
   @Prop forShareExport: boolean = false
   onLinkToast: (href: string) => void = (_href: string) => {
   }
+  onCheckboxToggle: (lineIndex: number, checked: boolean) => void =
+    (_lineIndex: number, _checked: boolean) => {
+    }
 
   private primaryTextColor(): ResourceColor {
     return this.forShareExport ? $r('app.color.share_text') : $r('app.color.primary_text')
@@ -146,6 +149,12 @@ export struct NoteEditMarkdownBlocksView {
         .join('|')
       return `${block.type}:${items}:${index}`
     }
+    if (block.type === 'checkbox_list') {
+      const items = (block.checkboxItems ?? [])
+        .map((item: MarkdownCheckboxItem) => `${item.checked}:${item.sourceLineIndex}`)
+        .join('|')
+      return `${block.type}:${items}:${index}`
+    }
     return `${block.type}:${block.language}:${block.content.slice(0, 48)}:${index}`
   }
 
@@ -189,7 +198,8 @@ export struct NoteEditMarkdownBlocksView {
 
   @Builder
   private buildInlineText(inlines: MarkdownInline[], rawContent: string, fontSize: number | Resource,
-    fontColor: ResourceColor, lineHeight: number, fontWeight: FontWeight = FontWeight.Regular) {
+    fontColor: ResourceColor, lineHeight: number, fontWeight: FontWeight = FontWeight.Regular,
+    onTap?: () => void) {
     if (this.hasMathInline(inlines) && !this.hasAnyMath()) {
       KatexFormulaPreview({
         source: rawContent,
@@ -198,6 +208,21 @@ export struct NoteEditMarkdownBlocksView {
         displayBlock: false
       })
         .key(`katex_inline:${rawContent.slice(0, 64)}`)
+    } else if (onTap) {
+      Text() {
+        ForEach(inlines, (inline: MarkdownInline, index: number) => {
+          this.buildInlineSpan(inline, fontColor)
+        }, (inline: MarkdownInline, index: number) => this.inlineKey(inline, index))
+      }
+      .fontSize(fontSize)
+      .fontColor(fontColor)
+      .lineHeight(lineHeight)
+      .fontWeight(fontWeight)
+      .width('100%')
+      .constraintSize({ minHeight: 24 })
+      .onClick(() => {
+        onTap()
+      })
     } else {
       Text() {
         ForEach(inlines, (inline: MarkdownInline, index: number) => {
@@ -240,6 +265,40 @@ export struct NoteEditMarkdownBlocksView {
       Span(inline.content)
         .fontColor(defaultColor)
     }
+  }
+
+  @Builder
+  private buildCheckboxListBlock(block: MarkdownBlock) {
+    Column({ space: 10 }) {
+      ForEach(block.checkboxItems ?? [], (item: MarkdownCheckboxItem, index: number) => {
+        Row({ space: 8 }) {
+          Checkbox({ name: `todo_${item.sourceLineIndex}`, group: 'todo_preview' })
+            .select(item.checked)
+            .enabled(false)
+            .hitTestBehavior(HitTestMode.None)
+          Column() {
+            this.buildInlineText(item.inlines, this.inlineSource(item.inlines), $r('app.float.body_font_size'),
+              this.primaryTextColor(), this.contentLineHeight(24), FontWeight.Regular, (): void => {
+                if (!this.forShareExport) {
+                  this.onCheckboxToggle(item.sourceLineIndex, !item.checked)
+                }
+              })
+          }
+          .layoutWeight(1)
+          .width('100%')
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+        .onClick(() => {
+          if (!this.forShareExport) {
+            this.onCheckboxToggle(item.sourceLineIndex, !item.checked)
+          }
+        })
+      }, (item: MarkdownCheckboxItem, index: number) =>
+        `checkbox:${item.sourceLineIndex}:${item.checked}:${index}`)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
@@ -290,6 +349,8 @@ export struct NoteEditMarkdownBlocksView {
       this.buildListBlock(block, false)
     } else if (block.type === 'ordered_list') {
       this.buildListBlock(block, true)
+    } else if (block.type === 'checkbox_list') {
+      this.buildCheckboxListBlock(block)
     } else if (block.type === 'code') {
       Column({ space: 8 }) {
         if (block.language.length > 0) {

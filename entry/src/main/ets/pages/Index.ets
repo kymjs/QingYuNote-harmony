@@ -41,7 +41,6 @@ const SEARCH_DEBOUNCE_MS = 280
 /** 与 Flutter `_minHomeNotesReloadInterval`：`onPageShow` 再次拉列表的最短间隔，避免短时间内重复请求。 */
 const MIN_HOME_PAGE_SHOW_RELOAD_INTERVAL_MS = 5000
 const ALL_NOTES_TAG = '__ALL_NOTES__'
-const HOME_TAB_BAR_LOG_TAG = 'HomeTabBar'
 
 @Entry
 @Component
@@ -436,8 +435,8 @@ struct Index {
       onPhotoImage: (): void => {
         void this.openEditor(undefined, false, 'insertImage')
       },
-      onSmartBookScan: (): void => {
-        void this.openEditor(undefined, false, 'bookScan')
+      onTodoList: (): void => {
+        void this.openEditor(undefined, false, 'todoList')
       }
     } as HomeMoreOptionsSheetParams)
   }
@@ -826,39 +825,20 @@ struct Index {
 
   @Builder
   private buildHomeTabBarLayer() {
-    Column() {
-      HomeLiquidGlassTabBar({
-        onMore: (): void => {
-          this.onHomeMoreTabPressed()
-        },
-        onGraph: (): void => {
-          this.onHomeGraphTabPressed()
-        },
-        onNote: (): void => {
-          this.onHomeNoteTabPressed()
-        }
-      })
-    }
+    HomeLiquidGlassTabBar({
+      onMore: (): void => {
+        this.onHomeMoreTabPressed()
+      },
+      onGraph: (): void => {
+        this.onHomeGraphTabPressed()
+      },
+      onNote: (): void => {
+        this.onHomeNoteTabPressed()
+      }
+    })
     .width('100%')
     .height('100%')
-    .justifyContent(FlexAlign.End)
-    .alignItems(HorizontalAlign.Center)
-    .padding({ bottom: 50 })
     .hitTestBehavior(HitTestMode.None)
-    .onAppear(() => {
-      Logger.info(
-        HOME_TAB_BAR_LOG_TAG,
-        `layer appear page=${this.pageWidth}x${this.pageHeight} drawer=${this.drawerModel.progress}`
-      )
-    })
-    .onAreaChange((_old: Area, area: Area) => {
-      Logger.info(
-        HOME_TAB_BAR_LOG_TAG,
-        `layer area w=${area.width} h=${area.height} ` +
-          `global=(${area.globalPosition.x},${area.globalPosition.y}) ` +
-          `local=(${area.position.x},${area.position.y}) page=${this.pageWidth}x${this.pageHeight}`
-      )
-    })
   }
 
   @Builder
@@ -1329,10 +1309,6 @@ struct Index {
       if (Math.abs(this.pageHeight - nextHeight) >= 1) {
         this.pageHeight = nextHeight
       }
-      Logger.info(
-        HOME_TAB_BAR_LOG_TAG,
-        `index root area ${nextWidth}x${nextHeight} drawer=${this.drawerModel.progress}`
-      )
     })
   }
 }

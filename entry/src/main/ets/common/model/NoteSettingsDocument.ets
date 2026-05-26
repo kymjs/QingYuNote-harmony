@@ -10,7 +10,7 @@ export class NoteSettingsDocument {
   constructor(
     updatedAt: number,
     quickActionBarEnabled: boolean = true,
-    folderModeEnabled: boolean = false,
+    folderModeEnabled: boolean = true,
     version: number = NoteSettingsDocument.currentVersion
   ) {
     this.version = version
@@ -28,7 +28,7 @@ export class NoteSettingsDocument {
     return new NoteSettingsDocument(
       NoteSettingsDocument.asInt(json['updatedAt'], 0),
       NoteSettingsDocument.asBool(json['quickActionBarEnabled'], true),
-      NoteSettingsDocument.asBool(json['folderModeEnabled'], false),
+      NoteSettingsDocument.asBool(json['folderModeEnabled'], true),
       NoteSettingsDocument.asInt(json['version'], NoteSettingsDocument.currentVersion)
     )
   }

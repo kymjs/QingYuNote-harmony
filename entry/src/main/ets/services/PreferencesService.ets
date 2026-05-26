@@ -674,11 +674,11 @@ export class PreferencesService {
       const store = this.ensureStore()
       const result: LegacyNoteSettingsFlags = {
         quick: store.getSync(NOTE_QUICK_ACTION_BAR_ENABLED_KEY, true) as boolean,
-        folder: store.getSync(NOTE_FOLDER_MODE_ENABLED_KEY, false) as boolean
+        folder: store.getSync(NOTE_FOLDER_MODE_ENABLED_KEY, true) as boolean
       }
       return result
     } catch (_) {
-      const fallback: LegacyNoteSettingsFlags = { quick: true, folder: false }
+      const fallback: LegacyNoteSettingsFlags = { quick: true, folder: true }
       return fallback
     }
   }

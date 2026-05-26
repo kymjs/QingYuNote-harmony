@@ -962,8 +962,9 @@ export class NoteApiClient {
   }
 
   /**
-   * PATCH /api/v1/me/profile；body 仅含需要修改的字段。
-   * 返回 null 表示成功，否则为服务端 `error` 代码。
+   * POST /api/v1/me/profile（与 PATCH 同语义；Harmony @ohos.net.http 无 PATCH 枚举）。
+   * body 仅含需要修改的字段。返回 null 表示成功，否则为服务端 `error` 代码。
+   * 5xx 与请求异常统一返回 network_error，不透传服务端 error 字段。
    * @param refreshProfile 成功后是否刷新本地 profile 缓存（多步绑定/改号时中间步可传 false，减少并发请求）。
    */
   async patchProfile(body: Record<string, Object>, refreshProfile: boolean = true): Promise<string | null> {
@@ -987,8 +988,7 @@ export class NoteApiClient {
         headers['Content-Type'] = 'application/json; charset=utf-8'
         headers['Authorization'] = `Bearer ${tok}`
         const resp = await req.request(this.joinUrl('/api/v1/me/profile'), {
-          // NetStack 的 RequestMethod 无 PATCH 枚举，与 WebDAVClient 一样用字符串断言。
-          method: 'PATCH' as http.RequestMethod,
+          method: http.RequestMethod.POST,
           header: headers,
           extraData: payload,
           expectDataType: http.HttpDataType.STRING,

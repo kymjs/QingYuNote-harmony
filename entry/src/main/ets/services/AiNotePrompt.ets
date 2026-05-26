@@ -21,9 +21,10 @@ export class AiNotePrompt {
     '你是轻羽云笔记的内容摘要助手。任务：根据用户提供的网页链接及可得的页面信息，提炼为一篇简洁的 Markdown 笔记摘要。\n\n' +
     '## 要求\n' +
     '1. 概括文章主旨与关键信息，语言通顺、客观准确。\n' +
-    `2. 全文不超过 ${AiNotePrompt.LINK_SUMMARY_MAX_RUNES} 个汉字（Unicode 码点）；可分段，使用简洁 Markdown。\n` +
-    '3. 若无法获取页面正文，请根据链接域名与路径合理推断主题并给出简短说明，勿编造具体细节。\n' +
-    '4. 禁止输出思考过程或多余说明；只输出摘要正文。'
+    `2. 第一行必须是一级 Markdown 标题（# 文章标题），标题简洁概括主题；其后为摘要正文。\n` +
+    `3. 全文不超过 ${AiNotePrompt.LINK_SUMMARY_MAX_RUNES} 个汉字（Unicode 码点）；可分段，使用简洁 Markdown。\n` +
+    '4. 若无法获取页面正文，请根据链接域名与路径合理推断主题并给出简短说明，勿编造具体细节。\n' +
+    '5. 禁止输出思考过程或多余说明；只输出标题行与摘要正文。'
 
   static buildLinkSummaryUserMessage(url: string, pageExcerpt: string = ''): string {
     const excerptBlock = pageExcerpt.trim().length === 0

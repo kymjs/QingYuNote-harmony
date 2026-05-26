@@ -2,7 +2,7 @@ export interface HomeMoreOptionsSheetParams {
   onClose: () => void
   onPasteLink: () => void
   onPhotoImage: () => void
-  onSmartBookScan: () => void
+  onTodoList: () => void
 }
 
 @Component
@@ -11,7 +11,7 @@ export struct HomeMoreOptionsSheet {
     onClose: (): void => {},
     onPasteLink: (): void => {},
     onPhotoImage: (): void => {},
-    onSmartBookScan: (): void => {}
+    onTodoList: (): void => {}
   }
 
   @Builder
@@ -88,7 +88,7 @@ export struct HomeMoreOptionsSheet {
         this.buildOptionRow(
           $r('sys.symbol.link'),
           '粘贴内容提取',
-          '自动提取链接为笔记内容(暂不支持微信公众号)…',
+          '暂不支持公众号文章，后续版本将优化…',
           (): void => {
             this.params.onClose()
             this.params.onPasteLink()
@@ -101,7 +101,7 @@ export struct HomeMoreOptionsSheet {
         this.buildOptionRow(
           $r('sys.symbol.picture'),
           '拍照/图片',
-          '白板记录/课堂笔记/日常饮食，秒变笔记',
+          '白板记录/课堂笔记/日常打卡，秒变笔记',
           (): void => {
             this.params.onClose()
             this.params.onPhotoImage()
@@ -112,12 +112,12 @@ export struct HomeMoreOptionsSheet {
           .strokeWidth(1)
           .margin({ left: 68 })
         this.buildOptionRow(
-          $r('sys.symbol.book'),
-          '智能拍书',
-          '对准书页拍一下，自动提取归类到书籍',
+          $r('sys.symbol.list_bullet'),
+          'Todo List',
+          '备忘录/日程清单/待办事项，都能完成',
           (): void => {
             this.params.onClose()
-            this.params.onSmartBookScan()
+            this.params.onTodoList()
           }
         )
       }
@@ -130,19 +130,7 @@ export struct HomeMoreOptionsSheet {
         offsetX: 0,
         offsetY: 4
       })
-
-      Row({ space: 4 }) {
-        SymbolGlyph($r('sys.symbol.info_circle'))
-          .fontSize(14)
-          .fontColor([$r('app.color.tertiary_text')])
-        Text('内容由AI生成，请勿从事违法违规活动')
-          .fontSize(12)
-          .fontColor($r('app.color.tertiary_text'))
-          .textAlign(TextAlign.Center)
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.Center)
+      .margin({ bottom: 12 })
     }
     .width('100%')
     .padding({ left: 20, right: 20, top: 16, bottom: 12 })

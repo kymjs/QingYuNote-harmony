@@ -428,36 +428,42 @@ struct QingyuCloudRecharge {
             .fontSize(18)
             .fontColor([$r('app.color.primary_text')])
         }
-        .width(48)
         .height('100%')
+        .padding({
+          left: $r('app.float.toolbar_icon_button_padding_h'),
+          right: $r('app.float.toolbar_icon_button_padding_h')
+        })
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
+        .backgroundColor($r('app.color.surface_muted'))
+        .borderRadius($r('app.float.pill_radius'))
         .onClick(() => {
           this.handleToolbarBack()
         })
 
-        Column({ space: 4 }) {
-          Text($r('app.string.settings_qingyu_title'))
-            .fontSize($r('app.float.title_font_size'))
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.primary_text'))
-            .textAlign(TextAlign.Start)
-            .width('100%')
-          Text($r('app.string.qingyu_recharge_tagline'))
-            .fontSize(12)
-            .fontColor($r('app.color.tertiary_text'))
-            .textAlign(TextAlign.Start)
-            .width('100%')
+        Row() {
+          Column({ space: 4 }) {
+            Text($r('app.string.settings_qingyu_title'))
+              .fontSize($r('app.float.title_font_size'))
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.primary_text'))
+              .textAlign(TextAlign.Start)
+              .width('100%')
+            Text($r('app.string.qingyu_recharge_tagline'))
+              .fontSize(12)
+              .fontColor($r('app.color.tertiary_text'))
+              .textAlign(TextAlign.Start)
+              .width('100%')
+          }
+          .alignItems(HorizontalAlign.Start)
         }
         .layoutWeight(1)
         .height('100%')
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Start)
-        .padding({ right: 16 })
+        .alignItems(VerticalAlign.Center)
+        .justifyContent(FlexAlign.Start)
       }
       .width('100%')
       .height($r('app.float.toolbar_height'))
-      .padding({ left: 4, right: 4 })
       .alignItems(VerticalAlign.Center)
 
       Scroll() {
@@ -560,7 +566,6 @@ struct QingyuCloudRecharge {
         }
         .width('100%')
         .constraintSize({ minWidth: 0 })
-        .padding({ left: 16, right: 16 })
         .alignItems(HorizontalAlign.Start)
       }
       .layoutWeight(1)
@@ -569,6 +574,11 @@ struct QingyuCloudRecharge {
     }
     .width('100%')
     .height('100%')
+    .alignItems(HorizontalAlign.Start)
+    .padding({
+      left: 16,
+      right: 16
+    })
     .backgroundColor($r('app.color.app_background'))
   }
 }

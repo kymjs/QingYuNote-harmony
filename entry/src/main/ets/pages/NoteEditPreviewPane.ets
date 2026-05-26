@@ -18,6 +18,9 @@ export struct NoteEditPreviewPane {
   }
   onLinkToast: (href: string) => void = (_href: string) => {
   }
+  onCheckboxToggle: (lineIndex: number, checked: boolean) => void =
+    (_lineIndex: number, _checked: boolean) => {
+    }
   @BuilderParam tagBarSlot: () => void = noteEditPreviewDefaultTagBar
 
   build() {
@@ -43,7 +46,8 @@ export struct NoteEditPreviewPane {
         NoteEditMarkdownBlocksView({
           blocks: this.previewBlocks,
           filesDirCache: this.filesDirCache,
-          onLinkToast: this.onLinkToast
+          onLinkToast: this.onLinkToast,
+          onCheckboxToggle: this.onCheckboxToggle
         })
       }
       .width('100%')
@@ -66,8 +70,5 @@ export struct NoteEditPreviewPane {
     .width('100%')
     .height('100%')
     .align(Alignment.TopStart)
-    .onClick(() => {
-      this.onBackgroundTap()
-    })
   }
 }

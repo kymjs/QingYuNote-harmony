@@ -881,8 +881,6 @@ struct CloudSyncSettings {
         .alignItems(HorizontalAlign.Start)
         .justifyContent(FlexAlign.Start)
         .padding({
-          left: 16,
-          right: 16,
           top: $r('app.float.toolbar_scroll_padding_top'),
           bottom: 32
         })
@@ -897,6 +895,10 @@ struct CloudSyncSettings {
     .height('100%')
     .alignItems(HorizontalAlign.Start)
     .justifyContent(FlexAlign.Start)
+    .padding({
+      left: 16,
+      right: 16
+    })
     .backgroundColor($r('app.color.app_background'))
   }
 

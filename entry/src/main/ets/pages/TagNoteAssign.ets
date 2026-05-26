@@ -192,10 +192,9 @@ struct TagNoteAssign {
       .justifyContent(FlexAlign.Start)
 
       Row() {
-        Image($r('app.media.ic_save'))
-          .width(25)
-          .height(25)
-          .objectFit(ImageFit.Contain)
+        SymbolGlyph($r('sys.symbol.save'))
+          .fontSize(22)
+          .fontColor([$r('app.color.primary_text')])
       }
       .height('100%')
       .padding({

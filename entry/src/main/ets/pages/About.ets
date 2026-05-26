@@ -155,12 +155,8 @@ struct About {
                   .lineHeight(22)
                 Text('https://note.kymjs.com')
                   .fontSize($r('app.float.body_font_size'))
-                  .fontColor(0xFF2563EB)
+                  .fontColor($r('app.color.accent'))
                   .lineHeight(22)
-                  .decoration({
-                    type: TextDecorationType.Underline,
-                    color: 0xFF2563EB
-                  })
                   .onClick(() => {
                     this.openOfficialSite()
                   })
@@ -170,14 +166,10 @@ struct About {
               .alignItems(VerticalAlign.Center)
               Text('沪ICP备2025129343号-3A')
                 .fontSize($r('app.float.body_font_size'))
-                .fontColor(0xFF2563EB)
+                .fontColor($r('app.color.accent'))
                 .lineHeight(22)
                 .textAlign(TextAlign.Center)
                 .width('100%')
-                .decoration({
-                  type: TextDecorationType.Underline,
-                  color: 0xFF2563EB
-                })
                 .onClick(() => {
                   this.openMiitBeian()
                 })
