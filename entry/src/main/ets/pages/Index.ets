@@ -22,7 +22,14 @@ import {
 import { SyncConstants } from '../common/constants/SyncConstants'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
+import { IdUtils } from '../common/utils/IdUtils'
 import { navigateToBindPhoneIfNeeded } from '../common/utils/BindPhoneNavigation'
+import { HomeLiquidGlassTabBar } from '../components/HomeLiquidGlassTabBar'
+import {
+  buildHomeMoreOptionsSheetContent,
+  type HomeMoreOptionsSheetParams
+} from '../dialogs/HomeMoreOptionsSheet'
+import { type NoteEditorEntryAction } from '../common/model/NoteEditorEntryAction'
 
 /** 与 HomeDrawerLayer 内 DRAWER_SPAN 一致，用于全屏横向拖动手势计算行程。 */
 const DRAWER_OFFSCREEN_PAD = 20
@@ -34,6 +41,7 @@ const SEARCH_DEBOUNCE_MS = 280
 /** 与 Flutter `_minHomeNotesReloadInterval`：`onPageShow` 再次拉列表的最短间隔，避免短时间内重复请求。 */
 const MIN_HOME_PAGE_SHOW_RELOAD_INTERVAL_MS = 5000
 const ALL_NOTES_TAG = '__ALL_NOTES__'
+const HOME_TAB_BAR_LOG_TAG = 'HomeTabBar'
 
 @Entry
 @Component
@@ -57,6 +65,8 @@ struct Index {
   /** 选标签或跳转前递增，子组件 @Watch 内吸附关闭。 */
   @State drawerCloseNonce: number = 0
   @State pageWidth: number = 360
+  @State pageHeight: number = 780
+  @State moreOptionsVisible: boolean = false
   /** 已配置自建 WebDAV，或轻羽云订阅有效（active/lifetime）时为 true，右上角不展示「去配置」图标；首帧默认 true 以免误闪。 */
   @State cloudSyncConfigured: boolean = true
   private hasShownOnce: boolean = false
@@ -366,19 +376,70 @@ struct Index {
     }
   }
 
-  private async openEditor(noteId?: string, openWithPreview: boolean = false): Promise<void> {
+  private async openEditor(
+    noteId?: string,
+    openWithPreview: boolean = false,
+    initialAction?: NoteEditorEntryAction
+  ): Promise<void> {
     try {
       await this.getUIContext().getRouter().pushUrl({
         url: 'pages/NoteEdit',
         params: {
           noteId: noteId ?? '',
-          openWithPreview: openWithPreview
+          openWithPreview: openWithPreview,
+          initialAction: initialAction
         }
       })
     } catch (error) {
       console.error(JSON.stringify(error))
       this.showUserMessage(this.formatActionError('打开编辑页', error))
     }
+  }
+
+  private onHomeNoteTabPressed(): void {
+    if (this.searchExpanded) {
+      this.searchExpanded = false
+      return
+    }
+    void this.openEditor()
+  }
+
+  private onHomeGraphTabPressed(): void {
+    if (this.searchExpanded) {
+      this.searchExpanded = false
+      return
+    }
+    void this.openFlowchartFromDrawer()
+  }
+
+  private onHomeMoreTabPressed(): void {
+    if (this.searchExpanded) {
+      this.searchExpanded = false
+      return
+    }
+    this.moreOptionsVisible = true
+  }
+
+  private closeMoreOptionsSheet(): void {
+    this.moreOptionsVisible = false
+  }
+
+  @Builder
+  private buildMoreOptionsSheet(): void {
+    buildHomeMoreOptionsSheetContent({
+      onClose: (): void => {
+        this.closeMoreOptionsSheet()
+      },
+      onPasteLink: (): void => {
+        void this.openEditor(undefined, false, 'aiLinkExtract')
+      },
+      onPhotoImage: (): void => {
+        void this.openEditor(undefined, false, 'insertImage')
+      },
+      onSmartBookScan: (): void => {
+        void this.openEditor(undefined, false, 'bookScan')
+      }
+    } as HomeMoreOptionsSheetParams)
   }
 
   private async ensurePreferencesInitialized(): Promise<void> {
@@ -597,8 +658,8 @@ struct Index {
   }
 
   private async openFlowchartFromDrawer(): Promise<void> {
-    const note = await NoteRepository.getInstance().createFlowchartNote()
-    await this.openFlowchart(note.id)
+    const noteId = IdUtils.uuid()
+    await this.openFlowchart(noteId)
   }
 
   private async openNoteFromList(note: Note): Promise<void> {
@@ -764,27 +825,40 @@ struct Index {
   }
 
   @Builder
-  private buildFab() {
-    Image($r('app.media.icon_app'))
-      .align(Alignment.Center)
-      .width($r('app.float.fab_size'))
-      .height($r('app.float.fab_size'))
-      .backgroundColor($r('app.color.accent'))
-      .borderRadius($r('app.float.fab_size'))
-      .padding(4)
-      .shadow({
-        radius: 20,
-        color: $r('app.color.shadow_color'),
-        offsetX: 0,
-        offsetY: 4
-      })
-      .onClick(() => {
-        if (this.searchExpanded) {
-          this.searchExpanded = false
-          return
+  private buildHomeTabBarLayer() {
+    Column() {
+      HomeLiquidGlassTabBar({
+        onMore: (): void => {
+          this.onHomeMoreTabPressed()
+        },
+        onGraph: (): void => {
+          this.onHomeGraphTabPressed()
+        },
+        onNote: (): void => {
+          this.onHomeNoteTabPressed()
         }
-        void this.openEditor()
       })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.End)
+    .alignItems(HorizontalAlign.Center)
+    .padding({ bottom: 50 })
+    .hitTestBehavior(HitTestMode.None)
+    .onAppear(() => {
+      Logger.info(
+        HOME_TAB_BAR_LOG_TAG,
+        `layer appear page=${this.pageWidth}x${this.pageHeight} drawer=${this.drawerModel.progress}`
+      )
+    })
+    .onAreaChange((_old: Area, area: Area) => {
+      Logger.info(
+        HOME_TAB_BAR_LOG_TAG,
+        `layer area w=${area.width} h=${area.height} ` +
+          `global=(${area.globalPosition.x},${area.globalPosition.y}) ` +
+          `local=(${area.position.x},${area.position.y}) page=${this.pageWidth}x${this.pageHeight}`
+      )
+    })
   }
 
   @Builder
@@ -812,10 +886,9 @@ struct Index {
   @Builder
   private buildSettingsAction() {
     Row() {
-      Image($r('app.media.ic_setting'))
-        .width(22)
-        .height(22)
-        .objectFit(ImageFit.Contain)
+      SymbolGlyph($r('sys.symbol.gearshape'))
+        .fontSize(20)
+        .fontColor([$r('app.color.primary_text')])
     }
     .height($r('app.float.search_box_height'))
     .padding({
@@ -1177,6 +1250,10 @@ struct Index {
       .height('100%')
       .backgroundColor($r('app.color.app_background'))
 
+      if (this.drawerModel.progress <= 0.001) {
+        this.buildHomeTabBarLayer()
+      }
+
       HomeDrawerLayer({
         tags: this.tags,
         selectedTag: this.selectedTag,
@@ -1201,9 +1278,6 @@ struct Index {
         onOpenFolderManage: (): void => {
           void this.openFolderManage()
         },
-        onOpenFlowchart: (): void => {
-          void this.openFlowchartFromDrawer()
-        },
         onOpenRecycleBin: (): void => {
           void this.openRecycleBin()
         },
@@ -1214,13 +1288,16 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .overlay(
-      this.buildFab(),
-      {
-        align: Alignment.BottomEnd,
-        offset: { x: -18, y: -40 }
+    .alignContent(Alignment.TopStart)
+    .bindSheet($$this.moreOptionsVisible, this.buildMoreOptionsSheet(), {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: false,
+      showClose: false,
+      backgroundColor: Color.Transparent,
+      onDisappear: (): void => {
+        this.moreOptionsVisible = false
       }
-    )
+    })
     .parallelGesture(
       PanGesture({ direction: PanDirection.Horizontal, distance: 8 })
         .onActionStart((_event: GestureEvent) => {
@@ -1245,10 +1322,17 @@ struct Index {
     .backgroundColor($r('app.color.app_background'))
     .onAreaChange((_, value) => {
       const nextWidth = Number.parseFloat(`${value.width}`) || 360
+      const nextHeight = Number.parseFloat(`${value.height}`) || 780
       if (Math.abs(this.pageWidth - nextWidth) >= 1) {
         this.pageWidth = nextWidth
       }
+      if (Math.abs(this.pageHeight - nextHeight) >= 1) {
+        this.pageHeight = nextHeight
+      }
+      Logger.info(
+        HOME_TAB_BAR_LOG_TAG,
+        `index root area ${nextWidth}x${nextHeight} drawer=${this.drawerModel.progress}`
+      )
     })
-    .alignContent(Alignment.TopStart)
   }
 }

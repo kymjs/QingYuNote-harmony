@@ -117,7 +117,7 @@ export function flowchartSearchableText(graph: FlowchartGraphModel): string {
 
 export function flowchartSearchSummary(graph: FlowchartGraphModel): string {
   const titles = graph.nodes.map((n) => n.title.trim()).filter((t) => t.length > 0).slice(0, 3)
-  return titles.length > 0 ? titles.join(' · ') : '未命名知识图谱'
+  return titles.length > 0 ? titles.join(' · ') : '编辑标题'
 }
 
 export function createFlowchartPosition(x: number, y: number): FlowchartNodePosition {
@@ -203,4 +203,34 @@ export function cloneFlowchartGraph(graph: FlowchartGraphModel): FlowchartGraphM
     nodes: nodes,
     edges: edges
   }
+}
+
+export const FLOWCHART_DEFAULT_TITLE = '编辑标题'
+
+/** 旧版占位图唯一节点标题（Flutter 历史 `emptyGraph` 行为）。 */
+export const FLOWCHART_LEGACY_STARTER_NODE_TITLE = '开始'
+
+export function isDefaultFlowchartTitle(title: string): boolean {
+  const trimmed = title.trim()
+  return trimmed.length === 0 || trimmed === FLOWCHART_DEFAULT_TITLE
+}
+
+export function isPlaceholderFlowchartGraph(graph: FlowchartGraphModel): boolean {
+  if (graph.nodes.length === 0) {
+    return true
+  }
+  if (graph.nodes.length === 1 && graph.edges.length === 0) {
+    const node = graph.nodes[0]
+    if (node.title.trim() === FLOWCHART_LEGACY_STARTER_NODE_TITLE) {
+      return true
+    }
+  }
+  return false
+}
+
+export function shouldShowFlowchartInHomeList(title: string, graph: FlowchartGraphModel): boolean {
+  if (!isDefaultFlowchartTitle(title)) {
+    return true
+  }
+  return !isPlaceholderFlowchartGraph(graph)
 }

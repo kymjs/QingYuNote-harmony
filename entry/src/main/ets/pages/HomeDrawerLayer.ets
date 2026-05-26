@@ -39,8 +39,6 @@ export struct HomeDrawerLayer {
   }
   onOpenFolderManage: () => void = () => {
   }
-  onOpenFlowchart: () => void = () => {
-  }
   onOpenRecycleBin: () => void = () => {
   }
   onOpenSettings: () => void = () => {
@@ -232,25 +230,6 @@ export struct HomeDrawerLayer {
         } else {
           this.onOpenTagManage()
         }
-      })
-
-      Divider()
-        .strokeWidth(1)
-        .color($r('app.color.divider'))
-
-      Row() {
-        Text($r('app.string.flowchart_title'))
-          .fontSize($r('app.float.body_font_size'))
-          .fontColor($r('app.color.primary_text'))
-          .layoutWeight(1)
-        Text('›')
-          .fontSize(22)
-          .fontColor($r('app.color.tertiary_text'))
-      }
-      .width('100%')
-      .padding({ left: 18, right: 14, top: 8, bottom: 8 })
-      .onClick(() => {
-        this.onOpenFlowchart()
       })
 
       Divider()

@@ -209,10 +209,9 @@ struct RecycleBinPage {
   private buildToolbar() {
     Row() {
       Row() {
-        Image($r('app.media.ic_back'))
-          .width($r('app.float.toolbar_back_icon_size'))
-          .height($r('app.float.toolbar_back_icon_size'))
-          .objectFit(ImageFit.Contain)
+        SymbolGlyph($r('sys.symbol.arrow_left'))
+          .fontSize(18)
+          .fontColor([$r('app.color.primary_text')])
       }
       .height('100%')
       .padding({
@@ -240,10 +239,11 @@ struct RecycleBinPage {
       .justifyContent(FlexAlign.Start)
 
       Row() {
-        Image($r('app.media.ic_recycle_clear_all'))
-          .width($r('app.float.toolbar_back_icon_size'))
-          .height($r('app.float.toolbar_back_icon_size'))
-          .objectFit(ImageFit.Contain)
+        SymbolGlyph(!this.loading && this.notes.length > 0
+          ? $r('sys.symbol.clean_fill')
+          : $r('sys.symbol.clean'))
+          .fontSize(18)
+          .fontColor([$r('app.color.danger')])
           .opacity(this.notes.length === 0 ? 0.35 : 1)
       }
       .height('100%')

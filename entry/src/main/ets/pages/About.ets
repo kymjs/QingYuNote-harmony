@@ -71,10 +71,9 @@ struct About {
     Column() {
       Row() {
         Row() {
-          Image($r('app.media.ic_back'))
-            .width($r('app.float.toolbar_back_icon_size'))
-            .height($r('app.float.toolbar_back_icon_size'))
-            .objectFit(ImageFit.Contain)
+          SymbolGlyph($r('sys.symbol.arrow_left'))
+            .fontSize(18)
+            .fontColor([$r('app.color.primary_text')])
         }
         .height('100%')
         .padding({

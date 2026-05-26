@@ -37,11 +37,14 @@ import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { NoteFolderTree, type FolderSidebarRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
+import { type NoteEditorEntryAction } from '../common/model/NoteEditorEntryAction'
 
 interface NoteEditParams {
   noteId?: string
   /** 从首页点入且正文非空时置为 true，与 Flutter `openWithPreview` 对齐。 */
   openWithPreview?: boolean
+  /** 从首页「更多方式」进入时，加载完成后自动触发的动作。 */
+  initialAction?: NoteEditorEntryAction
 }
 
 interface TitleSaveResolution {
@@ -131,6 +134,8 @@ struct NoteEdit {
   private previewTimer: number = -1
   private previewDirty: boolean = true
   private preferPreviewOnOpen: boolean = false
+  private pendingInitialAction: NoteEditorEntryAction | null = null
+  private initialActionHandled: boolean = false
   private shareCardHeight: number = 0
   /** 缓存 ability `filesDir`，避免预览中多张图片重复解析上下文。 */
   private filesDirCache: string = ''
@@ -169,6 +174,8 @@ struct NoteEdit {
     const params = this.getUIContext().getRouter().getParams() as NoteEditParams
     this.noteId = params?.noteId ?? ''
     this.preferPreviewOnOpen = params?.openWithPreview === true
+    this.pendingInitialAction = params?.initialAction ?? null
+    this.initialActionHandled = false
     void this.loadNote()
     void this.refreshAllNotes()
     void this.loadQuickActionBarPref()
@@ -728,6 +735,7 @@ struct NoteEdit {
       this.previewMode = this.pageWidth >= 600 ? 'split' : 'edit'
       this.preparePreviewForCurrentMode(this.content)
       void this.refreshAllNotes()
+      this.runInitialActionIfNeeded()
       return
     }
     const note = await NoteRepository.getInstance().getNote(this.noteId)
@@ -736,6 +744,7 @@ struct NoteEdit {
     }
     if (!note) {
       this.preparePreviewForCurrentMode(this.content)
+      this.runInitialActionIfNeeded()
       return
     }
     this.title = note.title
@@ -755,6 +764,25 @@ struct NoteEdit {
     this.preparePreviewForCurrentMode(note.content)
     void this.refreshAllNotes()
     this.schedulePathCaptionMarquee()
+    this.runInitialActionIfNeeded()
+  }
+
+  private runInitialActionIfNeeded(): void {
+    if (this.initialActionHandled || this.pendingInitialAction === null) {
+      return
+    }
+    this.initialActionHandled = true
+    const action = this.pendingInitialAction
+    setTimeout((): void => {
+      if (!this.lifecycle.isActive()) {
+        return
+      }
+      if (action === 'aiLinkExtract') {
+        this.openAiLinkExtractDialog()
+      } else if (action === 'insertImage' || action === 'bookScan') {
+        void this.insertImage()
+      }
+    }, 0)
   }
 
   private async refreshAllNotes(): Promise<void> {
@@ -2508,10 +2536,9 @@ struct NoteEdit {
       Column({ space: 0 }) {
         Row() {
           Row() {
-            Image($r('app.media.ic_back'))
-              .width($r('app.float.note_edit_back_icon_size'))
-              .height($r('app.float.note_edit_back_icon_size'))
-              .objectFit(ImageFit.Contain)
+            SymbolGlyph($r('sys.symbol.arrow_left'))
+              .fontSize(22)
+              .fontColor([$r('app.color.primary_text')])
           }
           .height('100%')
           .constraintSize({ minWidth: 48 })

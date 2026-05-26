@@ -35,7 +35,10 @@ import {
   createEmptyFlowchartGraph,
   createFlowchartPosition,
   cloneFlowchartGraph,
-  flowchartFirstMatchingNodeId
+  flowchartFirstMatchingNodeId,
+  FLOWCHART_DEFAULT_TITLE,
+  isDefaultFlowchartTitle,
+  isPlaceholderFlowchartGraph
 } from '../common/model/FlowchartGraph'
 import { FlowchartShapePath } from '../common/utils/FlowchartShapePath'
 import { FlowchartNodePathView } from '../components/FlowchartNodePathView'
@@ -46,7 +49,7 @@ const FLOWCHART_LOG_TAG = 'FlowchartPage'
 @Component
 struct FlowchartPage {
   @State graph: FlowchartGraphModel = createEmptyFlowchartGraph()
-  @State noteTitle: string = '未命名知识图谱'
+  @State noteTitle: string = FLOWCHART_DEFAULT_TITLE
   @State noteId: string = ''
   @State focusQuery: string = ''
   @State loading: boolean = true
@@ -116,6 +119,7 @@ struct FlowchartPage {
   private static readonly ENDPOINT_BOUNDS_PAD = 16
   private lifecycle = new PageLifecycle()
   private dirty: boolean = false
+  private initialHadNodes: boolean = false
   private settings: RenderingContextSettings = new RenderingContextSettings(true)
   private canvasContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings)
 
@@ -130,7 +134,17 @@ struct FlowchartPage {
   aboutToDisappear(): void {
     this.lifecycle.disappear()
     this.clearDragVisual()
-    void this.saveIfDirty()
+  }
+
+  onBackPress(): boolean {
+    void this.finalizeOnExit().then(() => {
+      this.getUIContext().getRouter().back()
+    })
+    return true
+  }
+
+  private async finalizeOnExit(): Promise<void> {
+    await this.saveIfDirty()
   }
 
   onConfigurationUpdate(_config: Configuration): void {
@@ -156,10 +170,13 @@ struct FlowchartPage {
     }
     await NoteRepository.getInstance().init()
     const note = await NoteRepository.getInstance().getNote(this.noteId)
-    const loaded = await FlowchartService.getInstance().load(this.noteId)
+    const loaded = note === null
+      ? createEmptyFlowchartGraph()
+      : await FlowchartService.getInstance().load(this.noteId)
     if (this.lifecycle.isActive()) {
       this.graph = loaded
-      this.noteTitle = note?.title ?? '未命名知识图谱'
+      this.noteTitle = note?.title ?? FLOWCHART_DEFAULT_TITLE
+      this.initialHadNodes = !isPlaceholderFlowchartGraph(loaded)
       this.loading = false
       Logger.info(FLOWCHART_LOG_TAG,
         `loadGraph noteId=${this.noteId} nodes=${loaded.nodes.length} edges=${loaded.edges.length} ` +
@@ -176,14 +193,35 @@ struct FlowchartPage {
     }
   }
 
+  /** 无节点且标题为默认/空时不写入知识图谱。 */
+  private shouldPersistFlowchart(): boolean {
+    return !isPlaceholderFlowchartGraph(this.graph) || !isDefaultFlowchartTitle(this.noteTitle)
+  }
+
+  private async abandonNewEmptyFlowchartIfNeeded(): Promise<void> {
+    if (this.noteId.length === 0 || this.shouldPersistFlowchart() || this.initialHadNodes) {
+      return
+    }
+    await NoteRepository.getInstance().purgeLocalNoteCompletely(this.noteId)
+  }
+
   private async persist(showToast: boolean = false): Promise<void> {
     if (this.noteId.length === 0) {
       this.showUserMessage('未关联笔记，无法保存')
       return
     }
+    if (!this.shouldPersistFlowchart()) {
+      this.dirty = false
+      await this.abandonNewEmptyFlowchartIfNeeded()
+      if (showToast) {
+        this.showUserMessage('无需保存')
+      }
+      return
+    }
     try {
       Logger.info(FLOWCHART_LOG_TAG,
         `persist start noteId=${this.noteId} nodes=${this.graph.nodes.length} edges=${this.graph.edges.length}`)
+      await NoteRepository.getInstance().ensureFlowchartNote(this.noteId, this.noteTitle)
       await FlowchartService.getInstance().save(this.graph, this.noteId)
       await NoteRepository.getInstance().saveFlowchartNote(this.noteId, this.graph, this.noteTitle)
       this.dirty = false
@@ -199,6 +237,12 @@ struct FlowchartPage {
 
   private async saveIfDirty(): Promise<void> {
     if (!this.dirty) {
+      await this.abandonNewEmptyFlowchartIfNeeded()
+      return
+    }
+    if (!this.shouldPersistFlowchart()) {
+      this.dirty = false
+      await this.abandonNewEmptyFlowchartIfNeeded()
       return
     }
     await this.persist()
@@ -1642,7 +1686,7 @@ struct FlowchartPage {
 
   private saveNoteTitleDialog(): void {
     const trimmed = this.editNoteTitleInput.trim()
-    this.noteTitle = trimmed.length > 0 ? trimmed : '未命名知识图谱'
+    this.noteTitle = trimmed.length > 0 ? trimmed : FLOWCHART_DEFAULT_TITLE
     this.showNoteTitleDialog = false
     this.markDirty()
   }
@@ -1681,10 +1725,9 @@ struct FlowchartPage {
   @Builder
   private buildHistoryButtons() {
     Column() {
-      Image($r('app.media.ic_undo'))
-        .width(32)
-        .height(32)
-        .objectFit(ImageFit.Contain)
+      SymbolGlyph($r('sys.symbol.undo'))
+        .fontSize(24)
+        .fontColor([$r('app.color.primary_text')])
         .opacity(this.canUndo() ? 1 : 0.35)
         .onClick(() => {
           if (this.canUndo()) {
@@ -2130,10 +2173,9 @@ struct FlowchartPage {
       Column() {
         Row() {
           Row() {
-            Image($r('app.media.ic_back'))
-              .width($r('app.float.toolbar_back_icon_size'))
-              .height($r('app.float.toolbar_back_icon_size'))
-              .objectFit(ImageFit.Contain)
+            SymbolGlyph($r('sys.symbol.arrow_left'))
+              .fontSize(18)
+              .fontColor([$r('app.color.primary_text')])
           }
           .height('100%')
           .padding({
@@ -2144,8 +2186,9 @@ struct FlowchartPage {
           .backgroundColor($r('app.color.surface_muted'))
           .borderRadius($r('app.float.pill_radius'))
           .onClick(() => {
-            void this.saveIfDirty()
-            this.getUIContext().getRouter().back()
+            void this.finalizeOnExit().then(() => {
+              this.getUIContext().getRouter().back()
+            })
           })
 
           Text(this.noteTitle.length > 0 ? this.noteTitle : $r('app.string.flowchart_title'))

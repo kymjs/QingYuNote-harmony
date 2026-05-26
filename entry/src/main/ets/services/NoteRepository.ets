@@ -9,7 +9,13 @@ import { NoteSortUtils } from '../common/utils/NoteSortUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { IdUtils } from '../common/utils/IdUtils'
 import type { FlowchartGraphModel } from '../common/model/FlowchartGraph'
-import { flowchartSearchSummary, flowchartSearchableText } from '../common/model/FlowchartGraph'
+import {
+  FLOWCHART_DEFAULT_TITLE,
+  flowchartSearchSummary,
+  flowchartSearchableText,
+  isDefaultFlowchartTitle,
+  shouldShowFlowchartInHomeList
+} from '../common/model/FlowchartGraph'
 import { FlowchartService } from './FlowchartService'
 import { DatabaseService } from './DatabaseService'
 import { FileService } from './FileService'
@@ -125,7 +131,7 @@ export class NoteRepository {
     await this.init()
     const now = Date.now()
     const id = IdUtils.uuid()
-    const resolvedTitle = title.trim().length > 0 ? title.trim() : '未命名知识图谱'
+    const resolvedTitle = title.trim().length > 0 ? title.trim() : '编辑标题'
     const state = NoteStateCodec.createDefaultState(id, resolvedTitle, now, 2)
     state.userData = '{"kind":"flowchart","formatVersion":1}'
     const note = this.createNoteFromState(state, '', {
@@ -137,10 +143,34 @@ export class NoteRepository {
       syncStatus: 'pending'
     }, [])
     await FileService.getInstance().writeNoteFile(note)
-    await FlowchartService.getInstance().save(FlowchartService.getInstance().emptyGraph(), id)
     await DatabaseService.getInstance().upsertSyncState(this.toSyncState(note))
     this.bumpVersion()
     this.scheduleSyncHandler?.(id)
+    return note
+  }
+
+  async ensureFlowchartNote(noteId: string, title: string = ''): Promise<Note> {
+    await this.init()
+    const existing = await this.getNote(noteId)
+    if (existing) {
+      return existing
+    }
+    const now = Date.now()
+    const resolvedTitle = title.trim().length > 0 ? title.trim() : FLOWCHART_DEFAULT_TITLE
+    const state = NoteStateCodec.createDefaultState(noteId, resolvedTitle, now, 2)
+    state.userData = '{"kind":"flowchart","formatVersion":1}'
+    const note = this.createNoteFromState(state, '', {
+      noteId: noteId,
+      remoteModified: 0,
+      deleted: false,
+      deletedAt: 0,
+      lastOperationAt: now,
+      syncStatus: 'pending'
+    }, [])
+    await FileService.getInstance().writeNoteFile(note)
+    await DatabaseService.getInstance().upsertSyncState(this.toSyncState(note))
+    this.bumpVersion()
+    this.scheduleSyncHandler?.(noteId)
     return note
   }
 
@@ -153,7 +183,7 @@ export class NoteRepository {
     await FlowchartService.getInstance().save(graph, id)
     const searchable = flowchartSearchableText(graph)
     const resolvedTitle = (title ?? existing.title ?? '').trim()
-    const nextTitle = resolvedTitle.length > 0 ? resolvedTitle : '未命名知识图谱'
+    const nextTitle = resolvedTitle.length > 0 ? resolvedTitle : '编辑标题'
     const now = Date.now()
     const updated = this.cloneNote(existing)
     updated.title = nextTitle
@@ -197,6 +227,9 @@ export class NoteRepository {
     const sortedNotes = NoteSortUtils.sortByLastEditedDesc(notes)
     const displayNotes: Note[] = []
     for (const note of sortedNotes) {
+      if (!(await this.shouldIncludeNoteInHomeList(note))) {
+        continue
+      }
       displayNotes.push(await this.noteForDisplay(this.cloneNote(note)))
     }
     this.cachedActiveNotes = displayNotes
@@ -702,6 +735,26 @@ export class NoteRepository {
     if (repaired) {
       this.bumpVersion()
     }
+  }
+
+  private async shouldIncludeNoteInHomeList(note: Note): Promise<boolean> {
+    if (note.type_ !== 2) {
+      return true
+    }
+    if (!isDefaultFlowchartTitle(note.title ?? '')) {
+      return true
+    }
+    const hasFlowchartFile = FileService.getInstance().flowchartFileExists(note.id)
+    if (!hasFlowchartFile) {
+      await this.purgeLocalNoteCompletely(note.id)
+      return false
+    }
+    const graph = await FlowchartService.getInstance().load(note.id)
+    if (shouldShowFlowchartInHomeList(note.title ?? '', graph)) {
+      return true
+    }
+    await this.purgeLocalNoteCompletely(note.id)
+    return false
   }
 
   private async loadAllNotes(): Promise<Note[]> {
