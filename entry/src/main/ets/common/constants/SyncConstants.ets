@@ -12,6 +12,10 @@ export class SyncConstants {
   static readonly cloudSyncNotConfiguredToastEvent: string = 'cloud_sync_not_configured_toast'
   /** `.qingyu-index.json` 中已彻底删除笔记 id 列表。 */
   static readonly remoteIndexFieldPermanentlyDeletedNoteIds: string = 'permanentlyDeletedNoteIds'
+  /** 彻底删除 id 超过该数量时裁剪最老条目（与 Flutter 对齐）。 */
+  static readonly permanentlyDeletedNoteIdsPruneThreshold: number = 30
+  /** 每次裁剪移除的最老彻底删除 id 条数。 */
+  static readonly permanentlyDeletedNoteIdsPruneCount: number = 10
   /** 解析失效日期时，年份 ≥ 此值视为终身 VIP（与 Flutter `qingyuLifetimeMinYear` 一致）。 */
   static readonly qingyuLifetimeMinYear: number = 2099
   /** 单次全量同步最多处理条目数，与 Flutter `maxNotesPerFullSyncPass` 对齐。 */

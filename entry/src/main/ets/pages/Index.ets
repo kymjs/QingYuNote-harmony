@@ -54,7 +54,7 @@ struct Index {
   @State expandedFolderIds: string[] = []
   @State searchQuery: string = ''
   @State searchExpanded: boolean = false
-  @State loading: boolean = true
+  @State loading: boolean = false
   @State syncing: boolean = false
   @State refreshing: boolean = false
   /** 抽屉开启比例 0～1：`DrawerModel` 为 @Observed，经 @Provide 由 HomeDrawerLayer @Consume（勿使用 `$drawerModel` 初始化子组件）。 */
@@ -74,6 +74,8 @@ struct Index {
   /** 当前水平拖动开始时抽屉进度，用于计算跟手位移。 */
   private drawerPanStartProgress: number = 0
   private searchFilterTimer: number = -1
+  /** 丢弃过期的 loadNotes，且与 Flutter `_notesLoadGeneration` 一致在 finally 收敛 loading。 */
+  private notesLoadGeneration: number = 0
   private noteListDataSource: IndexNotesDataSource = new IndexNotesDataSource()
   private qingyuBlockedHandler = (): void => {
     void this.showQingyuSubscriptionBlockedDialog()
@@ -137,11 +139,7 @@ struct Index {
       return
     }
     void navigateToBindPhoneIfNeeded(this.getUIContext())
-    await tryAutoProvisionQingyuCloudOnHomeEntry()
-    if (!this.lifecycle.isActive()) {
-      return
-    }
-    void this.refreshCloudSyncConfiguredState()
+    void this.runHomeEntryNetworkSetup()
     if (!this.hasShownOnce) {
       this.hasShownOnce = true
       return
@@ -181,23 +179,28 @@ struct Index {
     if (!this.lifecycle.isActive()) {
       return
     }
-    await tryAutoProvisionQingyuCloudOnHomeEntry()
+    await this.loadNotes(this.allNotes.length === 0)
     if (!this.lifecycle.isActive()) {
       return
     }
-    await this.refreshCloudSyncConfiguredState()
-    if (!this.lifecycle.isActive()) {
-      return
-    }
-    await this.loadNotes(this.notes.length === 0)
-    if (!this.lifecycle.isActive()) {
-      return
-    }
+    void this.runHomeEntryNetworkSetup()
     /** 与版本检查并行启动同步，避免「检查更新」阻塞云同步开始时间。 */
     void this.startStartupSyncIfNeeded()
     await runAppUpdateCheckOnLaunch(this.getUIContext())
     if (this.lifecycle.isActive()) {
       void navigateToBindPhoneIfNeeded(this.getUIContext())
+    }
+  }
+
+  private async runHomeEntryNetworkSetup(): Promise<void> {
+    try {
+      await tryAutoProvisionQingyuCloudOnHomeEntry()
+      if (!this.lifecycle.isActive()) {
+        return
+      }
+      await this.refreshCloudSyncConfiguredState()
+    } catch (error) {
+      Logger.error('Index', `runHomeEntryNetworkSetup failed: ${JSON.stringify(error)}`)
     }
   }
 
@@ -208,13 +211,14 @@ struct Index {
   }
 
   private async loadNotes(showLoading: boolean = false): Promise<void> {
-    if (showLoading) {
-      if (!this.lifecycle.isActive()) {
-        return
-      }
+    const generation = ++this.notesLoadGeneration
+    if (showLoading && this.lifecycle.isActive()) {
       this.loading = true
     }
     try {
+      if (!this.lifecycle.isActive()) {
+        return
+      }
       const context = AppContextHolder.tryGetContext()
       if (context) {
         await PreferencesService.getInstance().init(context)
@@ -242,7 +246,7 @@ struct Index {
         this.applyTagFilter()
       }
     } finally {
-      if (showLoading && this.lifecycle.isActive()) {
+      if (this.lifecycle.isActive() && generation === this.notesLoadGeneration) {
         this.loading = false
       }
     }
@@ -281,6 +285,12 @@ struct Index {
       const snap = await PreferencesService.getInstance().getSavedCustomWebDAVConfigSnapshot()
       const customReady = snap !== null && snap.enabled
       if (customReady) {
+        if (this.lifecycle.isActive()) {
+          this.cloudSyncConfigured = true
+        }
+        return
+      }
+      if (await PreferencesService.getInstance().getQingyuCloudSyncIntent() === 'qingyu') {
         if (this.lifecycle.isActive()) {
           this.cloudSyncConfigured = true
         }

@@ -3,6 +3,8 @@ export interface MarkdownBlockLike {
   type: string
   content: string
   items?: MarkdownInlineLike[][]
+  tableHeaders?: MarkdownInlineLike[][]
+  tableRows?: MarkdownInlineLike[][][]
 }
 
 export interface MarkdownInlineLike {
@@ -128,6 +130,22 @@ export class KatexUtils {
         }
         if (lines.length > 0) {
           parts.push(lines.join('\n'))
+        }
+        continue
+      }
+      if (block.type === 'table') {
+        const headers = block.tableHeaders ?? []
+        const rows = block.tableRows ?? []
+        const tableLines: string[] = []
+        if (headers.length > 0) {
+          tableLines.push(`| ${headers.map((cell: MarkdownInlineLike[]) => KatexUtils.inlineSource(cell)).join(' | ')} |`)
+          tableLines.push(`| ${headers.map((_cell: MarkdownInlineLike[]) => '---').join(' | ')} |`)
+        }
+        for (const row of rows) {
+          tableLines.push(`| ${row.map((cell: MarkdownInlineLike[]) => KatexUtils.inlineSource(cell)).join(' | ')} |`)
+        }
+        if (tableLines.length > 0) {
+          parts.push(tableLines.join('\n'))
         }
         continue
       }

@@ -10,7 +10,7 @@ export interface MarkdownInline {
 }
 
 export type MarkdownBlockType =
-  'heading1' | 'heading2' | 'heading3' | 'quote' | 'unordered_list' | 'ordered_list' | 'checkbox_list' | 'code' | 'divider' | 'image' | 'paragraph' | 'math_display'
+  'heading1' | 'heading2' | 'heading3' | 'quote' | 'unordered_list' | 'ordered_list' | 'checkbox_list' | 'code' | 'divider' | 'image' | 'paragraph' | 'math_display' | 'table'
 
 type MarkdownListBlockType = 'unordered_list' | 'ordered_list'
 
@@ -27,6 +27,8 @@ export interface MarkdownBlock {
   items: MarkdownInline[][]
   language: string
   checkboxItems?: MarkdownCheckboxItem[]
+  tableHeaders?: MarkdownInline[][]
+  tableRows?: MarkdownInline[][][]
 }
 
 export interface LinkSummaryParts {
@@ -118,13 +120,14 @@ export class MarkdownUtils {
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
       .replace(/^[-*+]\s+/gm, '')
       .replace(/^\[[ -]\]\s?/gm, '')
+      .replace(/^☐\s?/gm, '')
       .replace(/\r/g, '')
       .trim()
   }
 
-  /** 行首 `[ ]` 为未选中勾选框，`[-]` 为已选中勾选框。 */
+  /** 行首 `[ ]` 或 `☐` 为未选中勾选框，`[-]` 为已选中勾选框。 */
   static isUncheckedCheckboxLine(trimmed: string): boolean {
-    return /^\[ \]/.test(trimmed)
+    return /^\[ \]/.test(trimmed) || trimmed.startsWith('☐')
   }
 
   static isCheckedCheckboxLine(trimmed: string): boolean {
@@ -138,12 +141,44 @@ export class MarkdownUtils {
 
   static checkboxLineText(trimmed: string): string {
     if (MarkdownUtils.isUncheckedCheckboxLine(trimmed)) {
+      if (trimmed.startsWith('☐')) {
+        return trimmed.replace(/^☐\s?/, '')
+      }
       return trimmed.replace(/^\[ \]\s?/, '')
     }
     if (MarkdownUtils.isCheckedCheckboxLine(trimmed)) {
       return trimmed.replace(/^\[-\]\s?/, '')
     }
     return trimmed
+  }
+
+  static isTableRow(trimmed: string): boolean {
+    if (!trimmed.includes('|')) {
+      return false
+    }
+    return /^\|?.+\|/.test(trimmed)
+  }
+
+  static isTableSeparator(trimmed: string): boolean {
+    if (!trimmed.includes('|') || !trimmed.includes('-')) {
+      return false
+    }
+    return /^\|?[\s|:-]+\|[\s|:-]*$/.test(trimmed)
+  }
+
+  static parseTableRowCells(row: string): string[] {
+    let line = row.trim()
+    if (line.startsWith('|')) {
+      line = line.slice(1)
+    }
+    if (line.endsWith('|')) {
+      line = line.slice(0, line.length - 1)
+    }
+    return line.split('|').map((cell: string) => cell.trim())
+  }
+
+  private static parseTableCells(cells: string[]): MarkdownInline[][] {
+    return cells.map((cell: string) => MarkdownUtils.parseInlines(cell))
   }
 
   static toggleCheckboxLine(content: string, lineIndex: number, checked?: boolean): string {
@@ -192,7 +227,7 @@ export class MarkdownUtils {
     const lineContent = lineEnd === -1
       ? newContent.slice(lineStart)
       : newContent.slice(lineStart, lineEnd)
-    if (lineContent.startsWith('[ ]') || lineContent.startsWith('[-]')) {
+    if (lineContent.startsWith('[ ]') || lineContent.startsWith('[-]') || lineContent.startsWith('☐')) {
       return null
     }
     const prefix = '[ ] '
@@ -477,6 +512,45 @@ export class MarkdownUtils {
       }
       if (checkboxItems.length > 0) {
         flushCheckboxList()
+      }
+      if (MarkdownUtils.isTableRow(trimmed)) {
+        flushParagraph()
+        flushList()
+        const tableLines: string[] = [trimmed]
+        let nextIndex = lineIndex + 1
+        while (nextIndex < lines.length) {
+          const nextTrimmed = lines[nextIndex].trim()
+          if (nextTrimmed.length === 0 || !MarkdownUtils.isTableRow(nextTrimmed)) {
+            break
+          }
+          tableLines.push(nextTrimmed)
+          nextIndex++
+        }
+        lineIndex = nextIndex - 1
+
+        const tableHeaders: MarkdownInline[][] = []
+        const tableRows: MarkdownInline[][][] = []
+        let bodyStart = 0
+        if (tableLines.length >= 2 && MarkdownUtils.isTableSeparator(tableLines[1])) {
+          tableHeaders.push(...MarkdownUtils.parseTableCells(MarkdownUtils.parseTableRowCells(tableLines[0])))
+          bodyStart = 2
+        }
+        for (let i = bodyStart; i < tableLines.length; i++) {
+          if (MarkdownUtils.isTableSeparator(tableLines[i])) {
+            continue
+          }
+          tableRows.push(MarkdownUtils.parseTableCells(MarkdownUtils.parseTableRowCells(tableLines[i])))
+        }
+        blocks.push({
+          type: 'table',
+          content: '',
+          inlines: [],
+          items: [],
+          language: '',
+          tableHeaders,
+          tableRows
+        })
+        continue
       }
       if (/^[-*+]\s+/.test(trimmed)) {
         flushParagraph()

@@ -155,6 +155,17 @@ export struct NoteEditMarkdownBlocksView {
         .join('|')
       return `${block.type}:${items}:${index}`
     }
+    if (block.type === 'table') {
+      const headers = (block.tableHeaders ?? [])
+        .map((cell: MarkdownInline[]) => cell.map((inline: MarkdownInline) => inline.content.slice(0, 12)).join(''))
+        .join('|')
+      const rows = (block.tableRows ?? [])
+        .map((row: MarkdownInline[][]) =>
+          row.map((cell: MarkdownInline[]) => cell.map((inline: MarkdownInline) => inline.content.slice(0, 12)).join('')).join(',')
+        )
+        .join('|')
+      return `${block.type}:${headers}:${rows}:${index}`
+    }
     return `${block.type}:${block.language}:${block.content.slice(0, 48)}:${index}`
   }
 
@@ -267,6 +278,87 @@ export struct NoteEditMarkdownBlocksView {
     }
   }
 
+  private tableCellKey(cell: MarkdownInline[], rowIndex: number, colIndex: number): string {
+    const content = cell
+      .map((inline: MarkdownInline) => `${inline.type}:${inline.content.slice(0, 16)}:${inline.href}`)
+      .join('|')
+    return `${content}:${rowIndex}:${colIndex}`
+  }
+
+  @Builder
+  private buildTableCell(inlines: MarkdownInline[], isHeader: boolean) {
+    Column() {
+      this.buildInlineText(inlines, this.inlineSource(inlines),
+        isHeader ? 15 : $r('app.float.body_font_size'),
+        this.primaryTextColor(), this.contentLineHeight(22),
+        isHeader ? FontWeight.Medium : FontWeight.Regular)
+    }
+    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  private tableColumnCount(block: MarkdownBlock): number {
+    let count = (block.tableHeaders ?? []).length
+    for (const row of block.tableRows ?? []) {
+      if (row.length > count) {
+        count = row.length
+      }
+    }
+    return count
+  }
+
+  private tableRowCells(cells: MarkdownInline[][], columnCount: number): MarkdownInline[][] {
+    const padded: MarkdownInline[][] = []
+    for (let i = 0; i < columnCount; i++) {
+      padded.push(cells[i] ?? [{ type: 'text', content: '', href: '' }])
+    }
+    return padded
+  }
+
+  @Builder
+  private buildTableDataRow(cells: MarkdownInline[][], rowIndex: number, isHeader: boolean, columnCount: number) {
+    Row() {
+      ForEach(this.tableRowCells(cells, columnCount), (cell: MarkdownInline[], colIndex: number) => {
+        Column() {
+          this.buildTableCell(cell, isHeader)
+        }
+        .layoutWeight(1)
+        .constraintSize({ minWidth: 72 })
+        .border({ width: { right: 1, bottom: 1 }, color: this.cardBorderColor() })
+        .backgroundColor(isHeader
+          ? (this.forShareExport ? $r('app.color.share_code_background') : $r('app.color.surface_muted'))
+          : Color.Transparent)
+      }, (cell: MarkdownInline[], colIndex: number) => this.tableCellKey(cell, rowIndex, colIndex))
+    }
+    .alignItems(VerticalAlign.Top)
+    .width('100%')
+  }
+
+  @Builder
+  private buildTableBlock(block: MarkdownBlock) {
+    Scroll() {
+      Column() {
+        if ((block.tableHeaders ?? []).length > 0) {
+          this.buildTableDataRow(block.tableHeaders ?? [], -1, true, this.tableColumnCount(block))
+        }
+        ForEach(block.tableRows ?? [], (row: MarkdownInline[][], rowIndex: number) => {
+          this.buildTableDataRow(row, rowIndex, false, this.tableColumnCount(block))
+        }, (row: MarkdownInline[][], rowIndex: number) => {
+          const content = row
+            .map((cell: MarkdownInline[]) => cell.map((inline: MarkdownInline) => inline.content.slice(0, 12)).join(''))
+            .join('|')
+          return `${content}:${rowIndex}`
+        })
+      }
+      .alignItems(HorizontalAlign.Start)
+      .border({ width: 1, color: this.cardBorderColor() })
+      .borderRadius(8)
+    }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Auto)
+    .width('100%')
+  }
+
   @Builder
   private buildCheckboxListBlock(block: MarkdownBlock) {
     Column({ space: 10 }) {
@@ -351,6 +443,8 @@ export struct NoteEditMarkdownBlocksView {
       this.buildListBlock(block, true)
     } else if (block.type === 'checkbox_list') {
       this.buildCheckboxListBlock(block)
+    } else if (block.type === 'table') {
+      this.buildTableBlock(block)
     } else if (block.type === 'code') {
       Column({ space: 8 }) {
         if (block.language.length > 0) {

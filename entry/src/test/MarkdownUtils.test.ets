@@ -82,5 +82,36 @@ export default function markdownUtilsTest() {
       expect(summary).assertContain('项目')
       expect(summary).assertContain('链接')
     })
+
+    it('should parse markdown table', 0, () => {
+      const blocks = MarkdownUtils.parseBlocks('| Name | Age |\n| --- | --- |\n| Alice | 20 |')
+      expect(blocks.length).assertEqual(1)
+      expect(blocks[0].type).assertEqual('table')
+      expect((blocks[0].tableHeaders ?? []).length).assertEqual(2)
+      expect(blocks[0].tableHeaders?.[0]?.[0]?.content).assertEqual('Name')
+      expect(blocks[0].tableHeaders?.[1]?.[0]?.content).assertEqual('Age')
+      expect((blocks[0].tableRows ?? []).length).assertEqual(1)
+      expect(blocks[0].tableRows?.[0]?.[0]?.[0]?.content).assertEqual('Alice')
+      expect(blocks[0].tableRows?.[0]?.[1]?.[0]?.content).assertEqual('20')
+    })
+
+    it('should parse unicode unchecked checkbox like [ ]', 0, () => {
+      const blocks = MarkdownUtils.parseBlocks('☐ 待办一\n☐ 待办二')
+      expect(blocks.length).assertEqual(1)
+      expect(blocks[0].type).assertEqual('checkbox_list')
+      expect((blocks[0].checkboxItems ?? []).length).assertEqual(2)
+      expect(blocks[0].checkboxItems?.[0]?.checked).assertFalse()
+      expect(blocks[0].checkboxItems?.[0]?.inlines?.[0]?.content).assertEqual('待办一')
+      expect(blocks[0].checkboxItems?.[1]?.inlines?.[0]?.content).assertEqual('待办二')
+    })
+
+    it('should parse [ ] and ☐ checkbox lines together', 0, () => {
+      const blocks = MarkdownUtils.parseBlocks('[ ] 任务A\n☐ 任务B')
+      expect(blocks.length).assertEqual(1)
+      expect(blocks[0].type).assertEqual('checkbox_list')
+      expect((blocks[0].checkboxItems ?? []).length).assertEqual(2)
+      expect(blocks[0].checkboxItems?.[0]?.inlines?.[0]?.content).assertEqual('任务A')
+      expect(blocks[0].checkboxItems?.[1]?.inlines?.[0]?.content).assertEqual('任务B')
+    })
   })
 }

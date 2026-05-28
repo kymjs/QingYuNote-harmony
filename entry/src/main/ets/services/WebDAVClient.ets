@@ -21,6 +21,11 @@ import { TimeUtils } from '../common/utils/TimeUtils'
 import { Logger } from '../common/utils/Logger'
 import { SyncConstants } from '../common/constants/SyncConstants'
 import { NoteSettingsDocument } from '../common/model/NoteSettingsDocument'
+import {
+  appendPermanentlyDeletedNoteIdOrdered,
+  dedupePermanentlyDeletedNoteIdsPreserveOrder,
+  prunePermanentlyDeletedNoteIds
+} from '../common/utils/RemoteIndexPermanentDelete'
 interface HeaderOverrides {
   contentType?: string
   modifiedAt?: string
@@ -67,7 +72,8 @@ interface RemoteIndexWritePayload {
 /** 单次 GET `.qingyu-index.json` 解析结果（笔记条目 + 彻底删除 id 列表）。 */
 export interface RemoteIndexSnapshot {
   noteEntries: Map<string, RemoteIndexEntry>
-  permanentlyDeletedNoteIds: Set<string>
+  /** 按写入顺序排列，靠前为最老的彻底删除 id。 */
+  permanentlyDeletedNoteIds: string[]
   /** 索引文件中的毫秒时间戳（与 Flutter `RemoteIndexSnapshot.updatedAt` 对齐）。 */
   updatedAt: number
 }
@@ -95,7 +101,7 @@ export class WebDAVClient {
   static canonicalRemoteIndexFingerprint(snapshot: RemoteIndexSnapshot): string {
     const parts: string[] = []
     parts.push(`${snapshot.updatedAt}`)
-    const perm = Array.from(snapshot.permanentlyDeletedNoteIds).filter((id: string) => id.length > 0).sort()
+    const perm = dedupePermanentlyDeletedNoteIdsPreserveOrder(snapshot.permanentlyDeletedNoteIds).sort()
     parts.push(perm.join(','))
     const ids = Array.from(snapshot.noteEntries.keys()).filter((id: string) => id.length > 0).sort()
     for (let i = 0; i < ids.length; i += 1) {
@@ -665,6 +671,27 @@ export class WebDAVClient {
     return await this.fetchRemoteIndexSnapshotBestEffort()
   }
 
+  /** 同步/定时任务：彻底删除 id 超过阈值时裁剪最老条目并写回远端。 */
+  async pruneRemoteIndexPermanentlyDeletedIfNeeded(): Promise<void> {
+    if (this.isDeferRemoteIndexMerge()) {
+      return
+    }
+    try {
+      await this.requireConfig()
+      const snapshot = await this.fetchRemoteIndexSnapshotStrict()
+      const beforeLen = snapshot.permanentlyDeletedNoteIds.length
+      snapshot.permanentlyDeletedNoteIds =
+        prunePermanentlyDeletedNoteIds(snapshot.permanentlyDeletedNoteIds)
+      if (snapshot.permanentlyDeletedNoteIds.length === beforeLen) {
+        return
+      }
+      await this.writeRemoteIndexEntries(snapshot.noteEntries, snapshot.permanentlyDeletedNoteIds)
+    } catch (error) {
+      Logger.warn('WebDAVClient',
+        `pruneRemoteIndexPermanentlyDeletedIfNeeded failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
   /**
    * 回收站彻底删除后写入：将 id 记入 `.qingyu-index.json` 的彻底删除数组，并从索引笔记条目中移除。
    */
@@ -678,7 +705,7 @@ export class WebDAVClient {
     try {
       const snapshot = await this.fetchRemoteIndexSnapshotStrict()
       snapshot.noteEntries.delete(noteId)
-      snapshot.permanentlyDeletedNoteIds.add(noteId)
+      appendPermanentlyDeletedNoteIdOrdered(snapshot.permanentlyDeletedNoteIds, noteId)
       await this.writeRemoteIndexEntries(snapshot.noteEntries, snapshot.permanentlyDeletedNoteIds)
     } catch (error) {
       Logger.warn('WebDAVClient',
@@ -885,14 +912,14 @@ export class WebDAVClient {
         `fetchRemoteIndexSnapshotBestEffort degraded: ${this.describeError(error as Object)}`)
       return {
         noteEntries: new Map<string, RemoteIndexEntry>(),
-        permanentlyDeletedNoteIds: new Set<string>(),
+        permanentlyDeletedNoteIds: [],
         updatedAt: 0
       }
     }
   }
 
   private async fetchRemoteIndexSnapshotStrict(): Promise<RemoteIndexSnapshot> {
-    const permanentDeletes = new Set<string>()
+    const permanentDeletes: string[] = []
     const response = await this.sendRequest(await this.remoteIndexUrl(), http.RequestMethod.GET)
     if (response.responseCode === 404) {
       return {
@@ -932,7 +959,7 @@ export class WebDAVClient {
     if (Array.isArray(permRaw)) {
       permRaw.forEach((item: Object) => {
         if (typeof item === 'string' && item.length > 0) {
-          permanentDeletes.add(item)
+          appendPermanentlyDeletedNoteIdOrdered(permanentDeletes, item)
         }
       })
     }
@@ -964,7 +991,7 @@ export class WebDAVClient {
   }
 
   private async writeRemoteIndexEntries(noteEntries: Map<string, RemoteIndexEntry>,
-    permanentlyDeletedNoteIds: Set<string>): Promise<void> {
+    permanentlyDeletedNoteIds: string[]): Promise<void> {
     const sortedNoteIds = Array.from(noteEntries.keys()).sort()
     const noteIds: Record<string, RemoteIndexEntry> = {}
     sortedNoteIds.forEach((noteId: string) => {
@@ -975,7 +1002,8 @@ export class WebDAVClient {
         contentLength: this.normalizeIndexNumber(entry.contentLength)
       }
     })
-    const sortedPermanent = Array.from(permanentlyDeletedNoteIds).filter((id: string) => id.length > 0).sort()
+    const prunedPermanent = prunePermanentlyDeletedNoteIds(permanentlyDeletedNoteIds)
+    const sortedPermanent = prunedPermanent.filter((id: string) => id.length > 0)
     const payload: RemoteIndexWritePayload = {
       version: 2,
       updatedAt: Date.now(),

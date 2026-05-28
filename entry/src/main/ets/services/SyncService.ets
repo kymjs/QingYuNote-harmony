@@ -193,7 +193,7 @@ export class SyncService {
         reuseRemoteIndexSnapshot !== undefined
           ? reuseRemoteIndexSnapshot.permanentlyDeletedNoteIds
           : (await WebDAVClient.getInstance().getRemoteIndexSnapshot()).permanentlyDeletedNoteIds
-      if (permanentIds.has(noteId)) {
+      if (permanentIds.includes(noteId)) {
         return await this.applyPermanentDeleteListedInIndex(noteId)
       }
       const syncState = await DatabaseService.getInstance().getSyncState(noteId)
@@ -367,7 +367,7 @@ export class SyncService {
       pendingNoteIds,
       this.buildLocalNoteMap(localNotes),
       FULL_SYNC_CONCURRENCY,
-      permanentSnapshot.permanentlyDeletedNoteIds,
+      new Set<string>(permanentSnapshot.permanentlyDeletedNoteIds),
       permanentSnapshot
     )
   }
@@ -417,10 +417,12 @@ export class SyncService {
       Logger.warn('SyncService',
         `performFullSync ensureNotesDirectory failed (check WebDAVClient qingyu path + HEAD/PROPFIND diagnostics): ${this.describeError(error as Object)}`)
     }
+    await WebDAVClient.getInstance().pruneRemoteIndexPermanentlyDeletedIfNeeded()
     await NoteSettingsRemoteSync.getInstance().syncWithRemote()
     const remoteIndexSnapshot = await WebDAVClient.getInstance().getRemoteIndexSnapshot()
     const remoteIndexEntries = remoteIndexSnapshot.noteEntries
-    const permanentDeletedIds = remoteIndexSnapshot.permanentlyDeletedNoteIds
+    const permanentDeletedIds =
+      new Set<string>(remoteIndexSnapshot.permanentlyDeletedNoteIds)
     const localNotesInitial = await NoteRepository.getInstance().listAllNotes()
     const tombstonesInitial = await DatabaseService.getInstance().listDeletedSyncStates()
     const remoteNoteIds = remoteIndexEntries.size > 0
