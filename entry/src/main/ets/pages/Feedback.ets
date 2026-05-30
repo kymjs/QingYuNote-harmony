@@ -3,15 +3,35 @@ import { fileIo, fileUri } from '@kit.CoreFileKit'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import { Logger } from '../common/utils/Logger'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
+import { showConfirmAlertDialog } from '../dialogs/ConfirmAlertDialog'
+
+/** 与 Flutter `kBetaTestFeedbackMinStaySeconds` 一致。 */
+const BETA_TEST_FEEDBACK_MIN_STAY_MS = 10_000
+
+interface FeedbackParams {
+  fromBetaTestInvite?: boolean
+}
 
 @Entry
 @Component
 struct Feedback {
   @State pageWidth: number = 360
   private closeGuard = new PageCloseGuard()
+  private fromBetaTestInvite: boolean = false
+  private enteredAtMs: number = 0
 
   private get isWideLayout(): boolean {
     return this.pageWidth >= 600
+  }
+
+  aboutToAppear(): void {
+    this.enteredAtMs = Date.now()
+    try {
+      const params = this.getUIContext().getRouter().getParams() as FeedbackParams
+      this.fromBetaTestInvite = params.fromBetaTestInvite === true
+    } catch (_) {
+      this.fromBetaTestInvite = false
+    }
   }
 
   private showToastMessage(message: string): void {
@@ -72,6 +92,30 @@ struct Feedback {
   }
 
   private handleToolbarBack(): void {
+    void this.handleToolbarBackAsync()
+  }
+
+  private async handleToolbarBackAsync(): Promise<void> {
+    if (this.fromBetaTestInvite) {
+      const elapsed = Date.now() - this.enteredAtMs
+      if (elapsed < BETA_TEST_FEEDBACK_MIN_STAY_MS) {
+        try {
+          const abandon = await showConfirmAlertDialog(this.getUIContext(), {
+            title: '提示',
+            message: '本活动仅展示一次，放弃后将不再展示，确认放弃吗？',
+            cancelLabel: '取消',
+            confirmLabel: '放弃',
+            confirmColor: '#DC2626'
+          })
+          if (!abandon) {
+            return
+          }
+        } catch (error) {
+          console.error(`Feedback retention dialog failed: ${JSON.stringify(error)}`)
+          return
+        }
+      }
+    }
     this.closeGuard.runBack(() => {
       this.getUIContext().getRouter().back()
     }, 'Feedback')

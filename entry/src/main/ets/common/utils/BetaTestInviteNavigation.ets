@@ -1,6 +1,7 @@
 import router from '@ohos.router'
 import { UIContext } from '@kit.ArkUI'
 
+import { showConfirmAlertDialog } from '../../dialogs/ConfirmAlertDialog'
 import { NoteApiClient, ProfileBody } from '../../services/NoteApiClient'
 import { PreferencesService } from '../../services/PreferencesService'
 import { RemoteAppConfigService } from '../../services/RemoteAppConfigService'
@@ -62,16 +63,18 @@ export async function maybeShowBetaTestInviteDialog(uiContext: UIContext): Promi
 
     await PreferencesService.getInstance().setBetaTestInviteDialogShown(true)
 
-    const result = await uiContext.getPromptAction().showDialog({
+    const confirmed = await showConfirmAlertDialog(uiContext, {
       title: '内测邀请',
       message: '尊贵的内测用户，感谢您的使用，添加作者微信可获赠一个月轻羽云会员。',
-      buttons: [
-        { text: '取消', color: '#6B7280' },
-        { text: '确定', color: '#0DAA4A' }
-      ]
+      cancelLabel: '取消',
+      confirmLabel: '确定',
+      confirmColor: '#0DAA4A'
     })
-    if (result.index === 1) {
-      uiContext.getRouter().pushUrl({ url: FEEDBACK_URL }).catch((err: Error) => {
+    if (confirmed) {
+      uiContext.getRouter().pushUrl({
+        url: FEEDBACK_URL,
+        params: { fromBetaTestInvite: true }
+      }).catch((err: Error) => {
         console.error(`pushUrl Feedback failed: ${JSON.stringify(err)}`)
       })
     }
