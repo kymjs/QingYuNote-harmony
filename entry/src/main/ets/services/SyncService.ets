@@ -56,7 +56,6 @@ export class SyncService {
   private noteLocks: Set<string> = new Set()
   private currentSyncPromise?: Promise<SyncResult[]>
   private syncRunning: boolean = false
-  private lastQingyuBlockNotifyMs: number = 0
   /** 本轮全量同步是否因条目上限而截断（与 Flutter 对齐）。 */
   private lastFullSyncHadMoreNotesFlag: boolean = false
 
@@ -575,11 +574,6 @@ export class SyncService {
   }
 
   private notifyQingyuSyncBlockedThrottled(): void {
-    const now = Date.now()
-    if (now - this.lastQingyuBlockNotifyMs < 2500) {
-      return
-    }
-    this.lastQingyuBlockNotifyMs = now
     void this.emitQingyuBlockedUi()
   }
 

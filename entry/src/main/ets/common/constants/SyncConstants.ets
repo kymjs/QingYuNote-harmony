@@ -22,4 +22,6 @@ export class SyncConstants {
   static readonly maxNotesPerFullSyncPass: number = 120
   /** 一次 `syncNow` 后台最多连续批次轮数，与 Flutter `maxFullSyncPassesPerUserAction` 对齐。 */
   static readonly maxFullSyncPassesPerUserAction: number = 64
+  /** 未配置 WebDAV 且未开通轻羽云会员时，同类提示的最小间隔（毫秒）。 */
+  static readonly cloudSyncNotConfiguredNotifyIntervalMs: number = 5 * 60 * 1000
 }

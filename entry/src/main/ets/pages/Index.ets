@@ -21,9 +21,11 @@ import {
 } from '../common/utils/NoteFolderTree'
 import { SyncConstants } from '../common/constants/SyncConstants'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
+import { CloudSyncNotifyThrottle } from '../common/utils/CloudSyncNotifyThrottle'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { IdUtils } from '../common/utils/IdUtils'
 import { navigateToBindPhoneIfNeeded } from '../common/utils/BindPhoneNavigation'
+import { maybeShowBetaTestInviteDialog } from '../common/utils/BetaTestInviteNavigation'
 import { navigateToNoteEdit } from '../common/utils/NoteEditNavigation'
 import { navigateToFlowchart } from '../common/utils/FlowchartNavigation'
 import { HomeLiquidGlassTabBar } from '../components/HomeLiquidGlassTabBar'
@@ -112,6 +114,9 @@ struct Index {
   }
 
   private async showQingyuSubscriptionBlockedDialog(): Promise<void> {
+    if (!CloudSyncNotifyThrottle.tryConsumeQingyuSubscriptionDialogSlot()) {
+      return
+    }
     try {
       const result = await this.getUIContext().getPromptAction().showDialog({
         title: '提示',
@@ -191,6 +196,7 @@ struct Index {
     await runAppUpdateCheckOnLaunch(this.getUIContext())
     if (this.lifecycle.isActive()) {
       void navigateToBindPhoneIfNeeded(this.getUIContext())
+      void maybeShowBetaTestInviteDialog(this.getUIContext())
     }
   }
 
@@ -764,6 +770,9 @@ struct Index {
 
   private showUserMessage(message: string): void {
     if (message.trim().length === 0) {
+      return
+    }
+    if (CloudSyncNotifyThrottle.shouldSuppressUserMessage(message)) {
       return
     }
     try {

@@ -33,6 +33,8 @@ const GUEST_MODE_KEY = 'guest_mode'
 const NOTE_QUICK_ACTION_BAR_ENABLED_KEY = 'note_quick_action_bar_enabled'
 /** 与 Flutter `prefNoteFolderModeEnabledKey` 一致 */
 const NOTE_FOLDER_MODE_ENABLED_KEY = 'note_folder_mode_enabled'
+/** 与 Flutter `prefBetaTestInviteDialogShownKey` 一致：内测邀请弹窗已展示过则不再弹出 */
+const BETA_TEST_INVITE_DIALOG_SHOWN_KEY = 'beta_test_invite_dialog_shown'
 /** 登录成功后导航：`Login` 消费并清空（OAuth 返回后 router params 可能丢失） */
 const LOGIN_RETURN_TARGET_KEY = 'login_return_target'
 
@@ -614,6 +616,29 @@ export class PreferencesService {
       await store.flush()
     } catch (error) {
       Logger.warn('PreferencesService', `clearCachedUserProfile failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  /** 内测邀请弹窗是否已在本地展示过（设备维度，永久不再弹出）。 */
+  async hasBetaTestInviteDialogShown(): Promise<boolean> {
+    try {
+      const store = this.ensureStore()
+      return store.getSync(BETA_TEST_INVITE_DIALOG_SHOWN_KEY, false) as boolean
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `hasBetaTestInviteDialogShown failed: ${this.describeError(error as Object)}`)
+      return false
+    }
+  }
+
+  async setBetaTestInviteDialogShown(value: boolean): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(BETA_TEST_INVITE_DIALOG_SHOWN_KEY, value)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `setBetaTestInviteDialogShown failed: ${this.describeError(error as Object)}`)
     }
   }
 
