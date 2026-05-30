@@ -150,9 +150,8 @@ struct ChangePassword {
       case 'sms_rate_limited':
         return '发送过于频繁，请稍后再试'
       case 'sms_limit_exceeded':
-        return '今日发送次数已达上限'
       case 'sms_quota_exceeded':
-        return '发送过于频繁，请稍后再试'
+        return '当日验证码发送上限，请24小时后再试'
       case 'sms_send_failed':
       case 'sms_feature_not_opened':
       case 'sms_invalid_params':

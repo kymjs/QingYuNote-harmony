@@ -7,7 +7,6 @@
     "pages/Index",
     "pages/NoteEdit",
     "pages/Settings",
-    "pages/NoteSettings",
     "pages/CloudSyncSettings",
     "pages/QingyuCloudRecharge",
     "pages/RecycleBin",

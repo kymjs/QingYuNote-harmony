@@ -3,7 +3,7 @@ import type common from '@ohos.app.ability.common'
 import type { CreateNoteInput, Note, NoteFilePayload, NoteStateBlock, NoteSyncState, RecycleBinLoadResult,
   UpdateNoteInput } from '../common/model/Note'
 import { Logger } from '../common/utils/Logger'
-import { MarkdownUtils } from '../common/utils/MarkdownUtils'
+import { MarkdownUtils, shouldShowTodoNoteInHomeList } from '../common/utils/MarkdownUtils'
 import { NoteFolderTree } from '../common/utils/NoteFolderTree'
 import { NoteSortUtils } from '../common/utils/NoteSortUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
@@ -739,6 +739,10 @@ export class NoteRepository {
 
   private async shouldIncludeNoteInHomeList(note: Note): Promise<boolean> {
     if (note.type_ !== 2) {
+      if (!shouldShowTodoNoteInHomeList(note.title ?? '', note.content ?? '', note.tags ?? [])) {
+        await this.purgeLocalNoteCompletely(note.id)
+        return false
+      }
       return true
     }
     if (!isDefaultFlowchartTitle(note.title ?? '')) {

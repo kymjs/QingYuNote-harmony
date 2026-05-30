@@ -91,7 +91,12 @@ export class EditorMarkdownInsert {
     return max + 1
   }
 
-  static insertBlockPrefix(text: string, caret: number, prefix: string): EditorInsertResult {
+  static insertBlockPrefix(
+    text: string,
+    caret: number,
+    prefix: string,
+    insertAtLineStartWhenCursorAtLineStart: boolean = false
+  ): EditorInsertResult {
     const cursor = Math.max(0, Math.min(caret, text.length))
     const lineStart = EditorMarkdownInsert.lineStart(text, cursor)
     const lineEnd = EditorMarkdownInsert.lineEnd(text, cursor)
@@ -99,6 +104,11 @@ export class EditorMarkdownInsert {
 
     if (EditorMarkdownInsert.isEffectivelyEmptyLine(line)) {
       const newText = text.substring(0, lineStart) + prefix + text.substring(lineEnd)
+      return { text: newText, caret: lineStart + prefix.length }
+    }
+
+    if (insertAtLineStartWhenCursorAtLineStart && cursor === lineStart) {
+      const newText = text.substring(0, lineStart) + prefix + text.substring(lineStart)
       return { text: newText, caret: lineStart + prefix.length }
     }
 
@@ -110,9 +120,26 @@ export class EditorMarkdownInsert {
     return { text: newText, caret: newCaret }
   }
 
-  static insertOrderedListItem(text: string, caret: number): EditorInsertResult {
+  static insertOrderedListItem(
+    text: string,
+    caret: number,
+    insertAtLineStartWhenCursorAtLineStart: boolean = false
+  ): EditorInsertResult {
     const next = EditorMarkdownInsert.nextOrderedListNumber(text)
-    return EditorMarkdownInsert.insertBlockPrefix(text, caret, `${next}. `)
+    return EditorMarkdownInsert.insertBlockPrefix(
+      text,
+      caret,
+      `${next}. `,
+      insertAtLineStartWhenCursorAtLineStart
+    )
+  }
+
+  /** 在光标所在行的行首插入 prefix。 */
+  static insertAtLineStart(text: string, caret: number, prefix: string): EditorInsertResult {
+    const cursor = Math.max(0, Math.min(caret, text.length))
+    const lineStart = EditorMarkdownInsert.lineStart(text, cursor)
+    const newText = text.substring(0, lineStart) + prefix + text.substring(lineStart)
+    return { text: newText, caret: lineStart + prefix.length }
   }
 
   static wrapPlaceholder(

@@ -845,3 +845,46 @@ export class MarkdownUtils {
     return content.replace(/\s+/g, ' ').trim()
   }
 }
+
+/** 待办笔记默认标题（与 NoteEdit.applyTodoListEntryDefaults 一致）。 */
+export const DEFAULT_TODO_TITLE = '待办事项'
+
+export function isDefaultTodoTitle(title: string): boolean {
+  const trimmed = title.trim()
+  return trimmed.length === 0 || trimmed === DEFAULT_TODO_TITLE
+}
+
+/** 仅有空勾选框（`[ ]` / `[-]` / `☐`，无正文）时视为占位内容。 */
+export function isPlaceholderTodoContent(content: string): boolean {
+  const normalized = content.replace(/\r/g, '')
+  if (normalized.trim().length === 0) {
+    return true
+  }
+  for (const line of normalized.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0) {
+      continue
+    }
+    if (!MarkdownUtils.isCheckboxLine(trimmed)) {
+      return false
+    }
+    if (MarkdownUtils.checkboxLineText(trimmed).trim().length > 0) {
+      return false
+    }
+  }
+  return true
+}
+
+export function shouldPersistTodoNote(title: string, content: string): boolean {
+  if (!isDefaultTodoTitle(title)) {
+    return true
+  }
+  return !isPlaceholderTodoContent(content)
+}
+
+export function shouldShowTodoNoteInHomeList(title: string, content: string, tags: string[]): boolean {
+  if (!tags.includes('Todo')) {
+    return true
+  }
+  return shouldPersistTodoNote(title, content)
+}

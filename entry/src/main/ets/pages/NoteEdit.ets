@@ -1,6 +1,6 @@
 import { ComponentContent, window } from '@kit.ArkUI'
 import type { MarkdownBlock } from '../common/utils/MarkdownUtils'
-import { MarkdownUtils } from '../common/utils/MarkdownUtils'
+import { MarkdownUtils, shouldPersistTodoNote } from '../common/utils/MarkdownUtils'
 import {
   EditorMarkdownInsert,
   type EditorInsertResult,
@@ -137,6 +137,8 @@ struct NoteEdit {
   private preferPreviewOnOpen: boolean = false
   private pendingInitialAction: NoteEditorEntryAction | null = null
   private initialActionHandled: boolean = false
+  /** 打开页面时待办笔记是否已有实质内容（避免清空后误删历史笔记）。 */
+  private initialHadTodoContent: boolean = false
   private shareCardHeight: number = 0
   /** 缓存 ability `filesDir`，避免预览中多张图片重复解析上下文。 */
   private filesDirCache: string = ''
@@ -163,6 +165,7 @@ struct NoteEdit {
   onPageShow(): void {
     void this.loadQuickActionBarPref()
     void this.loadFolderModePref()
+    void this.applyRouterParamsIfNeeded()
   }
 
   aboutToAppear(): void {
@@ -183,6 +186,28 @@ struct NoteEdit {
     void this.loadFolderModePref()
     void this.loadAiFeatureConfig()
     void this.initKeyboardAvoidArea()
+  }
+
+  private async applyRouterParamsIfNeeded(): Promise<void> {
+    const params = this.getUIContext().getRouter().getParams() as NoteEditParams
+    const nextNoteId = params?.noteId ?? ''
+    const nextPreview = params?.openWithPreview === true
+    const nextAction = params?.initialAction ?? null
+    if (nextNoteId === this.noteId &&
+      nextPreview === this.preferPreviewOnOpen &&
+      nextAction === this.pendingInitialAction) {
+      return
+    }
+    await this.flushAndAutoSaveAfterLeave()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.noteId = nextNoteId
+    this.preferPreviewOnOpen = nextPreview
+    this.pendingInitialAction = nextAction
+    this.initialActionHandled = false
+    void this.loadNote()
+    void this.refreshAllNotes()
   }
 
   aboutToDisappear(): void {
@@ -542,11 +567,14 @@ struct NoteEdit {
       case 'hr':
         result = EditorMarkdownInsert.insertBlockPrefix(this.content, caret, '---')
         break
+      case 'checkbox':
+        result = EditorMarkdownInsert.insertAtLineStart(this.content, caret, '[ ] ')
+        break
       case 'orderedList':
-        result = EditorMarkdownInsert.insertOrderedListItem(this.content, caret)
+        result = EditorMarkdownInsert.insertOrderedListItem(this.content, caret, true)
         break
       case 'bulletList':
-        result = EditorMarkdownInsert.insertBlockPrefix(this.content, caret, '* ')
+        result = EditorMarkdownInsert.insertBlockPrefix(this.content, caret, '* ', true)
         break
       case 'bold':
         result = EditorMarkdownInsert.wrapPlaceholder(
@@ -629,7 +657,7 @@ struct NoteEdit {
     this.previousContent = this.content
     this.contentCaretIndex = this.content.length
     this.scheduleApplyCaret(this.content.length, this.content.length)
-    this.scheduleSave()
+    this.handleContentChange()
     if (this.shouldRenderPreview()) {
       this.schedulePreviewRefresh()
     } else {
@@ -639,6 +667,21 @@ struct NoteEdit {
 
   private noteTagsSafe(): string[] {
     return this.noteTags ?? []
+  }
+
+  private shouldPersistTodoNote(): boolean {
+    if (!this.noteTagsSafe().includes('Todo')) {
+      return true
+    }
+    return shouldPersistTodoNote(this.title, this.content)
+  }
+
+  private async abandonPlaceholderTodoIfNeeded(): Promise<void> {
+    if (this.shouldPersistTodoNote() || this.initialHadTodoContent || this.noteId.length === 0) {
+      return
+    }
+    await NoteRepository.getInstance().purgeLocalNoteCompletely(this.noteId)
+    this.noteId = ''
   }
 
   private normalizeTags(tags?: string[]): string[] {
@@ -801,6 +844,8 @@ struct NoteEdit {
     this.saveStatus = '已保存'
     this.noteTags = this.normalizeTags(note.tags)
     this.parentId = `${note.parentId ?? ''}`.trim()
+    this.initialHadTodoContent = this.noteTagsSafe().includes('Todo') &&
+      shouldPersistTodoNote(note.title, note.content)
     const hasBody = note.content.trim().length > 0
     if (this.preferPreviewOnOpen && hasBody) {
       this.previewMode = this.isSplitMode() ? 'split' : 'preview'
@@ -846,7 +891,10 @@ struct NoteEdit {
   }
 
   private scheduleSave(): void {
-    if (this.title.trim().length === 0 && this.content.trim().length === 0) {
+    const placeholderTodo =
+      this.noteTagsSafe().includes('Todo') && !this.shouldPersistTodoNote()
+    if ((this.title.trim().length === 0 && this.content.trim().length === 0) ||
+      placeholderTodo) {
       if (this.saveTimer !== -1) {
         clearTimeout(this.saveTimer)
         this.saveTimer = -1
@@ -896,6 +944,12 @@ struct NoteEdit {
       Logger.info('NoteEdit',
         `handleAutoSave start: noteId=${this.noteId || 'new'}, titleLength=${this.title.length}, contentLength=${this.content.length}`)
       const rawTitle = this.title
+      if (this.noteTagsSafe().includes('Todo') && !this.shouldPersistTodoNote()) {
+        await this.abandonPlaceholderTodoIfNeeded()
+        this.saveStatus = '未保存'
+        Logger.info('NoteEdit', 'handleAutoSave skipped: placeholder todo note')
+        return
+      }
       if (rawTitle.trim().length === 0 && this.content.trim().length === 0) {
         this.saveStatus = '未保存'
         Logger.info('NoteEdit', 'handleAutoSave skipped: title and content are empty')
@@ -2469,15 +2523,12 @@ struct NoteEdit {
               .fontSize(12)
               .fontColor($r('app.color.secondary_text'))
           } else {
-            Scroll() {
-              Row({ space: 4 }) {
-                ForEach(noteTags, (tag: string) => {
-                  this.buildTagChip(tag)
-                }, (tag: string) => `mobile_tag_chip_${tag}`)
-              }
+            this.buildTagChip(noteTags[0])
+            if (noteTags.length > 1) {
+              Text('...')
+                .fontSize(12)
+                .fontColor($r('app.color.secondary_text'))
             }
-            .scrollable(ScrollDirection.Horizontal)
-            .scrollBar(BarState.Off)
           }
         }
         SymbolGlyph($r('sys.symbol.chevron_down'))
@@ -2518,15 +2569,12 @@ struct NoteEdit {
                 .fontSize(12)
                 .fontColor($r('app.color.secondary_text'))
             } else {
-              Scroll() {
-                Row({ space: 4 }) {
-                  ForEach(this.noteTagsSafe(), (tag: string) => {
-                    this.buildTagChip(tag)
-                  }, (tag: string) => `mobile_tag_chip_${tag}`)
-                }
+              this.buildTagChip(this.noteTagsSafe()[0])
+              if (this.noteTagsSafe().length > 1) {
+                Text('...')
+                  .fontSize(12)
+                  .fontColor($r('app.color.secondary_text'))
               }
-              .scrollable(ScrollDirection.Horizontal)
-              .scrollBar(BarState.Off)
             }
           }
           SymbolGlyph($r('sys.symbol.chevron_down'))

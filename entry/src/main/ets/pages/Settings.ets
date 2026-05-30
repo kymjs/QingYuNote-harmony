@@ -18,6 +18,9 @@ struct Settings {
   @State accountSubId: string = ''
   /** 与 Flutter `SettingsHubPage` 对齐：游客模式下不展示退出登录 */
   @State guestMode: boolean = false
+  @State noteSettingsLoading: boolean = true
+  @State quickActionBarEnabled: boolean = true
+  @State folderModeEnabled: boolean = false
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
 
@@ -48,6 +51,53 @@ struct Settings {
       return
     }
     this.accountSubId = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.noteSettingsLoading = true
+    this.quickActionBarEnabled =
+      await PreferencesService.getInstance().getNoteQuickActionBarEnabled()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.folderModeEnabled =
+      await PreferencesService.getInstance().getNoteFolderModeEnabled()
+    if (this.lifecycle.isActive()) {
+      this.noteSettingsLoading = false
+    }
+  }
+
+  private async setQuickActionBarEnabled(enabled: boolean): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+    await PreferencesService.getInstance().setNoteQuickActionBarEnabled(enabled)
+    if (this.lifecycle.isActive()) {
+      this.quickActionBarEnabled = enabled
+    }
+  }
+
+  private toggleQuickActionBar(): void {
+    void this.setQuickActionBarEnabled(!this.quickActionBarEnabled)
+  }
+
+  private async setFolderModeEnabled(enabled: boolean): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+    await PreferencesService.getInstance().setNoteFolderModeEnabled(enabled)
+    if (!enabled) {
+      await PreferencesService.getInstance().setHomeSidebarFilterMode('tag')
+    }
+    if (this.lifecycle.isActive()) {
+      this.folderModeEnabled = enabled
+    }
+  }
+
+  private toggleFolderMode(): void {
+    void this.setFolderModeEnabled(!this.folderModeEnabled)
   }
 
   private async handleLogout(): Promise<void> {
@@ -228,6 +278,68 @@ struct Settings {
             offsetY: 4
           })
 
+          if (!this.noteSettingsLoading) {
+            Column({ space: 0 }) {
+              Row() {
+                Text($r('app.string.note_quick_action_bar'))
+                  .fontSize($r('app.float.body_font_size'))
+                  .fontColor($r('app.color.primary_text'))
+                  .layoutWeight(1)
+                Toggle({ type: ToggleType.Switch, isOn: this.quickActionBarEnabled })
+                  .selectedColor($r('app.color.accent'))
+                  .hitTestBehavior(HitTestMode.None)
+              }
+              .width('100%')
+              .padding({
+                left: 20,
+                right: 16,
+                top: 14,
+                bottom: 14
+              })
+              .justifyContent(FlexAlign.SpaceBetween)
+              .alignItems(VerticalAlign.Center)
+              .onClick(() => {
+                this.toggleQuickActionBar()
+              })
+
+              Divider()
+                .color($r('app.color.divider'))
+                .strokeWidth(1)
+
+              Row() {
+                Text($r('app.string.note_folder_mode_enabled'))
+                  .fontSize($r('app.float.body_font_size'))
+                  .fontColor($r('app.color.primary_text'))
+                  .layoutWeight(1)
+                Toggle({ type: ToggleType.Switch, isOn: this.folderModeEnabled })
+                  .selectedColor($r('app.color.accent'))
+                  .hitTestBehavior(HitTestMode.None)
+              }
+              .width('100%')
+              .padding({
+                left: 20,
+                right: 16,
+                top: 14,
+                bottom: 14
+              })
+              .justifyContent(FlexAlign.SpaceBetween)
+              .alignItems(VerticalAlign.Center)
+              .onClick(() => {
+                this.toggleFolderMode()
+              })
+            }
+            .width('100%')
+            .backgroundColor($r('app.color.card_background'))
+            .borderRadius($r('app.float.card_radius'))
+            .border({ width: 1, color: $r('app.color.card_border') })
+            .shadow({
+              radius: 20,
+              color: $r('app.color.shadow_color'),
+              offsetX: 0,
+              offsetY: 4
+            })
+          }
+
             Column({ space: 0 }) {
             Row() {
               Text($r('app.string.settings_cloud_sync'))
@@ -250,34 +362,6 @@ struct Settings {
             .onClick(() => {
               this.getUIContext().getRouter().pushUrl({ url: 'pages/CloudSyncSettings' }).catch((err: Error) => {
                 console.error(`openCloudSyncSettings: ${JSON.stringify(err)}`)
-              })
-            })
-
-            Divider()
-              .color($r('app.color.divider'))
-              .strokeWidth(1)
-
-            Row() {
-              Text($r('app.string.note_settings_hub'))
-                .fontSize($r('app.float.body_font_size'))
-                .fontColor($r('app.color.primary_text'))
-                .layoutWeight(1)
-              Text('›')
-                .fontSize(22)
-                .fontColor($r('app.color.tertiary_text'))
-            }
-            .width('100%')
-            .padding({
-              left: 20,
-              right: 16,
-              top: 14,
-              bottom: 14
-            })
-            .justifyContent(FlexAlign.SpaceBetween)
-            .alignItems(VerticalAlign.Center)
-            .onClick(() => {
-              this.getUIContext().getRouter().pushUrl({ url: 'pages/NoteSettings' }).catch((err: Error) => {
-                console.error(`openNoteSettings: ${JSON.stringify(err)}`)
               })
             })
 

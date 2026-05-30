@@ -6,7 +6,7 @@ import {
   type SystemMaterialParams
 } from '@kit.UIDesignKit'
 
-/** 首页底部三按钮 TabBar：更多 / 图谱 / 笔记（HdsTabs 悬浮 + 沉浸光感，低版本毛玻璃降级）。 */
+/** 首页底部三按钮 TabBar：更多 / 待办 / 笔记（HdsTabs 悬浮 + 沉浸光感，低版本毛玻璃降级）。 */
 
 const TAB_BAR_HEIGHT_VP = 45
 
@@ -24,7 +24,7 @@ const TAB_BAR_WIDTH_FACTOR = 0.55
 @Component
 export struct HomeLiquidGlassTabBar {
   onMore: () => void = (): void => {}
-  onGraph: () => void = (): void => {}
+  onTodo: () => void = (): void => {}
   onNote: () => void = (): void => {}
 
   private tabsController: HdsTabsController = new HdsTabsController()
@@ -70,7 +70,7 @@ export struct HomeLiquidGlassTabBar {
     if (index === 0) {
       this.onMore()
     } else if (index === 1) {
-      this.onGraph()
+      this.onTodo()
     } else if (index === 2) {
       this.onNote()
     }
@@ -105,7 +105,7 @@ export struct HomeLiquidGlassTabBar {
   @Builder
   private buildTabItems() {
     this.buildTabItem('更多', $r('sys.symbol.square_grid_2x2'), this.onMore)
-    this.buildTabItem('图谱', $r('sys.symbol.shareplay'), this.onGraph)
+    this.buildTabItem('待办', $r('sys.symbol.list_bullet'), this.onTodo)
     this.buildTabItem('笔记', $r('sys.symbol.square_and_pencil'), this.onNote)
   }
 
@@ -120,7 +120,7 @@ export struct HomeLiquidGlassTabBar {
       TabContent() {
         this.buildPassthroughTabPane()
       }
-      .tabBar(this.buildTabBarStyle($r('sys.symbol.shareplay'), '图谱'))
+      .tabBar(this.buildTabBarStyle($r('sys.symbol.list_bullet'), '待办'))
 
       TabContent() {
         this.buildPassthroughTabPane()

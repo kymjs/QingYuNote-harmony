@@ -2,7 +2,7 @@ export interface HomeMoreOptionsSheetParams {
   onClose: () => void
   onPasteLink: () => void
   onPhotoImage: () => void
-  onTodoList: () => void
+  onKnowledgeGraph: () => void
 }
 
 @Component
@@ -11,7 +11,7 @@ export struct HomeMoreOptionsSheet {
     onClose: (): void => {},
     onPasteLink: (): void => {},
     onPhotoImage: (): void => {},
-    onTodoList: (): void => {}
+    onKnowledgeGraph: (): void => {}
   }
 
   @Builder
@@ -112,12 +112,12 @@ export struct HomeMoreOptionsSheet {
           .strokeWidth(1)
           .margin({ left: 68 })
         this.buildOptionRow(
-          $r('sys.symbol.list_bullet'),
-          'Todo List',
-          '备忘录/日程清单/待办事项，都能完成',
+          $r('sys.symbol.shareplay'),
+          '知识图谱',
+          '知识图谱/思维导图/流程图，都能完成',
           (): void => {
             this.params.onClose()
-            this.params.onTodoList()
+            this.params.onKnowledgeGraph()
           }
         )
       }

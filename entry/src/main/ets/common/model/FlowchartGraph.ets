@@ -43,6 +43,12 @@ export const FLOWCHART_LINE_PROP_FROM_Y = 'fromY'
 export const FLOWCHART_LINE_PROP_TO_X = 'toX'
 export const FLOWCHART_LINE_PROP_TO_Y = 'toY'
 
+/** 布局后启用正交连线（仅 0°/90° 折线）的 metadata 键。 */
+export const FLOWCHART_ORTHOGONAL_ROUTING_KEY = 'orthogonalRouting'
+
+/** 节点连接数超过该值视为思维导图中心，保留直线连接。 */
+export const FLOWCHART_MIND_MAP_DEGREE_THRESHOLD = 4
+
 export type FlowchartAnchor = 'top' | 'right' | 'bottom' | 'left'
 
 export interface FlowchartAnchorHit {

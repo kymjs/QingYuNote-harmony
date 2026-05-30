@@ -1,6 +1,7 @@
 export type EditorQuickActionType =
   | 'link'
   | 'image'
+  | 'checkbox'
   | 'quote'
   | 'hr'
   | 'orderedList'
@@ -22,7 +23,7 @@ export struct EditorQuickActionBar {
   private static readonly BAR_HEIGHT: number = 40
   private static readonly SLOT_SIZE: number = 40
   private static readonly BAR_PADDING_H: number = 8
-  private static readonly ICON_COUNT: number = 9
+  private static readonly ICON_COUNT: number = 10
   private static readonly ICON_VISUAL_SIZE: number = EditorQuickActionBar.SLOT_SIZE * 0.7
   /** 加粗/斜体/删除线图标视觉缩小 15%，点击区域仍用 ICON_VISUAL_SIZE 计算。 */
   private static readonly ICON_VISUAL_SIZE_COMPACT: number =
@@ -118,6 +119,7 @@ export struct EditorQuickActionBar {
     Row() {
       this.buildSymbolIcon('link', $r('sys.symbol.link'), hPad)
       this.buildSymbolIcon('image', $r('sys.symbol.picture'), hPad, $r('app.color.primary_text'))
+      this.buildSymbolIcon('checkbox', $r('sys.symbol.smallcircle_filled_circle'), hPad)
       this.buildSymbolIcon('quote', $r('sys.symbol.quote'), hPad)
       this.buildSymbolIcon('hr', $r('sys.symbol.minus'), hPad)
       this.buildSymbolIcon('orderedList', $r('sys.symbol.list_number'), hPad)
@@ -139,6 +141,7 @@ export struct EditorQuickActionBar {
       Row() {
         this.buildSymbolIcon('link', $r('sys.symbol.link'), hPad)
         this.buildSymbolIcon('image', $r('sys.symbol.picture'), hPad, $r('app.color.primary_text'))
+        this.buildSymbolIcon('checkbox', $r('sys.symbol.smallcircle_filled_circle'), hPad)
         this.buildSymbolIcon('quote', $r('sys.symbol.quote'), hPad)
         this.buildSymbolIcon('hr', $r('sys.symbol.minus'), hPad)
         this.buildSymbolIcon('orderedList', $r('sys.symbol.list_number'), hPad)

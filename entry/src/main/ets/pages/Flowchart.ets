@@ -11,6 +11,7 @@ import { NoteRepository } from '../services/NoteRepository'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { FlowchartLayoutEngine } from '../common/utils/FlowchartLayoutEngine'
+import { FlowchartEdgeRouting } from '../common/utils/FlowchartEdgeRouting'
 import { Logger } from '../common/utils/Logger'
 import type {
   FlowchartAnchor,
@@ -31,6 +32,7 @@ import {
   FLOWCHART_LINE_PROP_TO_Y,
   FLOWCHART_LINE_PROP_TYPE,
   FLOWCHART_LINE_TYPES,
+  FLOWCHART_ORTHOGONAL_ROUTING_KEY,
   FLOWCHART_SHAPE_TYPES,
   createEmptyFlowchartGraph,
   createFlowchartPosition,
@@ -61,9 +63,12 @@ struct FlowchartPage {
   @State editTitle: string = ''
   @State editDescription: string = ''
   @State showEditDialog: boolean = false
+  @State showEdgeEditDialog: boolean = false
   @State showNoteTitleDialog: boolean = false
   @State editNoteTitleInput: string = ''
   @State editingNodeId: string = ''
+  @State editingEdgeId: string = ''
+  @State editEdgeLabel: string = ''
   @State touchMoved: boolean = false
   @State graphRevision: number = 0
   @State interactionTick: number = 0
@@ -87,6 +92,7 @@ struct FlowchartPage {
   private dragActivated: boolean = false
   private longPressTimerId: number = -1
   private activeConnectFromId: string = ''
+  private activeConnectFromAnchor: FlowchartAnchor = 'right'
   private lastTouchLocalX: number = 0
   private lastTouchLocalY: number = 0
   private dragStartX: number = 0
@@ -101,6 +107,8 @@ struct FlowchartPage {
   private endpointDragStartWidth: number = 0
   private lastTapTime: number = 0
   private lastTapNodeId: string = ''
+  private lastTapEdgeId: string = ''
+  private lastTapEdgeTime: number = 0
   private canvasReady: boolean = false
   private static readonly TOUCH_DRAG = 1
   private static readonly TOUCH_CONNECT = 2
@@ -128,6 +136,27 @@ struct FlowchartPage {
     const params = this.getUIContext().getRouter().getParams() as Record<string, Object>
     this.noteId = `${params?.noteId ?? ''}`
     this.focusQuery = `${params?.focusQuery ?? ''}`
+    void this.loadGraph()
+  }
+
+  onPageShow(): void {
+    void this.applyRouterParamsIfNeeded()
+  }
+
+  private async applyRouterParamsIfNeeded(): Promise<void> {
+    const params = this.getUIContext().getRouter().getParams() as Record<string, Object>
+    const nextNoteId = `${params?.noteId ?? ''}`
+    const nextFocus = `${params?.focusQuery ?? ''}`
+    if (nextNoteId === this.noteId && nextFocus === this.focusQuery) {
+      return
+    }
+    await this.saveIfDirty()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.noteId = nextNoteId
+    this.focusQuery = nextFocus
+    this.loading = true
     void this.loadGraph()
   }
 
@@ -800,9 +829,10 @@ struct FlowchartPage {
     if (source === undefined || target === undefined) {
       return `${edge.id}_${this.graphRevision}_${this.interactionTick}`
     }
-    const endpoints = this.edgeLineEndpoints(source, target)
-    return `${edge.id}_${endpoints.from.x.toFixed(1)}_${endpoints.from.y.toFixed(1)}_` +
-      `${endpoints.to.x.toFixed(1)}_${endpoints.to.y.toFixed(1)}_${this.graphRevision}_${this.interactionTick}`
+    const route = this.edgeRoutePoints(edge)
+    const routeKey = route.map((p: FlowchartNodePosition) =>
+      `${p.x.toFixed(1)}_${p.y.toFixed(1)}`).join('_')
+    return `${edge.id}_${routeKey}_${this.graphRevision}_${this.interactionTick}`
   }
 
   private overlapsAnyNode(x: number, y: number, w: number, h: number, excludeId: string = ''): boolean {
@@ -1086,7 +1116,68 @@ struct FlowchartPage {
     this.markDirty()
   }
 
-  private createEdge(fromId: string, toId: string): void {
+  private updateEdge(edge: FlowchartEdgeModel): void {
+    const nextEdges: FlowchartEdgeModel[] = []
+    for (const e of this.graph.edges) {
+      if (e.id !== edge.id) {
+        nextEdges.push(e)
+        continue
+      }
+      nextEdges.push({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        label: edge.label,
+        directed: edge.directed,
+        lineType: edge.lineType,
+        sourceAnchor: edge.sourceAnchor,
+        targetAnchor: edge.targetAnchor,
+        properties: edge.properties
+      })
+    }
+    this.graph = {
+      version: this.graph.version,
+      metadata: this.graph.metadata,
+      nodes: [...this.graph.nodes],
+      edges: nextEdges
+    }
+    this.graphRevision++
+    this.markDirty()
+  }
+
+  /** 节点上指定连接锚点的画布坐标（与选中时显示的连接点一致）。 */
+  private connectionPointForAnchor(node: FlowchartNodeModel, anchor: FlowchartAnchor): FlowchartNodePosition {
+    if (this.isLineNode(node)) {
+      const ep = this.lineEndpointsLocal(node)
+      if (anchor === 'left') {
+        return createFlowchartPosition(
+          node.position.x + ep.from.x,
+          node.position.y + ep.from.y
+        )
+      }
+      if (anchor === 'right') {
+        return createFlowchartPosition(
+          node.position.x + ep.to.x,
+          node.position.y + ep.to.y
+        )
+      }
+    }
+    if (node.shape === 'arrowRight' || node.shape === 'arrowLeft' || node.shape === 'doubleArrow') {
+      if (anchor === 'left') {
+        const p = this.endpointLocalPoint(node, 0)
+        return createFlowchartPosition(node.position.x + p.x, node.position.y + p.y)
+      }
+      if (anchor === 'right') {
+        const p = this.endpointLocalPoint(node, 1)
+        return createFlowchartPosition(node.position.x + p.x, node.position.y + p.y)
+      }
+    }
+    const local = this.anchorPointLocal(node, anchor)
+    return createFlowchartPosition(node.position.x + local.x, node.position.y + local.y)
+  }
+
+  private createEdge(fromId: string, toId: string,
+    sourceAnchor?: FlowchartAnchor, targetAnchor?: FlowchartAnchor): void {
     if (fromId.length === 0 || toId.length === 0 || fromId === toId) {
       return
     }
@@ -1096,6 +1187,10 @@ struct FlowchartPage {
       return
     }
     this.pushUndo()
+    const tcx = to.position.x + to.width / 2
+    const tcy = to.position.y + to.height / 2
+    const scx = from.position.x + from.width / 2
+    const scy = from.position.y + from.height / 2
     const edge: FlowchartEdgeModel = {
       id: util.generateRandomUUID(),
       source: fromId,
@@ -1103,8 +1198,8 @@ struct FlowchartPage {
       label: '',
       directed: true,
       lineType: 'arrow',
-      sourceAnchor: 'right',
-      targetAnchor: 'left',
+      sourceAnchor: sourceAnchor ?? this.bestAnchorToward(from, tcx, tcy),
+      targetAnchor: targetAnchor ?? this.bestAnchorToward(to, scx, scy),
       properties: {}
     }
     this.graph = {
@@ -1115,11 +1210,12 @@ struct FlowchartPage {
     }
     this.markDirty()
     this.graphRevision++
-    const endpoints = this.edgeLineEndpoints(from, to)
+    const endpoints = this.edgeLineEndpoints(edge)
     Logger.info(FLOWCHART_LOG_TAG,
       `createEdge ${fromId.slice(0, 8)} -> ${toId.slice(0, 8)} total=${this.graph.edges.length} ` +
       `from=(${endpoints.from.x.toFixed(1)},${endpoints.from.y.toFixed(1)}) ` +
-      `to=(${endpoints.to.x.toFixed(1)},${endpoints.to.y.toFixed(1)}) rev=${this.graphRevision}`)
+      `to=(${endpoints.to.x.toFixed(1)},${endpoints.to.y.toFixed(1)}) ` +
+      `srcAnchor=${edge.sourceAnchor} tgtAnchor=${edge.targetAnchor} rev=${this.graphRevision}`)
     void this.persist(false)
   }
 
@@ -1140,25 +1236,120 @@ struct FlowchartPage {
     this.graphRevision++
   }
 
-  private edgeLineEndpoints(source: FlowchartNodeModel,
-    target: FlowchartNodeModel): FlowchartEdgeLineEndpoints {
-    const tcx = target.position.x + target.width / 2
-    const tcy = target.position.y + target.height / 2
-    const scx = source.position.x + source.width / 2
-    const scy = source.position.y + source.height / 2
+  private edgeLineEndpoints(edge: FlowchartEdgeModel): FlowchartEdgeLineEndpoints {
+    const source = this.nodeForRender(edge.source)
+    const target = this.nodeForRender(edge.target)
+    if (source === undefined || target === undefined) {
+      return {
+        from: createFlowchartPosition(0, 0),
+        to: createFlowchartPosition(0, 0)
+      }
+    }
     const endpoints: FlowchartEdgeLineEndpoints = {
-      from: this.connectionPointToward(source, tcx, tcy),
-      to: this.connectionPointToward(target, scx, scy)
+      from: this.connectionPointForAnchor(source, edge.sourceAnchor),
+      to: this.connectionPointForAnchor(target, edge.targetAnchor)
     }
     if (source.shape === 'diamond' || target.shape === 'diamond') {
       Logger.info(FLOWCHART_LOG_TAG,
         `[EdgeLine] ${source.shape}(${source.id.slice(0, 8)}) -> ${target.shape}(${target.id.slice(0, 8)}) ` +
         `from=(${endpoints.from.x.toFixed(1)},${endpoints.from.y.toFixed(1)}) ` +
         `to=(${endpoints.to.x.toFixed(1)},${endpoints.to.y.toFixed(1)}) ` +
-        `srcAnchor=${this.bestAnchorToward(source, tcx, tcy)} ` +
-        `tgtAnchor=${this.bestAnchorToward(target, scx, scy)}`)
+        `srcAnchor=${edge.sourceAnchor} tgtAnchor=${edge.targetAnchor}`)
     }
     return endpoints
+  }
+
+  private orthogonalRoutingEnabled(): boolean {
+    return this.graph.metadata[FLOWCHART_ORTHOGONAL_ROUTING_KEY] === true
+  }
+
+  private nodeDegreeMap(): Record<string, number> {
+    return FlowchartLayoutEngine.nodeDegrees(this.graph.edges)
+  }
+
+  private edgeRoutePoints(edge: FlowchartEdgeModel): FlowchartNodePosition[] {
+    const endpoints = this.edgeLineEndpoints(edge)
+    if (!this.orthogonalRoutingEnabled() ||
+      !FlowchartEdgeRouting.shouldUseOrthogonalEdge(edge.source, edge.target, this.nodeDegreeMap())) {
+      return [endpoints.from, endpoints.to]
+    }
+    return FlowchartEdgeRouting.orthogonalPath(
+      endpoints.from.x, endpoints.from.y,
+      endpoints.to.x, endpoints.to.y,
+      edge.sourceAnchor, edge.targetAnchor
+    )
+  }
+
+  private distanceToSegment(px: number, py: number,
+    ax: number, ay: number, bx: number, by: number): number {
+    const abx = bx - ax
+    const aby = by - ay
+    const apx = px - ax
+    const apy = py - ay
+    const abLenSq = abx * abx + aby * aby
+    if (abLenSq < 0.001) {
+      const dx = px - ax
+      const dy = py - ay
+      return Math.sqrt(dx * dx + dy * dy)
+    }
+    let t = (apx * abx + apy * aby) / abLenSq
+    if (t < 0) {
+      t = 0
+    } else if (t > 1) {
+      t = 1
+    }
+    const cx = ax + abx * t
+    const cy = ay + aby * t
+    const dx = px - cx
+    const dy = py - cy
+    return Math.sqrt(dx * dx + dy * dy)
+  }
+
+  private edgeLabelPosition(fromX: number, fromY: number,
+    toX: number, toY: number): FlowchartNodePosition {
+    const midX = (fromX + toX) / 2
+    const midY = (fromY + toY) / 2
+    const dx = toX - fromX
+    const dy = toY - fromY
+    const len = Math.sqrt(dx * dx + dy * dy)
+    if (len < 0.001) {
+      return createFlowchartPosition(midX, midY)
+    }
+    const offset = 12
+    return createFlowchartPosition(
+      midX - (dy / len) * offset,
+      midY + (dx / len) * offset
+    )
+  }
+
+  private hitTestEdge(x: number, y: number): FlowchartEdgeModel | undefined {
+    const threshold = 14 / this.canvasScale
+    let best: FlowchartEdgeModel | undefined = undefined
+    let bestDist = threshold
+    for (let i = 0; i < this.graph.edges.length; i++) {
+      const edge = this.graph.edges[i]
+      const source = this.nodeForRender(edge.source)
+      const target = this.nodeForRender(edge.target)
+      if (source === undefined || target === undefined) {
+        continue
+      }
+      const route = this.edgeRoutePoints(edge)
+      const dist = FlowchartEdgeRouting.distanceToPolyline(x, y, route)
+      if (dist <= bestDist) {
+        bestDist = dist
+        best = edge
+      }
+    }
+    return best
+  }
+
+  private edgeById(id: string): FlowchartEdgeModel | undefined {
+    for (let i = 0; i < this.graph.edges.length; i++) {
+      if (this.graph.edges[i].id === id) {
+        return this.graph.edges[i]
+      }
+    }
+    return undefined
   }
 
   private shapePathPx(vp: number): number {
@@ -1173,6 +1364,31 @@ struct FlowchartPage {
     const ax2 = tipX - size * Math.cos(angle + Math.PI / 6)
     const ay2 = tipY - size * Math.sin(angle + Math.PI / 6)
     return `M${tipX.toFixed(1)} ${tipY.toFixed(1)} L${ax1.toFixed(1)} ${ay1.toFixed(1)} L${ax2.toFixed(1)} ${ay2.toFixed(1)} Z`
+  }
+
+  private edgePathCommandsFromRoute(points: FlowchartNodePosition[], lineType: string): string {
+    if (points.length < 2) {
+      return ''
+    }
+    const pxPoints: FlowchartNodePosition[] = []
+    for (let i = 0; i < points.length; i++) {
+      pxPoints.push({
+        x: this.shapePathPx(points[i].x),
+        y: this.shapePathPx(points[i].y)
+      })
+    }
+    let commands = FlowchartEdgeRouting.pathCommandsFromPoints(pxPoints)
+    const last = pxPoints[pxPoints.length - 1]
+    const prev = pxPoints[pxPoints.length - 2]
+    if (lineType === 'arrow' || lineType === 'doubleArrow') {
+      commands += ` ${this.arrowHeadPathCommandsPx(last.x, last.y, prev.x, prev.y)}`
+    }
+    if (lineType === 'doubleArrow') {
+      const first = pxPoints[0]
+      const second = pxPoints[1]
+      commands += ` ${this.arrowHeadPathCommandsPx(first.x, first.y, second.x, second.y)}`
+    }
+    return commands
   }
 
   private edgePathCommands(fromX: number, fromY: number, toX: number, toY: number,
@@ -1192,13 +1408,11 @@ struct FlowchartPage {
   }
 
   private edgePathCommandsForEdge(edge: FlowchartEdgeModel): string {
-    const source = this.nodeForRender(edge.source)
-    const target = this.nodeForRender(edge.target)
-    if (source === undefined || target === undefined) {
+    const route = this.edgeRoutePoints(edge)
+    if (route.length < 2) {
       return ''
     }
-    const endpoints = this.edgeLineEndpoints(source, target)
-    return this.edgePathCommands(endpoints.from.x, endpoints.from.y, endpoints.to.x, endpoints.to.y, edge.lineType)
+    return this.edgePathCommandsFromRoute(route, edge.lineType)
   }
 
   private localToCanvas(localX: number, localY: number): FlowchartNodePosition {
@@ -1297,6 +1511,7 @@ struct FlowchartPage {
     }
     this.pendingDragNodeId = ''
     this.activeConnectFromId = ''
+    this.activeConnectFromAnchor = 'right'
     this.dragActivated = false
     this.draggingEndpointIndex = -1
   }
@@ -1479,7 +1694,9 @@ struct FlowchartPage {
 
   private finishConnect(endX: number, endY: number): void {
     const fromId = this.activeConnectFromId
+    const sourceAnchor = this.activeConnectFromAnchor
     this.activeConnectFromId = ''
+    this.activeConnectFromAnchor = 'right'
     this.connectDraftActive = false
     if (fromId.length === 0) {
       return
@@ -1494,7 +1711,8 @@ struct FlowchartPage {
       }
       if (endX >= display.position.x && endX <= display.position.x + display.width &&
         endY >= display.position.y && endY <= display.position.y + display.height) {
-        this.createEdge(fromId, other.id)
+        const targetAnchor = this.bestAnchorToward(other, this.connectDraftFromX, this.connectDraftFromY)
+        this.createEdge(fromId, other.id, sourceAnchor, targetAnchor)
         this.showUserMessage('已创建连线')
         Logger.info(FLOWCHART_LOG_TAG, `finishConnect ok ${fromId.slice(0, 8)} -> ${other.id.slice(0, 8)}`)
         return
@@ -1545,6 +1763,7 @@ struct FlowchartPage {
       if (anchorHit !== undefined) {
         this.touchMode = FlowchartPage.TOUCH_CONNECT
         this.activeConnectFromId = anchorHit.nodeId
+        this.activeConnectFromAnchor = anchorHit.anchor
         const displayNode = this.nodeForRender(anchorHit.nodeId)
         if (displayNode !== undefined) {
           const pt = this.anchorPoint(displayNode, anchorHit.anchor)
@@ -1627,17 +1846,38 @@ struct FlowchartPage {
             this.openEditDialog(node)
             this.lastTapNodeId = ''
             this.lastTapTime = 0
+            this.lastTapEdgeId = ''
+            this.lastTapEdgeTime = 0
           } else {
             this.selectedNodeId = node.id
             this.markNodeEdited(node.id)
             this.lastTapNodeId = node.id
             this.lastTapTime = now
+            this.lastTapEdgeId = ''
+            this.lastTapEdgeTime = 0
           }
         }
       } else if (this.touchMode === FlowchartPage.TOUCH_CONNECT) {
         this.finishConnect(canvasPt.x, canvasPt.y)
       } else if (this.touchMode === FlowchartPage.TOUCH_PAN && !this.touchMoved) {
-        this.selectedNodeId = ''
+        const edge = this.hitTestEdge(canvasPt.x, canvasPt.y)
+        if (edge !== undefined) {
+          const now = Date.now()
+          if (this.lastTapEdgeId === edge.id && now - this.lastTapEdgeTime < 400) {
+            this.openEdgeEditDialog(edge)
+            this.lastTapEdgeId = ''
+            this.lastTapEdgeTime = 0
+          } else {
+            this.lastTapEdgeId = edge.id
+            this.lastTapEdgeTime = now
+            this.lastTapNodeId = ''
+            this.lastTapTime = 0
+          }
+        } else {
+          this.selectedNodeId = ''
+          this.lastTapEdgeId = ''
+          this.lastTapEdgeTime = 0
+        }
       }
       this.clearDragVisual()
       this.touchMode = 0
@@ -1720,6 +1960,33 @@ struct FlowchartPage {
     })
     this.markNodeEdited(node.id)
     this.showEditDialog = false
+  }
+
+  private openEdgeEditDialog(edge: FlowchartEdgeModel): void {
+    this.editingEdgeId = edge.id
+    this.editEdgeLabel = edge.label
+    this.showEdgeEditDialog = true
+  }
+
+  private saveEdgeEditDialog(): void {
+    const edge = this.edgeById(this.editingEdgeId)
+    if (edge === undefined) {
+      this.showEdgeEditDialog = false
+      return
+    }
+    this.pushUndo()
+    this.updateEdge({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      label: this.editEdgeLabel.trim(),
+      directed: edge.directed,
+      lineType: edge.lineType,
+      sourceAnchor: edge.sourceAnchor,
+      targetAnchor: edge.targetAnchor,
+      properties: edge.properties
+    })
+    this.showEdgeEditDialog = false
   }
 
   @Builder
@@ -2056,6 +2323,47 @@ struct FlowchartPage {
   }
 
   @Builder
+  private buildEdgeLabel(edge: FlowchartEdgeModel) {
+    if (edge.label.length === 0) {
+      Blank()
+    } else {
+      this.buildEdgeLabelContent(edge)
+    }
+  }
+
+  @Builder
+  private buildEdgeLabelContent(edge: FlowchartEdgeModel) {
+    Stack({ alignContent: Alignment.Center }) {
+      Text(edge.label)
+        .fontSize(12)
+        .fontColor('#616161')
+        .backgroundColor('#E6FFFFFF')
+        .padding({ left: 4, right: 4, top: 2, bottom: 2 })
+        .borderRadius(4)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .constraintSize({ maxWidth: 160 })
+    }
+    .width(1)
+    .height(1)
+    .position({
+      x: this.edgeLabelPositionForEdge(edge).x,
+      y: this.edgeLabelPositionForEdge(edge).y
+    })
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  private edgeLabelPositionForEdge(edge: FlowchartEdgeModel): FlowchartNodePosition {
+    const route = this.edgeRoutePoints(edge)
+    if (route.length < 2) {
+      return createFlowchartPosition(0, 0)
+    }
+    const from = route[0]
+    const to = route[route.length - 1]
+    return this.edgeLabelPosition(from.x, from.y, to.x, to.y)
+  }
+
+  @Builder
   private buildConnectDraftShape() {
     if (this.connectDraftActive) {
       Shape() {
@@ -2297,6 +2605,10 @@ struct FlowchartPage {
                     this.buildEdgeShape(edge)
                   }, (edge: FlowchartEdgeModel) => this.edgeRenderKey(edge))
 
+                  ForEach(this.graph.edges, (edge: FlowchartEdgeModel) => {
+                    this.buildEdgeLabel(edge)
+                  }, (edge: FlowchartEdgeModel) => `${this.edgeRenderKey(edge)}_label_${edge.label}`)
+
                   ForEach(this.lineNodesForRender(), (node: FlowchartNodeModel) => {
                     this.buildLineNodeCanvasShape(node)
                   }, (node: FlowchartNodeModel) => this.lineNodeCanvasRenderKey(node))
@@ -2425,6 +2737,41 @@ struct FlowchartPage {
               Button('保存')
                 .layoutWeight(1)
                 .onClick(() => this.saveEditDialog())
+            }
+            .width('100%')
+          }
+          .width('88%')
+          .padding(20)
+          .backgroundColor($r('app.color.card_background'))
+          .borderRadius(16)
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor('#66000000')
+      }
+
+      if (this.showEdgeEditDialog) {
+        Column() {
+          Column({ space: 12 }) {
+            Text('编辑连线')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+            TextInput({ text: this.editEdgeLabel, placeholder: '标签文字' })
+              .onChange((v: string) => {
+                this.editEdgeLabel = v
+              })
+            Row({ space: 12 }) {
+              Button('取消')
+                .layoutWeight(1)
+                .backgroundColor($r('app.color.surface_muted'))
+                .fontColor($r('app.color.primary_text'))
+                .onClick(() => {
+                  this.showEdgeEditDialog = false
+                })
+              Button('保存')
+                .layoutWeight(1)
+                .onClick(() => this.saveEdgeEditDialog())
             }
             .width('100%')
           }

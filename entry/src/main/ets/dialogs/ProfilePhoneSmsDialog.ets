@@ -82,7 +82,8 @@ export struct ProfilePhoneSmsDialog {
       case 'sms_rate_limited':
         return '发送过于频繁，请稍后再试'
       case 'sms_limit_exceeded':
-        return '今日发送次数已达上限'
+      case 'sms_quota_exceeded':
+        return '当日验证码发送上限，请24小时后再试'
       case 'invalid_phone':
         return '手机号格式无效'
       case 'sms_send_failed':

@@ -24,6 +24,8 @@ import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { IdUtils } from '../common/utils/IdUtils'
 import { navigateToBindPhoneIfNeeded } from '../common/utils/BindPhoneNavigation'
+import { navigateToNoteEdit } from '../common/utils/NoteEditNavigation'
+import { navigateToFlowchart } from '../common/utils/FlowchartNavigation'
 import { HomeLiquidGlassTabBar } from '../components/HomeLiquidGlassTabBar'
 import {
   buildHomeMoreOptionsSheetContent,
@@ -391,13 +393,10 @@ struct Index {
     initialAction?: NoteEditorEntryAction
   ): Promise<void> {
     try {
-      await this.getUIContext().getRouter().pushUrl({
-        url: 'pages/NoteEdit',
-        params: {
-          noteId: noteId ?? '',
-          openWithPreview: openWithPreview,
-          initialAction: initialAction
-        }
+      await navigateToNoteEdit(this.getUIContext(), {
+        noteId: noteId,
+        openWithPreview: openWithPreview,
+        initialAction: initialAction
       })
     } catch (error) {
       console.error(JSON.stringify(error))
@@ -413,12 +412,12 @@ struct Index {
     void this.openEditor()
   }
 
-  private onHomeGraphTabPressed(): void {
+  private onHomeTodoTabPressed(): void {
     if (this.searchExpanded) {
       this.searchExpanded = false
       return
     }
-    void this.openFlowchartFromDrawer()
+    void this.openEditor(undefined, false, 'todoList')
   }
 
   private onHomeMoreTabPressed(): void {
@@ -445,8 +444,8 @@ struct Index {
       onPhotoImage: (): void => {
         void this.openEditor(undefined, false, 'insertImage')
       },
-      onTodoList: (): void => {
-        void this.openEditor(undefined, false, 'todoList')
+      onKnowledgeGraph: (): void => {
+        void this.openFlowchartFromDrawer()
       }
     } as HomeMoreOptionsSheetParams)
   }
@@ -653,12 +652,9 @@ struct Index {
   private async openFlowchart(noteId: string, focusQuery: string = ''): Promise<void> {
     this.drawerCloseNonce += 1
     try {
-      await this.getUIContext().getRouter().pushUrl({
-        url: 'pages/Flowchart',
-        params: {
-          noteId,
-          focusQuery
-        }
+      await navigateToFlowchart(this.getUIContext(), {
+        noteId: noteId,
+        focusQuery: focusQuery
       })
     } catch (error) {
       console.error(JSON.stringify(error))
@@ -839,8 +835,8 @@ struct Index {
       onMore: (): void => {
         this.onHomeMoreTabPressed()
       },
-      onGraph: (): void => {
-        this.onHomeGraphTabPressed()
+      onTodo: (): void => {
+        this.onHomeTodoTabPressed()
       },
       onNote: (): void => {
         this.onHomeNoteTabPressed()

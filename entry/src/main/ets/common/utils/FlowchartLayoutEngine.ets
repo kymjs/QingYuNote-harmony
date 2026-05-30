@@ -1,10 +1,15 @@
 import type {
+  FlowchartAnchor,
   FlowchartEdgeModel,
   FlowchartGraphModel,
   FlowchartNodeModel,
   FlowchartNodePosition
 } from '../model/FlowchartGraph'
-import { FLOWCHART_LINE_NODE_SHAPE, createFlowchartPosition } from '../model/FlowchartGraph'
+import {
+  FLOWCHART_LINE_NODE_SHAPE,
+  FLOWCHART_ORTHOGONAL_ROUTING_KEY,
+  createFlowchartPosition
+} from '../model/FlowchartGraph'
 
 interface LayoutEdge {
   source: string
@@ -113,12 +118,70 @@ export class FlowchartLayoutEngine {
         properties: n.properties
       } as FlowchartNodeModel
     })
+    const nodeById: Record<string, FlowchartNodeModel> = {}
+    for (const node of nodes) {
+      nodeById[node.id] = node
+    }
+    const edges = graph.edges.map((edge: FlowchartEdgeModel) => {
+      const source = nodeById[edge.source]
+      const target = nodeById[edge.target]
+      if (source === undefined || target === undefined) {
+        return edge
+      }
+      const anchors = FlowchartLayoutEngine.layoutAnchors(source, target, preferVertical)
+      return {
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        label: edge.label,
+        directed: edge.directed,
+        lineType: edge.lineType,
+        sourceAnchor: anchors[0],
+        targetAnchor: anchors[1],
+        properties: edge.properties
+      } as FlowchartEdgeModel
+    })
+    const metadata: Record<string, Object> = {}
+    for (const key of Object.keys(graph.metadata)) {
+      metadata[key] = graph.metadata[key]
+    }
+    metadata[FLOWCHART_ORTHOGONAL_ROUTING_KEY] = true
     return {
       version: graph.version,
-      metadata: graph.metadata,
+      metadata,
       nodes,
-      edges: graph.edges
+      edges
     }
+  }
+
+  static nodeDegrees(edges: FlowchartEdgeModel[]): Record<string, number> {
+    const degrees: Record<string, number> = {}
+    for (const edge of edges) {
+      degrees[edge.source] = (degrees[edge.source] ?? 0) + 1
+      degrees[edge.target] = (degrees[edge.target] ?? 0) + 1
+    }
+    return degrees
+  }
+
+  static layoutAnchors(source: FlowchartNodeModel, target: FlowchartNodeModel,
+    preferVertical: boolean): [FlowchartAnchor, FlowchartAnchor] {
+    const scx = source.position.x + source.width / 2
+    const scy = source.position.y + source.height / 2
+    const tcx = target.position.x + target.width / 2
+    const tcy = target.position.y + target.height / 2
+    const dx = tcx - scx
+    const dy = tcy - scy
+    if (preferVertical) {
+      if (Math.abs(dy) >= Math.abs(dx)) {
+        return dy >= 0 ? ['bottom', 'top'] : ['top', 'bottom']
+      }
+    } else if (Math.abs(dx) >= Math.abs(dy)) {
+      return dx >= 0 ? ['right', 'left'] : ['left', 'right']
+    }
+    if (Math.abs(dx) > Math.abs(dy)) {
+      return dx >= 0 ? ['right', 'left'] : ['left', 'right']
+    }
+    return dy >= 0 ? ['bottom', 'top'] : ['top', 'bottom']
   }
 
   private static collectLayoutEdges(edges: FlowchartEdgeModel[],

@@ -1,5 +1,10 @@
 import { describe, it, expect } from '@ohos/hypium'
-import { MarkdownUtils } from '../main/ets/common/utils/MarkdownUtils'
+import {
+  MarkdownUtils,
+  isPlaceholderTodoContent,
+  shouldPersistTodoNote,
+  shouldShowTodoNoteInHomeList
+} from '../main/ets/common/utils/MarkdownUtils'
 
 export default function markdownUtilsTest() {
   describe('MarkdownUtils', () => {
@@ -112,6 +117,22 @@ export default function markdownUtilsTest() {
       expect((blocks[0].checkboxItems ?? []).length).assertEqual(2)
       expect(blocks[0].checkboxItems?.[0]?.inlines?.[0]?.content).assertEqual('任务A')
       expect(blocks[0].checkboxItems?.[1]?.inlines?.[0]?.content).assertEqual('任务B')
+    })
+
+    it('should treat empty checkbox todo content as placeholder', 0, () => {
+      expect(isPlaceholderTodoContent('[ ] ')).assertTrue()
+      expect(isPlaceholderTodoContent('[ ]\n[-]')).assertTrue()
+      expect(shouldPersistTodoNote('待办事项', '[ ] ')).assertFalse()
+    })
+
+    it('should persist todo when checkbox has text', 0, () => {
+      expect(isPlaceholderTodoContent('[ ] 买牛奶')).assertFalse()
+      expect(shouldPersistTodoNote('待办事项', '[ ] 买牛奶')).assertTrue()
+    })
+
+    it('should hide placeholder todo from home list', 0, () => {
+      expect(shouldShowTodoNoteInHomeList('待办事项', '[ ] ', ['Todo'])).assertFalse()
+      expect(shouldShowTodoNoteInHomeList('待办事项', '[ ] ', ['Work'])).assertTrue()
     })
   })
 }
