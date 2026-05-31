@@ -1,6 +1,108 @@
 import { webview } from '@kit.ArkWeb'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
+/** 设置页「用户反馈」飞书表单地址（与 Flutter `kFeedbackFormUrl` 对齐）。 */
+const FEEDBACK_FORM_URL =
+  'https://vcnedpub4ekz.feishu.cn/share/base/form/shrcnexjZUlhIkZ4eD9BjcDfdkb'
+
+/** 隐藏飞书分享表单 AI 语音引导弹窗与底部录入按钮（与 Flutter `_kHideFeishuVoiceInputJs` 对齐）。 */
+const HIDE_FEISHU_VOICE_INPUT_JS: string = `(function () {
+  if (window.__qingyuHideFeishuVoiceInputInstalled) {
+    return;
+  }
+  window.__qingyuHideFeishuVoiceInputInstalled = true;
+
+  var STYLE_ID = 'qingyu-hide-feishu-voice-input-style';
+  var SELECTORS = [
+    '.mobile-voice-input-onboarding-guide',
+    '.pc-voice-input-onboarding-guide',
+    '.speech-input-button',
+    '.speech-input-button-wrap',
+    '.speech-input-container',
+    '.speech-input-container-map',
+    '.speech-input-content',
+    '.speech-input-background',
+    '.speech-input-recording-text',
+    '.voice-toast',
+    '.voice-toast-host',
+    '.form-voice-quota-mobile-toast',
+    '.share-form-text-ai-polish-actions--with-voice-input',
+    '.share-form-pc-voice-drag-safe-areas',
+    '[class*="speech-input"]',
+    '[class*="voice-input-onboarding"]',
+    '[class*="voice-toast"]'
+  ].join(',');
+
+  function injectStyle() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    var style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent =
+      SELECTORS +
+      '{display:none!important;visibility:hidden!important;pointer-events:none!important;opacity:0!important;height:0!important;max-height:0!important;overflow:hidden!important;}';
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function hideElement(el) {
+    if (!el || el.nodeType !== 1) {
+      return;
+    }
+    el.style.setProperty('display', 'none', 'important');
+    el.style.setProperty('visibility', 'hidden', 'important');
+    el.style.setProperty('pointer-events', 'none', 'important');
+  }
+
+  function hideOnboardingWrappers() {
+    document
+      .querySelectorAll(
+        '.mobile-voice-input-onboarding-guide, .pc-voice-input-onboarding-guide'
+      )
+      .forEach(function (el) {
+        hideElement(el);
+        var parent = el.parentElement;
+        for (var depth = 0; depth < 8 && parent; depth++) {
+          var className = parent.className;
+          if (
+            typeof className === 'string' &&
+            (className.indexOf('ud__popover') >= 0 ||
+              className.indexOf('ud__modal') >= 0 ||
+              className.indexOf('mask') >= 0)
+          ) {
+            hideElement(parent);
+          }
+          parent = parent.parentElement;
+        }
+      });
+  }
+
+  function run() {
+    injectStyle();
+    try {
+      document.querySelectorAll(SELECTORS).forEach(hideElement);
+    } catch (_) {}
+    hideOnboardingWrappers();
+  }
+
+  run();
+  new MutationObserver(run).observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+  for (var i = 1; i <= 20; i++) {
+    setTimeout(run, i * 500);
+  }
+})();`
+
+function isFeedbackFormUrl(url: string): boolean {
+  const trimmed = url.trim()
+  if (trimmed.length === 0) {
+    return false
+  }
+  return trimmed === FEEDBACK_FORM_URL || trimmed.includes('shrcnexjZUlhIkZ4eD9BjcDfdkb')
+}
+
 interface H5WebContainerParams {
   title?: string
   url?: string
@@ -63,6 +165,17 @@ struct H5WebContainer {
     return true
   }
 
+  private hideFeishuVoiceInputIfNeeded(): void {
+    if (!isFeedbackFormUrl(this.webUrl)) {
+      return
+    }
+    try {
+      this.webController.runJavaScript(HIDE_FEISHU_VOICE_INPUT_JS)
+    } catch (e) {
+      console.error(`H5WebContainer hideFeishuVoiceInput: ${JSON.stringify(e)}`)
+    }
+  }
+
   build() {
     Column() {
       Row() {
@@ -112,6 +225,7 @@ struct H5WebContainer {
             this.isLoading = true
           })
           .onPageEnd(() => {
+            this.hideFeishuVoiceInputIfNeeded()
             this.isLoading = false
           })
           .onErrorReceive(() => {

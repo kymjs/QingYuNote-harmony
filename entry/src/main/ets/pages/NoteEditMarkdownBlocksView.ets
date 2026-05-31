@@ -11,6 +11,13 @@ export struct NoteEditMarkdownBlocksView {
   @Prop filesDirCache: string = ''
   /** 分享长图导出：深色底 + 金色文字，与 NoteEdit 分享卡片一致。 */
   @Prop forShareExport: boolean = false
+  /** 分享导出时覆盖文字色（#AARRGGBB），为空则用默认 share 资源色。 */
+  @Prop shareTextOverride: string = ''
+  @Prop shareCodeBgOverride: string = ''
+  @Prop shareDividerOverride: string = ''
+  @Prop shareBackgroundOverride: string = ''
+  /** 主题/色调变更时递增，用于强制 Markdown 块重建。 */
+  @Prop shareStyleKey: string = ''
   onLinkToast: (href: string) => void = (_href: string) => {
   }
   onCheckboxToggle: (lineIndex: number, checked: boolean) => void =
@@ -18,39 +25,79 @@ export struct NoteEditMarkdownBlocksView {
     }
 
   private primaryTextColor(): ResourceColor {
+    if (this.forShareExport && this.shareTextOverride.length > 0) {
+      return this.shareTextOverride
+    }
     return this.forShareExport ? $r('app.color.share_text') : $r('app.color.primary_text')
   }
 
   private secondaryTextColor(): ResourceColor {
+    if (this.forShareExport && this.shareTextOverride.length > 0) {
+      return this.shareTextOverride
+    }
     return this.forShareExport ? $r('app.color.share_text') : $r('app.color.secondary_text')
   }
 
   private accentTextColor(): ResourceColor {
+    if (this.forShareExport && this.shareTextOverride.length > 0) {
+      return this.shareTextOverride
+    }
     return this.forShareExport ? $r('app.color.share_text') : $r('app.color.accent')
   }
 
   private codeBackgroundColor(): ResourceColor {
+    if (this.forShareExport && this.shareCodeBgOverride.length > 0) {
+      return this.shareCodeBgOverride
+    }
     return this.forShareExport ? $r('app.color.share_code_background') : $r('app.color.surface_muted')
   }
 
   private dividerColor(): ResourceColor {
+    if (this.forShareExport && this.shareDividerOverride.length > 0) {
+      return this.shareDividerOverride
+    }
     return this.forShareExport ? $r('app.color.share_divider') : $r('app.color.divider')
   }
 
   private cardBorderColor(): ResourceColor {
+    if (this.forShareExport && this.shareDividerOverride.length > 0) {
+      return this.shareDividerOverride
+    }
     return this.forShareExport ? $r('app.color.share_divider') : $r('app.color.card_border')
   }
 
   private tertiaryTextColor(): ResourceColor {
+    if (this.forShareExport && this.shareTextOverride.length > 0) {
+      return this.shareTextOverride
+    }
     return this.forShareExport ? $r('app.color.share_text') : $r('app.color.tertiary_text')
   }
 
   private mathTextColor(): string {
+    if (this.forShareExport && this.shareTextOverride.length > 0) {
+      return this.shareColorToRgb(this.shareTextOverride)
+    }
     return this.forShareExport ? '#F5E6B8' : '#1D1D1F'
   }
 
   private mathBackgroundColor(): string {
+    if (this.forShareExport && this.shareCodeBgOverride.length > 0) {
+      return this.shareColorToRgb(this.shareCodeBgOverride)
+    }
+    if (this.forShareExport && this.shareBackgroundOverride.length > 0) {
+      return this.shareColorToRgb(this.shareBackgroundOverride)
+    }
     return this.forShareExport ? '#1A1A1C' : 'transparent'
+  }
+
+  private shareColorToRgb(color: string): string {
+    if (color.length === 9 && color.startsWith('#FF')) {
+      return `#${color.substring(3)}`
+    }
+    if (color.length === 9 && color.startsWith('#')) {
+      return `#${color.substring(3)}`
+    }
+    return color
   }
 
   private hasMathInline(inlines: MarkdownInline[]): boolean {
@@ -140,22 +187,20 @@ export struct NoteEditMarkdownBlocksView {
   }
 
   private previewBlockKey(block: MarkdownBlock, index: number): string {
+    let body = ''
     if (block.type === 'math_display') {
-      return `${block.type}:${block.content.slice(0, 48)}:${index}`
-    }
-    if (block.type === 'unordered_list' || block.type === 'ordered_list') {
+      body = `${block.type}:${block.content.slice(0, 48)}:${index}`
+    } else if (block.type === 'unordered_list' || block.type === 'ordered_list') {
       const items = block.items
         .map((item: MarkdownInline[]) => item.map((inline: MarkdownInline) => inline.content.slice(0, 20)).join(''))
         .join('|')
-      return `${block.type}:${items}:${index}`
-    }
-    if (block.type === 'checkbox_list') {
+      body = `${block.type}:${items}:${index}`
+    } else if (block.type === 'checkbox_list') {
       const items = (block.checkboxItems ?? [])
         .map((item: MarkdownCheckboxItem) => `${item.checked}:${item.sourceLineIndex}`)
         .join('|')
-      return `${block.type}:${items}:${index}`
-    }
-    if (block.type === 'table') {
+      body = `${block.type}:${items}:${index}`
+    } else if (block.type === 'table') {
       const headers = (block.tableHeaders ?? [])
         .map((cell: MarkdownInline[]) => cell.map((inline: MarkdownInline) => inline.content.slice(0, 12)).join(''))
         .join('|')
@@ -164,9 +209,11 @@ export struct NoteEditMarkdownBlocksView {
           row.map((cell: MarkdownInline[]) => cell.map((inline: MarkdownInline) => inline.content.slice(0, 12)).join('')).join(',')
         )
         .join('|')
-      return `${block.type}:${headers}:${rows}:${index}`
+      body = `${block.type}:${headers}:${rows}:${index}`
+    } else {
+      body = `${block.type}:${block.language}:${block.content.slice(0, 48)}:${index}`
     }
-    return `${block.type}:${block.language}:${block.content.slice(0, 48)}:${index}`
+    return this.shareStyleKey.length > 0 ? `${this.shareStyleKey}:${body}` : body
   }
 
   private codeTokenColor(kind: CodeHighlightTokenKind): ResourceColor {
@@ -325,9 +372,7 @@ export struct NoteEditMarkdownBlocksView {
         .layoutWeight(1)
         .constraintSize({ minWidth: 72 })
         .border({ width: { right: 1, bottom: 1 }, color: this.cardBorderColor() })
-        .backgroundColor(isHeader
-          ? (this.forShareExport ? $r('app.color.share_code_background') : $r('app.color.surface_muted'))
-          : Color.Transparent)
+        .backgroundColor(isHeader ? this.codeBackgroundColor() : Color.Transparent)
       }, (cell: MarkdownInline[], colIndex: number) => this.tableCellKey(cell, rowIndex, colIndex))
     }
     .alignItems(VerticalAlign.Top)

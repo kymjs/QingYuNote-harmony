@@ -1,0 +1,228 @@
+import { LengthMetrics } from '@kit.ArkUI'
+import { Logger } from '../common/utils/Logger'
+import { ShareCardTheme, ShareCardTone, ShareThemeColors } from './ShareTheme'
+
+const SHARE_PREVIEW_SHEET_LOG_TAG: string = 'NoteSharePreviewSheet'
+
+export interface NoteSharePreviewSheetParams {
+  onThemeChange: (theme: ShareCardTheme) => void
+  onToneChange: (tone: ShareCardTone) => void
+  onSave: () => void
+  onShare: () => void
+  onCancel: () => void
+}
+
+@Component
+export struct NoteSharePreviewSheet {
+  @Prop theme: ShareCardTheme = ShareCardTheme.CLASSIC
+  @Prop tone: ShareCardTone = ShareCardTone.DARK
+  @Prop sheetRevision: number = 0
+  @Prop params: NoteSharePreviewSheetParams = {
+    onThemeChange: (_t: ShareCardTheme): void => {},
+    onToneChange: (_t: ShareCardTone): void => {},
+    onSave: (): void => {},
+    onShare: (): void => {},
+    onCancel: (): void => {}
+  }
+
+  private readonly themes: ShareCardTheme[] =
+    [ShareCardTheme.CLASSIC, ShareCardTheme.QINGYU, ShareCardTheme.CALENDAR, ShareCardTheme.JINSHU]
+
+  private readonly tones: ShareCardTone[] = [ShareCardTone.DARK, ShareCardTone.LIGHT]
+
+  aboutToAppear(): void {
+    this.logSelection('aboutToAppear')
+  }
+
+  aboutToReuse(params: Record<string, Object>): void {
+    Logger.info(SHARE_PREVIEW_SHEET_LOG_TAG,
+      `aboutToReuse revision=${this.sheetRevision} theme=${this.theme} tone=${this.tone} keys=${Object.keys(params).join(',')}`)
+  }
+
+  private logSelection(stage: string): void {
+    Logger.info(SHARE_PREVIEW_SHEET_LOG_TAG,
+      `${stage} revision=${this.sheetRevision} theme=${this.theme} tone=${this.tone}`)
+  }
+
+  private logButtonTap(button: string, label: string): void {
+    Logger.info(SHARE_PREVIEW_SHEET_LOG_TAG,
+      `button=${button} label=${label} sheetTheme=${this.theme} sheetTone=${this.tone} revision=${this.sheetRevision}`)
+  }
+
+  @Builder
+  private buildChip(label: string, selected: boolean, onTap: () => void) {
+    Text(label)
+      .fontSize(14)
+      .fontWeight(FontWeight.Medium)
+      .fontColor(selected ? Color.White : '#FF333333')
+      .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+      .backgroundColor(selected ? '#FF0DAA4A' : '#FFF0F0F0')
+      .borderRadius(20)
+      .onClick(onTap)
+  }
+
+  @Builder
+  private buildAction(icon: Resource, label: string, onTap: () => void) {
+    Column({ space: 4 }) {
+      Row() {
+        SymbolGlyph(icon)
+          .fontSize(22)
+          .fontColor(['#FF333333'])
+      }
+      .width(48)
+      .height(48)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .backgroundColor('#FFF0F0F0')
+      .borderRadius(24)
+      Text(label)
+        .fontSize(12)
+        .fontColor('#FF666666')
+    }
+    .onClick(onTap)
+  }
+
+  build() {
+    Column({ space: 14 }) {
+      Row() {
+        Blank()
+          .layoutWeight(1)
+        Text('取消')
+          .fontSize(15)
+          .fontColor('#FF666666')
+          .padding({ left: 8, top: 4, bottom: 4 })
+          .onClick((): void => {
+            this.logButtonTap('cancel', '取消')
+            this.params.onCancel()
+          })
+      }
+      .width('100%')
+      .margin({ top: 4 })
+
+      Column()
+        .width(36)
+        .height(4)
+        .backgroundColor('#FFDDDDDD')
+        .borderRadius(2)
+        .alignSelf(ItemAlign.Center)
+
+      Row({ space: 10 }) {
+        Text('主题')
+          .fontSize(13)
+          .fontColor('#FF888888')
+          .width(40)
+        Flex({
+          wrap: FlexWrap.Wrap,
+          space: { main: LengthMetrics.vp(10), cross: LengthMetrics.vp(8) }
+        }) {
+          ForEach(this.themes, (t: ShareCardTheme) => {
+            this.buildChip(
+              ShareThemeColors.label(t),
+              this.theme === t,
+              (): void => {
+                this.logButtonTap('theme', ShareThemeColors.label(t))
+                this.params.onThemeChange(t)
+              }
+            )
+          }, (t: ShareCardTheme) => `${this.sheetRevision}_${t}`)
+        }
+        .layoutWeight(1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 10 }) {
+        Text('色调')
+          .fontSize(13)
+          .fontColor('#FF888888')
+          .width(40)
+        Flex({
+          wrap: FlexWrap.Wrap,
+          space: { main: LengthMetrics.vp(10), cross: LengthMetrics.vp(8) }
+        }) {
+          ForEach(this.tones, (t: ShareCardTone) => {
+            this.buildChip(
+              ShareThemeColors.toneLabel(t),
+              this.tone === t,
+              (): void => {
+                this.logButtonTap('tone', ShareThemeColors.toneLabel(t))
+                this.params.onToneChange(t)
+              }
+            )
+          }, (t: ShareCardTone) => `${this.sheetRevision}_${t}`)
+        }
+        .layoutWeight(1)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 10 }) {
+        Text('操作')
+          .fontSize(13)
+          .fontColor('#FF888888')
+          .width(40)
+        Row({ space: 24 }) {
+          this.buildAction($r('sys.symbol.arrow_down_to_line'), '保存到相册', (): void => {
+            this.logButtonTap('action', '保存到相册')
+            this.params.onSave()
+          })
+          this.buildAction($r('sys.symbol.share'), '分享到其他', (): void => {
+            this.logButtonTap('action', '分享到其他')
+            this.params.onShare()
+          })
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 12, bottom: 24 })
+    .backgroundColor(Color.White)
+    .borderRadius({ topLeft: 20, topRight: 20 })
+  }
+}
+
+export interface NoteSharePreviewOverlayParams {
+  previewPath: string
+  regenerating: boolean
+}
+
+@Component
+export struct NoteSharePreviewOverlay {
+  @Prop params: NoteSharePreviewOverlayParams = {
+    previewPath: '',
+    regenerating: false
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(0,0,0,0.55)')
+      if (this.params.regenerating) {
+        Stack({ alignContent: Alignment.Center }) {
+          LoadingProgress()
+            .width(40)
+            .height(40)
+            .color(Color.White)
+        }
+        .width('100%')
+        .height('100%')
+      } else if (this.params.previewPath.length > 0) {
+        Scroll() {
+          Image(`file://${this.params.previewPath}`)
+            .width('100%')
+            .objectFit(ImageFit.Contain)
+        }
+        .scrollable(ScrollDirection.Vertical)
+        .scrollBar(BarState.Off)
+        .width('100%')
+        .height('100%')
+        .padding({ top: 48, bottom: 200 })
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+}
