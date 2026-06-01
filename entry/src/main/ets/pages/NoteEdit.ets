@@ -32,6 +32,7 @@ import { NoteEditMarkdownBlocksView } from './NoteEditMarkdownBlocksView'
 import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
 import { AiTagService } from '../services/AiTagService'
 import { AiNoteService } from '../services/AiNoteService'
+import { AiNotePrompt } from '../services/AiNotePrompt'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
@@ -39,7 +40,11 @@ import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { NoteFolderTree, type FolderSidebarRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 import { type NoteEditorEntryAction } from '../common/model/NoteEditorEntryAction'
 import { ShareCardTheme, ShareCardTone, ShareThemeColors } from '../share/ShareTheme'
-import { NoteShareExportCard, NOTE_SHARE_EXPORT_SNAPSHOT_ID } from '../share/NoteShareExportCard'
+import {
+  NoteShareExportCard,
+  NOTE_SHARE_EXPORT_SNAPSHOT_ID,
+  buildJinshuLightSegmentCaptureIds
+} from '../share/NoteShareExportCard'
 import { NoteSharePreviewSheet } from '../share/NoteSharePreviewSheet'
 import { systemShare } from '@kit.ShareKit'
 import { uniformTypeDescriptor as utd } from '@kit.ArkData'
@@ -136,6 +141,7 @@ struct NoteEdit {
   @State sharePreviewVisible: boolean = false
   @State sharePreviewPath: string = ''
   @State sharePreviewRegenerating: boolean = false
+  @State sharePreviewPreparing: boolean = false
   @State shareOptionsSheetVisible: boolean = false
   @State shareSheetRevision: number = 0
   @State shareCardCaptureKey: number = 0
@@ -145,6 +151,8 @@ struct NoteEdit {
   @State shareExportActive: boolean = false
   @State shareExportTheme: ShareCardTheme = ShareCardTheme.CLASSIC
   @State shareExportTone: ShareCardTone = ShareCardTone.DARK
+  @State shareExportSnapshotCompatMode: boolean = false
+  @State shareExportSnapshotSkipQr: boolean = false
   private saveTimer: number = -1
   private previewTimer: number = -1
   private previewDirty: boolean = true
@@ -159,13 +167,10 @@ struct NoteEdit {
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
   private static readonly SHARE_CARD_ID: string = NOTE_SHARE_EXPORT_SNAPSHOT_ID
-  private static readonly SHARE_SLOGAN: string = '记录本身，就是意义。   ——轻羽云笔记'
-  private static readonly SHARE_INTRO: string =
-    '轻羽云笔记同时支持手机与电脑全平台，无论你正在使用哪台设备，笔记都在手边。'
-  private static readonly SHARE_HEADER_TO_CONTENT_GAP: number = 30
+  private static readonly SHARE_SCROLL_ID: string = 'note_share_export_scroll_capture'
+  /** 超过此高度（vp）时整卡 snapshot 易触发 100001，改优先截 Scroll 视口再分段拼接。 */
+  private static readonly SHARE_SNAPSHOT_MAX_FULL_CARD_VP: number = 2400
   private static readonly SHARE_AVATAR_SIZE: number = 48
-  private static readonly SHARE_QR_SIZE: number = 72
-  private static readonly SHARE_FOOTER_QR_GAP: number = 12
 
   /** 使用 UIContext.getHostContext，替代已废弃的全局 getContext。 */
   private obtainUiAbilityContext(): common.UIAbilityContext | undefined {
@@ -1572,9 +1577,40 @@ struct NoteEdit {
       `exportShareImageToCache prepare theme=${theme} tone=${tone} ` +
       `bg=${palette.background} text=${palette.textPrimary} gradient=${palette.backgroundGradient?.join('->') ?? 'none'}`)
     this.refreshPreviewBlocks(this.content)
-    await this.mountShareExportCard(theme, tone)
+    const jinshuLight = theme === ShareCardTheme.JINSHU && tone === ShareCardTone.LIGHT
+    await this.mountShareExportCard(theme, tone, false, false)
     try {
-      return await this.offlineSnapshotCapture()
+      let path = await this.offlineSnapshotCapture()
+      if (!path && jinshuLight && !this.shareExportSnapshotCompatMode) {
+        Logger.warn('NoteEdit',
+          `exportShareImageToCache retry without jinshu light quote ` +
+          `theme=${theme} tone=${tone} key=${this.shareCardCaptureKey}`)
+        await this.mountShareExportCard(theme, tone, true, false)
+        path = await this.offlineSnapshotCapture()
+        Logger.info('NoteEdit',
+          `exportShareImageToCache jinshu light compat retry result=${path !== null} ` +
+          `theme=${theme} tone=${tone} key=${this.shareCardCaptureKey}`)
+      }
+      if (!path && jinshuLight && !this.shareExportSnapshotSkipQr) {
+        Logger.warn('NoteEdit',
+          `exportShareImageToCache retry without jinshu light qr ` +
+          `theme=${theme} tone=${tone} key=${this.shareCardCaptureKey}`)
+        await this.mountShareExportCard(theme, tone, true, true)
+        path = await this.offlineSnapshotCapture()
+        Logger.info('NoteEdit',
+          `exportShareImageToCache jinshu light skip-qr retry result=${path !== null} ` +
+          `theme=${theme} tone=${tone} key=${this.shareCardCaptureKey}`)
+      }
+      if (!path && !this.shareExportSnapshotSkipQr) {
+        Logger.warn('NoteEdit',
+          `exportShareImageToCache retry skip qr theme=${theme} tone=${tone} key=${this.shareCardCaptureKey}`)
+        await this.mountShareExportCard(theme, tone, this.shareExportSnapshotCompatMode, true)
+        path = await this.offlineSnapshotCapture()
+        Logger.info('NoteEdit',
+          `exportShareImageToCache skip-qr retry result=${path !== null} ` +
+          `theme=${theme} tone=${tone} key=${this.shareCardCaptureKey}`)
+      }
+      return path
     } catch (error) {
       Logger.error('NoteEdit', `exportShareImageToCache failed: ${JSON.stringify(error)}`)
       return null
@@ -1585,7 +1621,12 @@ struct NoteEdit {
   }
 
   /** 卸载后按目标主题/色调重新挂载，确保 NoteShareExportCard 首次 build 即为正确 palette。 */
-  private async mountShareExportCard(theme: ShareCardTheme, tone: ShareCardTone): Promise<void> {
+  private async mountShareExportCard(
+    theme: ShareCardTheme,
+    tone: ShareCardTone,
+    snapshotCompatMode: boolean = false,
+    snapshotSkipQr: boolean = false
+  ): Promise<void> {
     if (this.shareExportActive) {
       this.shareExportActive = false
       await NoteEdit.delayMs(48)
@@ -1594,14 +1635,44 @@ struct NoteEdit {
     const palette = ShareThemeColors.resolve(theme, tone)
     this.shareExportTheme = theme
     this.shareExportTone = tone
+    this.shareExportSnapshotCompatMode = snapshotCompatMode
+    this.shareExportSnapshotSkipQr = snapshotSkipQr
     this.shareExportScrollBg = palette.backgroundGradient?.[0] ?? palette.background
     this.shareExportColumnVp = 0
     this.shareCardHeight = 0
     this.shareExportActive = true
+    const jinshuLight = theme === ShareCardTheme.JINSHU && tone === ShareCardTone.LIGHT
     Logger.info('NoteEdit',
-      `mountShareExportCard key=${this.shareCardCaptureKey} theme=${theme} tone=${tone} scrollBg=${this.shareExportScrollBg}`)
+      `mountShareExportCard key=${this.shareCardCaptureKey} theme=${theme} tone=${tone} ` +
+      `compat=${snapshotCompatMode} skipQr=${snapshotSkipQr} scrollBg=${this.shareExportScrollBg}`)
     this.shareScroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
-    await NoteEdit.delayMs(680)
+    const hasImages = this.shareExportContentHasImages()
+    const mountDelayMs = jinshuLight ? 1100 : (hasImages ? 920 : 680)
+    await NoteEdit.delayMs(mountDelayMs)
+  }
+
+  /** 分享导出内容是否含网络头像或 Markdown 图片（ComponentSnapshot checkImage 需更久渲染）。 */
+  private shareExportContentHasImages(): boolean {
+    if (this.shareAvatarUrlTrim().length > 0) {
+      return true
+    }
+    for (const block of this.previewBlocksState) {
+      if (block.type === 'image') {
+        return true
+      }
+    }
+    return false
+  }
+
+  /** 长内容优先截 Scroll 视口，避免整卡高度超过 ComponentSnapshot 底层限制（约 8614px）。 */
+  private shareSnapshotPreferScrollViewport(): boolean {
+    const columnVp = this.shareExportColumnVp
+    if (columnVp <= 0) {
+      return this.pageHeight > 0
+    }
+    const viewportVp = Math.max(this.pageHeight, this.shareCardHeight, 800)
+    return columnVp > NoteEdit.SHARE_SNAPSHOT_MAX_FULL_CARD_VP ||
+      columnVp > viewportVp * 0.92
   }
 
   private async offlineSnapshotCapture(): Promise<string | null> {
@@ -1885,7 +1956,7 @@ struct NoteEdit {
   }
 
   /**
-   * 对已挂载的 Scroll（SHARE_CARD_ID）分段截图并纵向拼接。
+   * 对已挂载的导出节点分段截图并纵向拼接。
    * 不使用 createFromBuilder，避免 Builder 在隔离上下文中缺少 observeComponentCreation2。
    */
   private async captureScrollingCardToImage(): Promise<ArrayBuffer | null> {
@@ -1893,19 +1964,153 @@ struct NoteEdit {
     return await this.captureScrollingCardToImageCore()
   }
 
+  /**
+   * 按候选 id 尝试抓取快照并打印详细日志，便于定位 100001 来源。
+   */
+  private async getShareSnapshotWithCandidates(
+    opts: componentSnapshot.SnapshotOptions,
+    phase: string
+  ): Promise<image.PixelMap | null> {
+    const snap = this.getUIContext().getComponentSnapshot()
+    const preferScroll = this.shareSnapshotPreferScrollViewport()
+    const candidates: string[] = preferScroll
+      ? [NoteEdit.SHARE_SCROLL_ID, NoteEdit.SHARE_CARD_ID]
+      : [NoteEdit.SHARE_CARD_ID, NoteEdit.SHARE_SCROLL_ID]
+    for (const candidate of candidates) {
+      if (preferScroll && candidate === NoteEdit.SHARE_CARD_ID &&
+        this.shareExportColumnVp > NoteEdit.SHARE_SNAPSHOT_MAX_FULL_CARD_VP) {
+        continue
+      }
+      try {
+        Logger.info('NoteEdit',
+          `snapshot try phase=${phase} candidate=${candidate} preferScroll=${preferScroll} ` +
+          `columnVp=${this.shareExportColumnVp} key=${this.shareCardCaptureKey} ` +
+          `theme=${this.shareExportTheme} tone=${this.shareExportTone} compat=${this.shareExportSnapshotCompatMode}`)
+        const pm = await snap.get(candidate, opts)
+        Logger.info('NoteEdit',
+          `snapshot success phase=${phase} candidate=${candidate} key=${this.shareCardCaptureKey}`)
+        return pm
+      } catch (error) {
+        Logger.warn('NoteEdit',
+          `snapshot failed phase=${phase} candidate=${candidate} key=${this.shareCardCaptureKey}: ${JSON.stringify(error)}`)
+      }
+    }
+    return null
+  }
+
+  /** ComponentSnapshot 需等待 Image 解码；长内容优先 Scroll 视口截图。 */
+  private shareSnapshotWaitOpts(): componentSnapshot.SnapshotOptions {
+    return { waitUntilRenderFinished: true }
+  }
+
+  private isJinshuLightExport(): boolean {
+    return this.shareExportTheme === ShareCardTheme.JINSHU && this.shareExportTone === ShareCardTone.LIGHT
+  }
+
+  private jinshuLightExportTextLen(): number {
+    return ShareThemeColors.stripMarkdown(this.content).length
+  }
+
+  private async snapshotShareNodeById(
+    nodeId: string,
+    opts: componentSnapshot.SnapshotOptions,
+    _phase: string
+  ): Promise<image.PixelMap | null> {
+    const snap = this.getUIContext().getComponentSnapshot()
+    try {
+      return await snap.get(nodeId, opts)
+    } catch (error) {
+      Logger.warn('NoteEdit',
+        `jinshuLight segment failed id=${nodeId} key=${this.shareCardCaptureKey}: ${JSON.stringify(error)}`)
+      return null
+    }
+  }
+
+  /**
+   * 锦书浅色：整卡 snapshot 因 body 过高失败时，按 quote / 正文分块 / 页脚分段截图再纵向拼接。
+   */
+  private async captureJinshuLightSegmented(): Promise<ArrayBuffer | null> {
+    const waitOpts = this.shareSnapshotWaitOpts()
+    const textLen = this.jinshuLightExportTextLen()
+    const includeQuote = !this.shareExportSnapshotCompatMode
+    const segmentIds = buildJinshuLightSegmentCaptureIds(textLen, includeQuote)
+
+    const slices: image.PixelMap[] = []
+    for (const nodeId of segmentIds) {
+      const pm = await this.snapshotShareNodeById(nodeId, waitOpts, 'segment')
+      if (!pm) {
+        for (const s of slices) {
+          await s.release()
+        }
+        Logger.error('NoteEdit',
+          `captureJinshuLightSegmented aborted at id=${nodeId} key=${this.shareCardCaptureKey}`)
+        return null
+      }
+      slices.push(pm)
+    }
+
+    if (slices.length === 0) {
+      return null
+    }
+    if (slices.length === 1) {
+      const trimmed = await this.trimTransparentVerticalEdges(slices[0])
+      await slices[0].release()
+      if (!trimmed) {
+        return null
+      }
+      const buf = await this.packPixelMapToPng(trimmed)
+      await trimmed.release()
+      return buf
+    }
+
+    let widthPx = 0
+    let totalHeightPx = 0
+    for (const s of slices) {
+      const info = s.getImageInfoSync()
+      widthPx = Math.max(widthPx, info.size.width)
+      totalHeightPx += info.size.height
+    }
+    const sliceSkipTopPx: number[] = new Array(slices.length).fill(0)
+    const normalized = await this.normalizeAllSlicesForMerge(slices)
+    for (const s of slices) {
+      await s.release()
+    }
+    if (!normalized) {
+      Logger.error('NoteEdit', 'captureJinshuLightSegmented: normalizeAllSlicesForMerge failed')
+      return null
+    }
+    let normHeightPx = 0
+    for (const n of normalized) {
+      normHeightPx += n.getImageInfoSync().size.height
+    }
+    const merged = await this.mergePixelMapsVertical(normalized, widthPx, normHeightPx, 0, sliceSkipTopPx)
+    if (!merged) {
+      Logger.error('NoteEdit', 'captureJinshuLightSegmented: mergePixelMapsVertical returned null')
+      return null
+    }
+    const buf = await this.packPixelMapToPng(merged)
+    await merged.release()
+    return buf
+  }
+
   /** 滚动一遍并丢弃首帧截图，避免 Markdown 块仍显示上一套色调时分段截到旧帧。 */
   private async flushShareCardRenderSnapshot(): Promise<void> {
-    const snap = this.getUIContext().getComponentSnapshot()
-    const waitOpts: componentSnapshot.SnapshotOptions = { waitUntilRenderFinished: true }
+    const waitOpts = this.shareSnapshotWaitOpts()
+    Logger.info('NoteEdit',
+      `flushShareCardRenderSnapshot waitUntilRenderFinished=${waitOpts.waitUntilRenderFinished ?? false} ` +
+      `theme=${this.shareExportTheme} tone=${this.shareExportTone} ` +
+      `compat=${this.shareExportSnapshotCompatMode} skipQr=${this.shareExportSnapshotSkipQr}`)
     for (let round = 0; round < 2; round++) {
       this.shareScroller.scrollEdge(Edge.Bottom)
       await NoteEdit.delayMs(160)
       this.shareScroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
       await NoteEdit.delayMs(160)
       try {
-        const warmPm = await snap.get(NoteEdit.SHARE_CARD_ID, waitOpts)
+        const warmPm = await this.getShareSnapshotWithCandidates(waitOpts, `flush_round_${round}`)
         if (warmPm) {
           await warmPm.release()
+        } else {
+          Logger.warn('NoteEdit', `flushShareCardRenderSnapshot round=${round} no snapshot from all candidates`)
         }
         Logger.info('NoteEdit',
           `flushShareCardRenderSnapshot round=${round} key=${this.shareCardCaptureKey} ` +
@@ -1918,9 +2123,7 @@ struct NoteEdit {
   }
 
   private async captureScrollingCardToImageCore(): Promise<ArrayBuffer | null> {
-    const snap = this.getUIContext().getComponentSnapshot()
-    const id = NoteEdit.SHARE_CARD_ID
-    const waitOpts: componentSnapshot.SnapshotOptions = { waitUntilRenderFinished: true }
+    const waitOpts = this.shareSnapshotWaitOpts()
     const ui = this.getUIContext()
     const vpEps = 0.5
     const offsetWarnVp = 2.0
@@ -1930,9 +2133,18 @@ struct NoteEdit {
 
     Logger.info('NoteEdit',
       `captureScrollingCardToImageCore start key=${this.shareCardCaptureKey} ` +
-      `theme=${this.shareExportTheme} tone=${this.shareExportTone}`)
+      `theme=${this.shareExportTheme} tone=${this.shareExportTone} targetCardId=${NoteEdit.SHARE_CARD_ID} ` +
+      `targetScrollId=${NoteEdit.SHARE_SCROLL_ID} ` +
+      `waitUntilRenderFinished=${waitOpts.waitUntilRenderFinished ?? false}`)
 
     await this.flushShareCardRenderSnapshot()
+
+    const jinshuLongBody =
+      this.isJinshuLightExport() &&
+      this.jinshuLightExportTextLen() > ShareThemeColors.JINSHU_LIGHT_BODY_CHARS_PER_CHUNK
+    if (jinshuLongBody) {
+      return await this.captureJinshuLightSegmented()
+    }
 
     // 长内容下 Column.onAreaChange 可能偏小；用 Scroller 最大偏移推算可滚范围（界面会先滚到底再回到顶部）。
     this.shareScroller.scrollEdge(Edge.Bottom)
@@ -1947,13 +2159,26 @@ struct NoteEdit {
     try {
       Logger.info('NoteEdit',
         `captureScrollingCardToImageCore snapshot key=${this.shareCardCaptureKey} ` +
-        `theme=${this.shareExportTheme} tone=${this.shareExportTone} scrollBg=${this.shareExportScrollBg}`)
-      firstPm = await snap.get(id, waitOpts)
+        `theme=${this.shareExportTheme} tone=${this.shareExportTone} ` +
+        `compat=${this.shareExportSnapshotCompatMode} skipQr=${this.shareExportSnapshotSkipQr} scrollBg=${this.shareExportScrollBg}`)
+      firstPm = await this.getShareSnapshotWithCandidates(waitOpts, 'first_frame')
     } catch (err) {
-      Logger.error('NoteEdit', `snapshot get failed: ${JSON.stringify(err)}`)
+      Logger.error('NoteEdit',
+        `snapshot get failed key=${this.shareCardCaptureKey} ` +
+        `theme=${this.shareExportTheme} tone=${this.shareExportTone} compat=${this.shareExportSnapshotCompatMode}: ` +
+        `${JSON.stringify(err)}`)
       return null
     }
     if (!firstPm) {
+      if (this.isJinshuLightExport()) {
+        Logger.warn('NoteEdit',
+          `snapshot full card failed, try jinshu light segmented key=${this.shareCardCaptureKey} ` +
+          `theme=${this.shareExportTheme} tone=${this.shareExportTone}`)
+        return await this.captureJinshuLightSegmented()
+      }
+      Logger.error('NoteEdit',
+        `snapshot get failed all candidates key=${this.shareCardCaptureKey} ` +
+        `theme=${this.shareExportTheme} tone=${this.shareExportTone} compat=${this.shareExportSnapshotCompatMode}`)
       return null
     }
 
@@ -1967,8 +2192,9 @@ struct NoteEdit {
     }
     const widthPx = firstInfo.size.width
     const viewportPx = firstInfo.size.height
-    // 视口高度（vp）：优先布局高度，与 Scroll 实际可滚区域一致；用于总长与每屏裁切像素 rowStepPx。
-    const stepVp = this.shareCardHeight > 0 ? this.shareCardHeight : ui.px2vp(viewportPx)
+    // 视口步长必须与「实际截图像素高度」一致，否则长图拼接会出现重叠/错位。
+    // 近期主题切换后，布局回调高度偶尔与 snapshot 高度不一致；这里统一以首帧截图高度为准。
+    const stepVp = ui.px2vp(viewportPx)
     const rowStepPx = Math.max(1, Math.round(ui.vp2px(stepVp)))
 
     // Column.onAreaChange 得到的总高常以「内容真实高度」为准；Scroller.currentOffset 最大值有时偏小，
@@ -1982,10 +2208,14 @@ struct NoteEdit {
     const totalPx = Math.max(Math.ceil(ui.vp2px(totalVp)), viewportPx)
     const extentPx = Math.ceil(ui.vp2px(extentVp))
     const mergeHeightPx = Math.min(totalPx, Math.max(viewportPx, extentPx))
+    // 部分机型/版本上，snapshot.get(share card) 返回的是「整卡高度」而非 Scroll 视口高度。
+    // 这时 firstPm 已是完整长图，若继续按滚动分片拼接会重复内容并出现错位。
+    const snapshotCoversContent =
+      columnFromArea > 0 && stepVp >= columnFromArea - vpEps
 
     const singleScreen = totalVp <= stepVp + vpEps
 
-    if (singleScreen) {
+    if (singleScreen || snapshotCoversContent) {
       const trimmed = await this.trimTransparentVerticalEdges(firstPm)
       if (!trimmed) {
         return null
@@ -2031,12 +2261,17 @@ struct NoteEdit {
       }
       let next: image.PixelMap | null = null
       try {
-        next = await snap.get(id, waitOpts)
+        next = await this.getShareSnapshotWithCandidates(waitOpts, `slice_target_${Math.round(nextYVp)}`)
       } catch (err) {
-        Logger.error('NoteEdit', `snapshot get failed at targetYVp=${nextYVp}: ${JSON.stringify(err)}`)
+        Logger.error('NoteEdit',
+          `snapshot get failed at targetYVp=${nextYVp} key=${this.shareCardCaptureKey} ` +
+          `theme=${this.shareExportTheme} tone=${this.shareExportTone} compat=${this.shareExportSnapshotCompatMode}: ` +
+          `${JSON.stringify(err)}`)
         break
       }
       if (!next) {
+        Logger.warn('NoteEdit',
+          `snapshot returned null at targetYVp=${nextYVp} key=${this.shareCardCaptureKey}`)
         break
       }
       slices.push(next)
@@ -2118,26 +2353,49 @@ struct NoteEdit {
 
   /** 通过分享预览保存或分享长图。 */
   private async runShareNote(): Promise<void> {
-    this.showPreviewMessage('正在生成长图…')
-    this.shareAvatarNetworkFailed = false
-    this.shareProfile = await NoteApiClient.getInstance().fetchProfile()
-    if (this.shareAvatarUrlTrim().length > 0) {
-      await NoteEdit.delayMs(220)
-    }
-    this.shareTheme = ShareCardTheme.CLASSIC
-    this.shareTone = ShareCardTone.DARK
-    const path = await this.exportShareImageToCache(ShareCardTheme.CLASSIC, ShareCardTone.DARK)
-    if (!path || path.length === 0) {
-      this.showPreviewMessage('生成长图失败')
+    if (this.sharePreviewPreparing || this.sharePreviewRegenerating) {
       return
     }
-    this.sharePreviewPath = path
-    await this.updateSharePreviewImageLayout(path)
-    this.sharePreviewVisible = true
-    this.shareOptionsSheetVisible = true
-    this.shareSheetRevision++
-    Logger.info('NoteEdit',
-      `runShareNote opened preview theme=${this.shareTheme} tone=${this.shareTone} revision=${this.shareSheetRevision}`)
+    this.sharePreviewPreparing = true
+    this.showPreviewMessage('正在生成长图…')
+    try {
+      this.shareAvatarNetworkFailed = false
+      this.shareProfile = await NoteApiClient.getInstance().fetchProfile()
+      if (this.shareAvatarUrlTrim().length > 0) {
+        await NoteEdit.delayMs(220)
+      }
+      await this.ensurePreferencesInitialized()
+      const savedThemeRaw = await PreferencesService.getInstance().getShareCardTheme()
+      const savedToneRaw = await PreferencesService.getInstance().getShareCardTone()
+      const savedTheme = ShareThemeColors.parseTheme(savedThemeRaw)
+      const savedTone = ShareThemeColors.parseTone(savedToneRaw)
+      this.shareTheme = savedTheme
+      this.shareTone = savedTone
+      const path = await this.exportShareImageToCache(savedTheme, savedTone)
+      if (!path || path.length === 0) {
+        this.showPreviewMessage('生成长图失败')
+        return
+      }
+      this.sharePreviewPath = path
+      await this.updateSharePreviewImageLayout(path)
+      this.sharePreviewVisible = true
+      this.shareOptionsSheetVisible = true
+      this.shareSheetRevision++
+      Logger.info('NoteEdit',
+        `runShareNote opened preview theme=${this.shareTheme} tone=${this.shareTone} revision=${this.shareSheetRevision}`)
+    } finally {
+      this.sharePreviewPreparing = false
+    }
+  }
+
+  private async persistShareCardPreferences(
+    theme: ShareCardTheme,
+    tone: ShareCardTone
+  ): Promise<void> {
+    await this.ensurePreferencesInitialized()
+    await PreferencesService.getInstance().setShareCardTheme(`${theme}`)
+    await PreferencesService.getInstance().setShareCardTone(`${tone}`)
+    Logger.info('NoteEdit', `persistShareCardPreferences theme=${theme} tone=${tone}`)
   }
 
   private async regenerateSharePreview(
@@ -2222,7 +2480,9 @@ struct NoteEdit {
             `shareSheet button=theme label=${ShareThemeColors.label(theme)} ` +
             `from=${this.shareTheme} to=${theme} revision=${this.shareSheetRevision}`)
           if (this.shareTheme !== theme) {
+            this.shareTheme = theme
             this.shareSheetRevision++
+            void this.persistShareCardPreferences(theme, this.shareTone)
             void this.regenerateSharePreview(theme, this.shareTone)
           }
         },
@@ -2231,7 +2491,9 @@ struct NoteEdit {
             `shareSheet button=tone label=${ShareThemeColors.toneLabel(tone)} ` +
             `from=${this.shareTone} to=${tone} revision=${this.shareSheetRevision}`)
           if (this.shareTone !== tone) {
+            this.shareTone = tone
             this.shareSheetRevision++
+            void this.persistShareCardPreferences(this.shareTheme, tone)
             void this.regenerateSharePreview(this.shareTheme, tone)
           }
         },
@@ -2251,11 +2513,19 @@ struct NoteEdit {
     })
   }
 
+  private shareExportMountKey(): string {
+    return `${this.shareCardCaptureKey}_${this.shareExportTheme}_${this.shareExportTone}_` +
+      `${this.shareExportSnapshotCompatMode ? 'compat' : 'normal'}_` +
+      `${this.shareExportSnapshotSkipQr ? 'noqr' : 'qr'}`
+  }
+
   @Builder
   private buildShareExportCard() {
     NoteShareExportCard({
       theme: this.shareExportTheme,
       tone: this.shareExportTone,
+      snapshotCompatMode: this.shareExportSnapshotCompatMode,
+      snapshotSkipQr: this.shareExportSnapshotSkipQr,
       styleKey: `${this.shareCardCaptureKey}_${this.shareExportTheme}_${this.shareExportTone}`,
       title: this.title,
       content: this.content,
@@ -2267,13 +2537,17 @@ struct NoteEdit {
         this.showPreviewMessage(href)
       },
       onAreaHeight: (h: number): void => {
+        const prev = this.shareExportColumnVp
+        if (prev > 0 && Math.abs(prev - h) < 0.5) {
+          return
+        }
         this.shareExportColumnVp = h
         Logger.info('NoteEdit',
           `shareExportCard areaHeight=${h} key=${this.shareCardCaptureKey} ` +
           `theme=${this.shareExportTheme} tone=${this.shareExportTone}`)
       }
     })
-      .key(`share_export_${this.shareCardCaptureKey}_${this.shareExportTheme}_${this.shareExportTone}`)
+      .key(`share_export_${this.shareExportMountKey()}`)
   }
 
   @Builder
@@ -2486,8 +2760,13 @@ struct NoteEdit {
     if (this.aiNoteWorking) {
       return
     }
-    if (this.content.trim().length === 0) {
+    const trimmed = this.content.trim()
+    if (trimmed.length === 0) {
       this.showPreviewMessage('笔记正文为空，无法优化')
+      return
+    }
+    if (Array.from(trimmed).length < AiNotePrompt.OPTIMIZE_MIN_RUNES) {
+      this.showPreviewMessage('内容过少，无需AI优化')
       return
     }
     this.aiNoteWorking = true
@@ -2584,16 +2863,16 @@ struct NoteEdit {
       Row({ space: 4 }) {
         Row() {
           Stack({ alignContent: Alignment.Center }) {
-            Image($r('app.media.ic_ai_float'))
-              .width(24)
-              .height(24)
-              .objectFit(ImageFit.Contain)
-              .opacity(this.aiNoteWorking ? 0.35 : 1)
             if (this.aiNoteWorking) {
               LoadingProgress()
-                .width(18)
-                .height(18)
+                .width(22)
+                .height(22)
                 .color($r('app.color.accent'))
+            } else {
+              Image($r('app.media.ic_ai_float'))
+                .width(24)
+                .height(24)
+                .objectFit(ImageFit.Contain)
             }
           }
         }
@@ -3185,19 +3464,42 @@ struct NoteEdit {
         Scroll(this.shareScroller) {
           this.buildShareExportCard()
         }
-        .key(`share_scroll_${this.shareCardCaptureKey}_${this.shareExportTheme}_${this.shareExportTone}`)
+        .id(NoteEdit.SHARE_SCROLL_ID)
+        .key(`share_scroll_${this.shareExportMountKey()}`)
         .scrollable(ScrollDirection.Vertical)
         .scrollBar(BarState.Off)
         .width('100%')
+        .height('100%')
         .constraintSize({ minHeight: 800 })
         .backgroundColor(this.shareExportScrollBg)
         .onAreaChange((_, value) => {
           this.shareCardHeight = Number.parseFloat(`${value.height}`) || 0
         })
         .position({ x: 0, y: 0 })
-        .opacity(1)
+        .opacity(0.01)
         .hitTestBehavior(HitTestMode.None)
-        .zIndex(this.sharePreviewVisible ? 10001 : 0)
+        .zIndex(10003)
+      }
+
+      if (this.sharePreviewPreparing && !this.sharePreviewVisible) {
+        Stack({ alignContent: Alignment.TopStart }) {
+          Column()
+            .width('100%')
+            .height('100%')
+            .backgroundColor('rgba(0,0,0,0.92)')
+          Column() {
+            LoadingProgress()
+              .width(40)
+              .height(40)
+              .color(Color.White)
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+        }
+        .width('100%')
+        .height('100%')
+        .zIndex(10004)
       }
 
       if (this.sharePreviewVisible) {
@@ -3254,13 +3556,13 @@ struct NoteEdit {
         }
         .width('100%')
         .height('100%')
-        .zIndex(10002)
+        .zIndex(10004)
       }
     }
     .width('100%')
     .height('100%')
     .onClick(() => {
-      if (this.sharePreviewVisible || this.sharePreviewRegenerating) {
+      if (this.sharePreviewVisible || this.sharePreviewRegenerating || this.sharePreviewPreparing) {
         return
       }
       if (this.tagMenuVisible) {

@@ -2,6 +2,9 @@
  * MiniMax「AI 优化语句 / AI 提取链接」提示词（与 Flutter ai_note_prompt.dart 语义一致）。
  */
 export class AiNotePrompt {
+  /** AI 优化语句要求的最少正文字数（Unicode 码点，与 Flutter 一致）。 */
+  static readonly OPTIMIZE_MIN_RUNES: number = 100
+
   static readonly LINK_SUMMARY_MAX_RUNES: number = 300
 
   static readonly OPTIMIZE_SYSTEM: string =

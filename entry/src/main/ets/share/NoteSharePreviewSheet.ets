@@ -14,8 +14,8 @@ export interface NoteSharePreviewSheetParams {
 
 @Component
 export struct NoteSharePreviewSheet {
-  @Prop theme: ShareCardTheme = ShareCardTheme.CLASSIC
-  @Prop tone: ShareCardTone = ShareCardTone.DARK
+  @Prop @Watch('onThemePropChanged') theme: ShareCardTheme = ShareCardTheme.CLASSIC
+  @Prop @Watch('onTonePropChanged') tone: ShareCardTone = ShareCardTone.DARK
   @Prop sheetRevision: number = 0
   @Prop params: NoteSharePreviewSheetParams = {
     onThemeChange: (_t: ShareCardTheme): void => {},
@@ -25,28 +25,43 @@ export struct NoteSharePreviewSheet {
     onCancel: (): void => {}
   }
 
+  @State private selectedTheme: ShareCardTheme = ShareCardTheme.CLASSIC
+  @State private selectedTone: ShareCardTone = ShareCardTone.DARK
+
   private readonly themes: ShareCardTheme[] =
     [ShareCardTheme.CLASSIC, ShareCardTheme.QINGYU, ShareCardTheme.CALENDAR, ShareCardTheme.JINSHU]
 
   private readonly tones: ShareCardTone[] = [ShareCardTone.DARK, ShareCardTone.LIGHT]
 
   aboutToAppear(): void {
+    this.selectedTheme = this.theme
+    this.selectedTone = this.tone
     this.logSelection('aboutToAppear')
   }
 
   aboutToReuse(params: Record<string, Object>): void {
+    this.selectedTheme = this.theme
+    this.selectedTone = this.tone
     Logger.info(SHARE_PREVIEW_SHEET_LOG_TAG,
       `aboutToReuse revision=${this.sheetRevision} theme=${this.theme} tone=${this.tone} keys=${Object.keys(params).join(',')}`)
   }
 
+  onThemePropChanged(_propName: string): void {
+    this.selectedTheme = this.theme
+  }
+
+  onTonePropChanged(_propName: string): void {
+    this.selectedTone = this.tone
+  }
+
   private logSelection(stage: string): void {
     Logger.info(SHARE_PREVIEW_SHEET_LOG_TAG,
-      `${stage} revision=${this.sheetRevision} theme=${this.theme} tone=${this.tone}`)
+      `${stage} revision=${this.sheetRevision} theme=${this.selectedTheme} tone=${this.selectedTone}`)
   }
 
   private logButtonTap(button: string, label: string): void {
     Logger.info(SHARE_PREVIEW_SHEET_LOG_TAG,
-      `button=${button} label=${label} sheetTheme=${this.theme} sheetTone=${this.tone} revision=${this.sheetRevision}`)
+      `button=${button} label=${label} sheetTheme=${this.selectedTheme} sheetTone=${this.selectedTone} revision=${this.sheetRevision}`)
   }
 
   @Builder
@@ -87,14 +102,21 @@ export struct NoteSharePreviewSheet {
       Row() {
         Blank()
           .layoutWeight(1)
-        Text('取消')
-          .fontSize(15)
-          .fontColor('#FF666666')
-          .padding({ left: 8, top: 4, bottom: 4 })
-          .onClick((): void => {
-            this.logButtonTap('cancel', '取消')
-            this.params.onCancel()
-          })
+        Row() {
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(16)
+            .fontColor([$r('app.color.secondary_text')])
+        }
+        .width(32)
+        .height(32)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor($r('app.color.surface_muted'))
+        .borderRadius(16)
+        .onClick((): void => {
+          this.logButtonTap('cancel', '取消')
+          this.params.onCancel()
+        })
       }
       .width('100%')
       .margin({ top: 4 })
@@ -118,8 +140,12 @@ export struct NoteSharePreviewSheet {
           ForEach(this.themes, (t: ShareCardTheme) => {
             this.buildChip(
               ShareThemeColors.label(t),
-              this.theme === t,
+              this.selectedTheme === t,
               (): void => {
+                if (this.selectedTheme === t) {
+                  return
+                }
+                this.selectedTheme = t
                 this.logButtonTap('theme', ShareThemeColors.label(t))
                 this.params.onThemeChange(t)
               }
@@ -143,8 +169,12 @@ export struct NoteSharePreviewSheet {
           ForEach(this.tones, (t: ShareCardTone) => {
             this.buildChip(
               ShareThemeColors.toneLabel(t),
-              this.tone === t,
+              this.selectedTone === t,
               (): void => {
+                if (this.selectedTone === t) {
+                  return
+                }
+                this.selectedTone = t
                 this.logButtonTap('tone', ShareThemeColors.toneLabel(t))
                 this.params.onToneChange(t)
               }
@@ -166,7 +196,7 @@ export struct NoteSharePreviewSheet {
             this.logButtonTap('action', '保存到相册')
             this.params.onSave()
           })
-          this.buildAction($r('sys.symbol.share'), '分享到其他', (): void => {
+          this.buildAction($r('sys.symbol.share'), '分享到其他应用', (): void => {
             this.logButtonTap('action', '分享到其他')
             this.params.onShare()
           })

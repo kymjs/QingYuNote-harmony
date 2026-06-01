@@ -14,6 +14,9 @@ import { JinshuUnderlineText } from './JinshuUnderlineText'
 export interface NoteShareExportCardParams {
   theme: ShareCardTheme
   tone: ShareCardTone
+  snapshotCompatMode?: boolean
+  /** 导出快照跳过 footer 二维码 Image，规避 checkImage 失败。 */
+  snapshotSkipQr?: boolean
   styleKey?: string
   title: string
   content: string
@@ -27,9 +30,40 @@ export interface NoteShareExportCardParams {
 
 export const NOTE_SHARE_EXPORT_SNAPSHOT_ID: string = 'note_share_export_card'
 
-export const SHARE_SLOGAN: string = '记录本身，就是意义。'
-export const SHARE_INTRO: string =
-  '轻羽云笔记同时支持手机与电脑全平台，无论你正在使用哪台设备，笔记都在手边。'
+/** 锦书浅色导出节点 id（供 ComponentSnapshot 分段探测）。 */
+export const JINSHU_LIGHT_SHELL_ID: string = 'jinshu_light_shell'
+export const JINSHU_LIGHT_CARD_INNER_ID: string = 'jinshu_light_card_inner'
+export const JINSHU_LIGHT_QUOTE_ID: string = 'jinshu_light_quote'
+export const JINSHU_LIGHT_BODY_ID: string = 'jinshu_light_body'
+export const JINSHU_LIGHT_FOOTER_ID: string = 'jinshu_light_footer'
+export const JINSHU_LIGHT_DIVIDER_ID: string = 'jinshu_light_divider'
+export const JINSHU_LIGHT_SLOGAN_ID: string = 'jinshu_light_slogan'
+export const JINSHU_LIGHT_QR_ID: string = 'jinshu_light_qr'
+export const JINSHU_LIGHT_QUOTE_FONT_SIZE: number = 116
+export const JINSHU_LIGHT_QUOTE_EDGE: number = 30
+export const JINSHU_LIGHT_BODY_H_PADDING: number = 30
+export const JINSHU_LIGHT_BODY_FONT_SIZE: number = 21
+export const JINSHU_LIGHT_BODY_LINE_HEIGHT: number = 33
+export const JINSHU_LIGHT_BODY_TOP_GAP: number = 0
+export const JINSHU_LIGHT_FOOTER_EDGE: number = 15
+export const JINSHU_LIGHT_FOOTER_TOP_GAP: number = 28
+
+/** 锦书浅色分段导出节点顺序（quote 可选 + body 分块 + footer）。 */
+export function buildJinshuLightSegmentCaptureIds(textLen: number, includeQuote: boolean): string[] {
+  const ids: string[] = []
+  if (includeQuote) {
+    ids.push(JINSHU_LIGHT_QUOTE_ID)
+  }
+  const chunkCount = ShareThemeColors.jinshuLightBodyChunkCount(textLen)
+  for (let i = 0; i < chunkCount; i++) {
+    ids.push(ShareThemeColors.jinshuLightBodyChunkId(i))
+  }
+  ids.push(JINSHU_LIGHT_DIVIDER_ID)
+  return ids
+}
+
+export const SHARE_SLOGAN: string = '轻羽云笔记：记录本身，就是意义'
+export const SHARE_INTRO: string = '手机与电脑全平台云笔记，无论你正在使用哪台设备，笔记都在手边。'
 export const SHARE_HEADER_TO_CONTENT_GAP: number = 30
 export const SHARE_AVATAR_SIZE: number = 48
 export const SHARE_QR_SIZE: number = 72
@@ -39,6 +73,10 @@ export const SHARE_FOOTER_QR_GAP: number = 12
 export struct NoteShareExportCard {
   @Prop theme: ShareCardTheme = ShareCardTheme.CLASSIC
   @Prop tone: ShareCardTone = ShareCardTone.DARK
+  /** 导出快照兼容模式：用于规避特定组件在 ComponentSnapshot 下偶发失败。 */
+  @Prop snapshotCompatMode: boolean = false
+  /** 导出快照跳过 footer 二维码 Image。 */
+  @Prop snapshotSkipQr: boolean = false
   /** 含 captureKey，主题/色调切换时强制 Markdown 块重建。 */
   @Prop styleKey: string = ''
   @Prop title: string = ''
@@ -48,6 +86,7 @@ export struct NoteShareExportCard {
   @Prop noteCreatedAt: number = 0
   @Prop shareProfile: ProfileBody | null = null
   @State shareAvatarNetworkFailed: boolean = false
+  @State jinshuBodyChunks: string[] = []
   onLinkToast: (href: string) => void = (_href: string) => {
   }
   onAreaHeight: (heightVp: number) => void = (_h: number) => {
@@ -55,10 +94,16 @@ export struct NoteShareExportCard {
 
   aboutToAppear(): void {
     this.logBuild('aboutToAppear')
+    if (this.isJinshuLight()) {
+      this.jinshuBodyChunks = ShareThemeColors.splitJinshuLightBodyChunks(this.jinshuDisplayText())
+    }
   }
 
   aboutToReuse(): void {
     this.shareAvatarNetworkFailed = false
+    if (this.isJinshuLight()) {
+      this.jinshuBodyChunks = ShareThemeColors.splitJinshuLightBodyChunks(this.jinshuDisplayText())
+    }
     this.logBuild('aboutToReuse')
   }
 
@@ -66,11 +111,16 @@ export struct NoteShareExportCard {
     const p = this.palette()
     Logger.info('NoteShareExportCard',
       `${stage} styleKey=${this.styleKey} theme=${this.theme} tone=${this.tone} ` +
-      `bg=${p.background} text=${p.textPrimary} gradient=${p.backgroundGradient?.join('->') ?? 'none'}`)
+      `compat=${this.snapshotCompatMode} skipQr=${this.snapshotSkipQr} bg=${p.background} text=${p.textPrimary} ` +
+      `gradient=${p.backgroundGradient?.join('->') ?? 'none'}`)
   }
 
   private palette(): ShareThemePalette {
     return ShareThemeColors.resolve(this.theme, this.tone)
+  }
+
+  private isJinshuLight(): boolean {
+    return this.theme === ShareCardTheme.JINSHU && this.tone === ShareCardTone.LIGHT
   }
 
   private displayName(): string {
@@ -90,6 +140,11 @@ export struct NoteShareExportCard {
 
   private titleText(): string {
     return this.title.trim().length > 0 ? this.title.trim() : '无标题'
+  }
+
+  private jinshuDisplayText(): string {
+    const plain = ShareThemeColors.stripMarkdown(this.content)
+    return plain.length > 0 ? plain : '开始写作后，这里会实时显示预览。'
   }
 
   @Builder
@@ -147,7 +202,15 @@ export struct NoteShareExportCard {
     return this.tone === ShareCardTone.LIGHT &&
       (this.theme === ShareCardTheme.CLASSIC ||
         this.theme === ShareCardTheme.QINGYU ||
-        this.theme === ShareCardTheme.CALENDAR)
+        this.theme === ShareCardTheme.CALENDAR ||
+        this.theme === ShareCardTheme.JINSHU)
+  }
+
+  private qrSize(): number {
+    if (this.theme === ShareCardTheme.JINSHU && this.tone === ShareCardTone.DARK) {
+      return SHARE_QR_SIZE * 0.8
+    }
+    return SHARE_QR_SIZE
   }
 
   @Builder
@@ -159,7 +222,7 @@ export struct NoteShareExportCard {
       .lineHeight(20)
       .width('100%')
     Text(SHARE_INTRO)
-      .fontSize(this.theme === ShareCardTheme.QINGYU ? 11 : 12)
+      .fontSize(this.theme === ShareCardTheme.QINGYU || this.isJinshuLight() ? 11 : 12)
       .fontColor(p.textSecondary)
       .lineHeight(18)
       .width('100%')
@@ -167,24 +230,28 @@ export struct NoteShareExportCard {
 
   @Builder
   private buildQrCode(p: ShareThemePalette) {
-    if (this.useTransparentQr()) {
+    if (this.snapshotSkipQr) {
+      Column()
+        .width(this.qrSize())
+        .height(this.qrSize())
+    } else if (this.useTransparentQr()) {
       Image($r('app.media.website_qrcode'))
-        .width(SHARE_QR_SIZE)
-        .height(SHARE_QR_SIZE)
+        .width(this.qrSize())
+        .height(this.qrSize())
         .objectFit(ImageFit.Contain)
     } else {
       Stack() {
         Column()
-          .width(SHARE_QR_SIZE)
-          .height(SHARE_QR_SIZE)
+          .width(this.qrSize())
+          .height(this.qrSize())
           .backgroundColor(p.textPrimary)
         Image($r('app.media.website_qrcode'))
-          .width(SHARE_QR_SIZE)
-          .height(SHARE_QR_SIZE)
+          .width(this.qrSize())
+          .height(this.qrSize())
           .objectFit(ImageFit.Contain)
       }
-      .width(SHARE_QR_SIZE)
-      .height(SHARE_QR_SIZE)
+      .width(this.qrSize())
+      .height(this.qrSize())
     }
   }
 
@@ -207,14 +274,68 @@ export struct NoteShareExportCard {
   }
 
   @Builder
+  private buildJinshuBodyContent(p: ShareThemePalette, bodyText: string) {
+    if (this.isJinshuLight() && this.snapshotCompatMode) {
+      Text(bodyText)
+        .fontSize(JINSHU_LIGHT_BODY_FONT_SIZE)
+        .lineHeight(JINSHU_LIGHT_BODY_LINE_HEIGHT)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(p.textPrimary)
+        .width('100%')
+    } else {
+      JinshuUnderlineText({
+        text: bodyText,
+        accent: p.accent ?? '#FF39FF14',
+        fontSize: this.isJinshuLight() ? JINSHU_LIGHT_BODY_FONT_SIZE : 15,
+        lineHeight: this.isJinshuLight() ? JINSHU_LIGHT_BODY_LINE_HEIGHT : 22,
+        fontColor: p.textPrimary,
+        useSolidUnderline: this.isJinshuLight(),
+        highlightOnly: this.isJinshuLight()
+      })
+    }
+  }
+
+  @Builder
   private buildJinshuBody(p: ShareThemePalette) {
-    JinshuUnderlineText({
-      text: ShareThemeColors.stripMarkdown(this.content),
-      accent: p.accent ?? '#FF39FF14',
-      fontSize: 15,
-      lineHeight: 22,
-      fontColor: p.textPrimary
+    this.buildJinshuBodyContent(p, this.jinshuDisplayText())
+  }
+
+  @Builder
+  private buildJinshuBodyChunkWrap(p: ShareThemePalette, chunkText: string, chunkIndex: number) {
+    Column() {
+      this.buildJinshuBodyContent(p, chunkText)
+    }
+    .width('100%')
+    .padding({
+      left: JINSHU_LIGHT_BODY_H_PADDING,
+      right: JINSHU_LIGHT_BODY_H_PADDING
     })
+    .backgroundColor(p.jinshuBackground ?? p.background)
+    .id(ShareThemeColors.jinshuLightBodyChunkId(chunkIndex))
+  }
+
+  @Builder
+  private buildJinshuBodyLight(p: ShareThemePalette) {
+    if (this.isJinshuLight() && this.jinshuBodyChunks.length > 1) {
+      Column({ space: 0 }) {
+        ForEach(this.jinshuBodyChunks, (chunkText: string, chunkIndex: number) => {
+          this.buildJinshuBodyChunkWrap(p, chunkText, chunkIndex)
+        }, (chunkText: string, chunkIndex: number) =>
+          `${this.styleKey}_jinshu_body_chunk_${chunkIndex}_${chunkText.length}`)
+      }
+      .width('100%')
+    } else {
+      Column() {
+        this.buildJinshuBody(p)
+      }
+      .width('100%')
+      .padding({
+        left: JINSHU_LIGHT_BODY_H_PADDING,
+        right: JINSHU_LIGHT_BODY_H_PADDING
+      })
+      .backgroundColor(p.jinshuBackground ?? p.background)
+      .id(JINSHU_LIGHT_BODY_ID)
+    }
   }
 
   @Builder
@@ -346,8 +467,64 @@ export struct NoteShareExportCard {
   }
 
   @Builder
+  private buildJinshuLightQuote(p: ShareThemePalette) {
+    Row() {
+      Text('“')
+        .fontSize(JINSHU_LIGHT_QUOTE_FONT_SIZE)
+        .fontWeight(FontWeight.Bold)
+        .lineHeight(JINSHU_LIGHT_QUOTE_FONT_SIZE)
+        .fontColor('#FFFFCFE0')
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.Start)
+    .padding({
+      top: JINSHU_LIGHT_QUOTE_EDGE,
+      left: JINSHU_LIGHT_QUOTE_EDGE
+    })
+    .margin({ bottom: JINSHU_LIGHT_BODY_TOP_GAP })
+    .backgroundColor(p.jinshuBackground ?? p.background)
+    .id(JINSHU_LIGHT_QUOTE_ID)
+  }
+
+  @Builder
+  private buildJinshuLightFooter(p: ShareThemePalette) {
+    Column() {
+      Divider()
+        .strokeWidth(1)
+        .color(p.divider)
+        .margin({ top: JINSHU_LIGHT_FOOTER_TOP_GAP, bottom: 16 })
+      Row({ space: SHARE_FOOTER_QR_GAP }) {
+        Column({ space: 10 }) {
+          this.buildSloganTexts(p)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .id(JINSHU_LIGHT_SLOGAN_ID)
+        Column() {
+          this.buildQrCode(p)
+        }
+        .id(JINSHU_LIGHT_QR_ID)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Bottom)
+      .id(JINSHU_LIGHT_FOOTER_ID)
+    }
+    .width('100%')
+    .padding({
+      left: JINSHU_LIGHT_FOOTER_EDGE,
+      right: JINSHU_LIGHT_FOOTER_EDGE,
+      bottom: JINSHU_LIGHT_FOOTER_EDGE
+    })
+    .backgroundColor(p.jinshuBackground ?? p.background)
+    .id(JINSHU_LIGHT_DIVIDER_ID)
+  }
+
+  @Builder
   private buildJinshuCard(p: ShareThemePalette) {
     Column({ space: 0 }) {
+      if (this.isJinshuLight() && !this.snapshotCompatMode) {
+        this.buildJinshuLightQuote(p)
+      }
       if (p.showJinshuDecor) {
         Text('+++')
           .fontSize(14)
@@ -357,11 +534,20 @@ export struct NoteShareExportCard {
           .width('100%')
           .margin({ bottom: 16 })
       }
-      this.buildJinshuBody(p)
-      this.buildClassicFooter(p, true)
+      if (this.isJinshuLight()) {
+        this.buildJinshuBodyLight(p)
+      } else {
+        this.buildJinshuBody(p)
+      }
+      if (this.isJinshuLight()) {
+        this.buildJinshuLightFooter(p)
+      } else {
+        this.buildClassicFooter(p, true)
+      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
+    .id(JINSHU_LIGHT_CARD_INNER_ID)
   }
 
   @Builder
@@ -384,9 +570,10 @@ export struct NoteShareExportCard {
     }
     .width('100%')
     .padding(p.contentPadding ?? DEFAULT_SHARE_CONTENT_PADDING)
-    .borderRadius(16)
+    .borderRadius(this.isJinshuLight() ? 0 : 16)
     .backgroundColor(p.jinshuBackground ?? p.background)
     .alignItems(HorizontalAlign.Start)
+    .id(JINSHU_LIGHT_SHELL_ID)
     .onAreaChange((_: Area, area: Area) => {
       const h = Number.parseFloat(`${area.height}`)
       if (h > 0) {

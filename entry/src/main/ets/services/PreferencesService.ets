@@ -35,6 +35,10 @@ const NOTE_QUICK_ACTION_BAR_ENABLED_KEY = 'note_quick_action_bar_enabled'
 const NOTE_FOLDER_MODE_ENABLED_KEY = 'note_folder_mode_enabled'
 /** 与 Flutter `prefBetaTestInviteDialogShownKey` 一致：内测邀请弹窗已展示过则不再弹出 */
 const BETA_TEST_INVITE_DIALOG_SHOWN_KEY = 'beta_test_invite_dialog_shown'
+/** 与 Flutter `AppConst.prefShareCardThemeKey` 一致 */
+const SHARE_CARD_THEME_KEY = 'share_card_theme'
+/** 与 Flutter `AppConst.prefShareCardToneKey` 一致 */
+const SHARE_CARD_TONE_KEY = 'share_card_tone'
 /** 登录成功后导航：`Login` 消费并清空（OAuth 返回后 router params 可能丢失） */
 const LOGIN_RETURN_TARGET_KEY = 'login_return_target'
 
@@ -769,6 +773,48 @@ export class PreferencesService {
         `setHomeSidebarFilterMode failed: ${this.describeError(error as Object)}`
       )
       throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  /** 分享卡片上次选择的主题（默认经典）。 */
+  async getShareCardTheme(): Promise<string> {
+    try {
+      const raw = `${this.ensureStore().getSync(SHARE_CARD_THEME_KEY, '') ?? ''}`.trim()
+      return raw.length > 0 ? raw : 'classic'
+    } catch (error) {
+      Logger.warn('PreferencesService', `getShareCardTheme failed: ${this.describeError(error as Object)}`)
+      return 'classic'
+    }
+  }
+
+  async setShareCardTheme(theme: string): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(SHARE_CARD_THEME_KEY, theme)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setShareCardTheme failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  /** 分享卡片上次选择的色调（默认深色）。 */
+  async getShareCardTone(): Promise<string> {
+    try {
+      const raw = `${this.ensureStore().getSync(SHARE_CARD_TONE_KEY, '') ?? ''}`.trim()
+      return raw.length > 0 ? raw : 'dark'
+    } catch (error) {
+      Logger.warn('PreferencesService', `getShareCardTone failed: ${this.describeError(error as Object)}`)
+      return 'dark'
+    }
+  }
+
+  async setShareCardTone(tone: string): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(SHARE_CARD_TONE_KEY, tone)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setShareCardTone failed: ${this.describeError(error as Object)}`)
     }
   }
 

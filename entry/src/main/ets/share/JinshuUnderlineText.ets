@@ -7,18 +7,28 @@ export struct JinshuUnderlineText {
   @Prop fontSize: number = 15
   @Prop lineHeight: number = 22
   @Prop fontColor: string = '#FFFFFFFF'
+  /** 浅色导出模板使用 SOLID，深色仍用 DOUBLE。 */
+  @Prop useSolidUnderline: boolean = false
+  /** 不使用 Span 下划线装饰，仅 accent 加粗高亮（快照安全）。 */
+  @Prop highlightOnly: boolean = false
 
   build() {
     Text() {
       ForEach(this.buildSpanItems(), (item: JinshuSpanItem) => {
         if (item.underline) {
-          Span(item.text)
-            .decoration({
-              type: TextDecorationType.Underline,
-              color: this.accent,
-              style: TextDecorationStyle.SOLID
-            })
-            .fontWeight(FontWeight.Medium)
+          if (this.highlightOnly) {
+            Span(item.text)
+              .fontColor(this.accent)
+              .fontWeight(FontWeight.Bold)
+          } else {
+            Span(item.text)
+              .decoration({
+                type: TextDecorationType.Underline,
+                color: this.accent,
+                style: this.useSolidUnderline ? TextDecorationStyle.SOLID : TextDecorationStyle.DOUBLE
+              })
+              .fontWeight(FontWeight.Bold)
+          }
         } else {
           Span(item.text)
         }

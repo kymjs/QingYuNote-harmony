@@ -33,6 +33,14 @@ export const JINSHU_SHARE_CONTENT_PADDING: ShareContentPadding = {
   bottom: 28
 }
 
+/** 锦书浅色：shell 不设统一 padding，各区块在 NoteShareExportCard 内单独控制边距。 */
+export const JINSHU_LIGHT_SHARE_CONTENT_PADDING: ShareContentPadding = {
+  left: 0,
+  right: 0,
+  top: 0,
+  bottom: 0
+}
+
 export interface ShareThemePalette {
   background: string
   backgroundGradient?: [string, string]
@@ -50,6 +58,24 @@ export interface ShareThemePalette {
 }
 
 export class ShareThemeColors {
+  static parseTheme(raw: string): ShareCardTheme {
+    switch (raw) {
+      case ShareCardTheme.QINGYU:
+        return ShareCardTheme.QINGYU
+      case ShareCardTheme.CALENDAR:
+        return ShareCardTheme.CALENDAR
+      case ShareCardTheme.JINSHU:
+        return ShareCardTheme.JINSHU
+      case ShareCardTheme.CLASSIC:
+      default:
+        return ShareCardTheme.CLASSIC
+    }
+  }
+
+  static parseTone(raw: string): ShareCardTone {
+    return raw === ShareCardTone.LIGHT ? ShareCardTone.LIGHT : ShareCardTone.DARK
+  }
+
   static label(theme: ShareCardTheme): string {
     switch (theme) {
       case ShareCardTheme.CLASSIC:
@@ -168,17 +194,17 @@ export class ShareThemeColors {
   }
 
   static readonly JINSHU_LIGHT: ShareThemePalette = {
-    background: '#FF7B7CFF',
-    jinshuBackground: '#FF7B7CFF',
-    textPrimary: '#FFFFFFFF',
-    textSecondary: '#FFFFFFFF',
-    divider: '#33FFFFFF',
-    codeBackground: '#FF6A6BEE',
-    accent: '#FFCCFF00',
+    background: '#FFFFF3F8',
+    jinshuBackground: '#FFFFF3F8',
+    textPrimary: '#FF34323D',
+    textSecondary: '#FF757183',
+    divider: '#3334323D',
+    codeBackground: '#FFF5E8F1',
+    accent: '#FF4FB6FF',
     showDoubleBorder: false,
     showGridBackground: false,
     showJinshuDecor: false,
-    contentPadding: JINSHU_SHARE_CONTENT_PADDING
+    contentPadding: JINSHU_LIGHT_SHARE_CONTENT_PADDING
   }
 
   static readonly MONTH_ENGLISH: string[] =
@@ -224,6 +250,15 @@ export class ShareThemeColors {
         const len = i - start
         if (len >= 2 && len <= 6) {
           candidates.push([start, i])
+        } else if (len > 6) {
+          const windowCount = Math.min(3, Math.max(1, Math.floor(len / 4)))
+          const maxSegLen = Math.min(5, len)
+          for (let w = 0; w < windowCount; w++) {
+            const segLen = Math.min(maxSegLen, len - w * 2)
+            if (segLen >= 2) {
+              candidates.push([start + w * 2, start + w * 2 + segLen])
+            }
+          }
         }
       } else {
         i++
@@ -235,6 +270,43 @@ export class ShareThemeColors {
     const shuffled = ShareThemeColors.seededShuffle(candidates, seed)
     const count = Math.min(maxCount, Math.max(minCount, shuffled.length))
     return shuffled.slice(0, count).sort((a, b) => a[0] - b[0])
+  }
+
+  /** 锦书浅色正文分块字符上限，避免单块 ComponentSnapshot 高度超限（约 8614px 失败）。 */
+  static readonly JINSHU_LIGHT_BODY_CHARS_PER_CHUNK: number = 150
+
+  static jinshuLightBodyChunkCount(textLen: number): number {
+    if (textLen <= 0) {
+      return 1
+    }
+    return Math.max(1, Math.ceil(textLen / ShareThemeColors.JINSHU_LIGHT_BODY_CHARS_PER_CHUNK))
+  }
+
+  static jinshuLightBodyChunkId(index: number): string {
+    return `jinshu_light_body_chunk_${index}`
+  }
+
+  /** 将锦书正文拆成多块，优先在换行处切分。 */
+  static splitJinshuLightBodyChunks(text: string): string[] {
+    const count = ShareThemeColors.jinshuLightBodyChunkCount(text.length)
+    if (count <= 1) {
+      return [text]
+    }
+    const chunks: string[] = []
+    const targetSize = Math.ceil(text.length / count)
+    let start = 0
+    while (start < text.length) {
+      let end = Math.min(start + targetSize, text.length)
+      if (end < text.length) {
+        const nl = text.lastIndexOf('\n', end)
+        if (nl > start) {
+          end = nl + 1
+        }
+      }
+      chunks.push(text.substring(start, end))
+      start = end
+    }
+    return chunks.filter((c: string) => c.length > 0)
   }
 
   private static isUnderlineChar(ch: string): boolean {
