@@ -3,12 +3,15 @@ import { CodeHighlight, type CodeHighlightToken, type CodeHighlightTokenKind } f
 import { KatexFormulaPreview } from '../components/KatexFormulaPreview'
 import { KatexUtils } from '../common/utils/KatexUtils'
 import { fileUri } from '@kit.CoreFileKit'
+import { FileService } from '../services/FileService'
 
 /** 笔记预览/分享卡片共用的 Markdown 块渲染，独立于编辑页以缩小状态失效范围。 */
 @Component
 export struct NoteEditMarkdownBlocksView {
   @Prop blocks: MarkdownBlock[] = []
   @Prop filesDirCache: string = ''
+  /** 远端图片落盘后由编辑页递增，用于强制 Image 块重建。 */
+  @Prop imageRefreshKey: number = 0
   /** 分享长图导出：深色底 + 金色文字，与 NoteEdit 分享卡片一致。 */
   @Prop forShareExport: boolean = false
   /** 分享导出时覆盖文字色（#AARRGGBB），为空则用默认 share 资源色。 */
@@ -23,6 +26,8 @@ export struct NoteEditMarkdownBlocksView {
   onCheckboxToggle: (lineIndex: number, checked: boolean) => void =
     (_lineIndex: number, _checked: boolean) => {
     }
+  onImageTap: (src: string) => void = (_src: string) => {
+  }
 
   private primaryTextColor(): ResourceColor {
     if (this.forShareExport && this.shareTextOverride.length > 0) {
@@ -160,19 +165,33 @@ export struct NoteEditMarkdownBlocksView {
     return this.forShareExport ? Math.round(base * 0.85) : base
   }
 
+  private resolveLocalImageAbsPath(src: string): string {
+    if (src.startsWith('file://')) {
+      return src.replace('file://', '')
+    }
+    if (src.startsWith('/')) {
+      return src
+    }
+    const base = this.filesDirCache
+    return `${base}/${src}`
+  }
+
   private resolveImageSrc(src: string): string {
     if (src.startsWith('http://') || src.startsWith('https://')) {
       return src
     }
-    if (src.startsWith('file://')) {
-      return src
+    return fileUri.getUriFromPath(this.resolveLocalImageAbsPath(src))
+  }
+
+  private isLocalNoteImageSrc(src: string): boolean {
+    return src.includes('qingyu-note-image')
+  }
+
+  private localNoteImageExists(src: string): boolean {
+    if (src.startsWith('http://') || src.startsWith('https://')) {
+      return true
     }
-    if (src.startsWith('/')) {
-      return fileUri.getUriFromPath(src)
-    }
-    const base = this.filesDirCache
-    const absPath = `${base}/${src}`
-    return fileUri.getUriFromPath(absPath)
+    return FileService.fileExists(this.resolveLocalImageAbsPath(src))
   }
 
   private inlineKey(inline: MarkdownInline, index: number): string {
@@ -187,6 +206,9 @@ export struct NoteEditMarkdownBlocksView {
   }
 
   private previewBlockKey(block: MarkdownBlock, index: number): string {
+    if (block.type === 'image') {
+      return `image:${block.language}:${this.imageRefreshKey}:${index}`
+    }
     let body = ''
     if (block.type === 'math_display') {
       body = `${block.type}:${block.content.slice(0, 48)}:${index}`
@@ -510,11 +532,34 @@ export struct NoteEditMarkdownBlocksView {
         .strokeWidth(1)
         .color(this.dividerColor())
     } else if (block.type === 'image') {
-      Image(this.resolveImageSrc(block.language))
+      if (this.isLocalNoteImageSrc(block.language) && !this.localNoteImageExists(block.language)) {
+        Column({ space: 10 }) {
+          LoadingProgress()
+            .width(28)
+            .height(28)
+            .color(this.accentTextColor())
+          Text(block.content.length > 0 ? block.content : '图片同步中…')
+            .fontSize($r('app.float.caption_font_size'))
+            .fontColor(this.secondaryTextColor())
+        }
         .width('100%')
-        .objectFit(ImageFit.Cover)
+        .padding({ top: 28, bottom: 28 })
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor(this.codeBackgroundColor())
         .borderRadius(12)
-        .alt(block.content)
+      } else {
+        Image(this.resolveImageSrc(block.language))
+          .width('100%')
+          .objectFit(ImageFit.Cover)
+          .borderRadius(12)
+          .alt(block.content)
+          .onClick(() => {
+            if (!this.forShareExport) {
+              this.onImageTap(block.language)
+            }
+          })
+      }
     } else if (block.type === 'math_display' && !this.hasAnyMath()) {
       KatexFormulaPreview({
         source: KatexUtils.wrapDisplaySource(block.content),

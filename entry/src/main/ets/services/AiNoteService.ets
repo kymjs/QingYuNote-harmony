@@ -1,18 +1,50 @@
 import { http } from '@kit.NetworkKit'
+import { AiNoteImageLoader, AiNoteImagePayload } from './AiNoteImageLoader'
 import { AiNotePrompt } from './AiNotePrompt'
 import { AiTagService } from './AiTagService'
-import { NoteApiClient } from './NoteApiClient'
+import { NoteApiClient, AiTagConfigBody } from './NoteApiClient'
 import { MarkdownUtils } from '../common/utils/MarkdownUtils'
+import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 
 export interface AiLinkSummaryResult {
   title: string
   body: string
 }
 
-interface ChatMessage {
+interface MiniMaxAssistantPayload {
+  content: string
+  reasoningContent: string
+  finishReason: string
+}
+
+interface ChatTextMessage {
   role: string
   content: string
 }
+
+interface ChatTextContentPart {
+  type: string
+  text: string
+}
+
+interface ChatImageUrlDetail {
+  url: string
+  detail: string
+}
+
+interface ChatImageContentPart {
+  type: string
+  image_url: ChatImageUrlDetail
+}
+
+type ChatUserContentPart = ChatTextContentPart | ChatImageContentPart
+
+interface ChatMultimodalUserMessage {
+  role: string
+  content: ChatUserContentPart[]
+}
+
+type ChatMessage = ChatTextMessage | ChatMultimodalUserMessage
 
 interface ChatCompletionRequest {
   model: string
@@ -22,12 +54,6 @@ interface ChatCompletionRequest {
   messages: ChatMessage[]
 }
 
-interface MiniMaxAssistantPayload {
-  content: string
-  reasoningContent: string
-  finishReason: string
-}
-
 export class AiNoteService {
   private static instance: AiNoteService = new AiNoteService()
 
@@ -35,17 +61,34 @@ export class AiNoteService {
     return AiNoteService.instance
   }
 
-  async optimizeContent(content: string): Promise<string> {
+  async optimizeContent(content: string, filesBasePath: string = ''): Promise<string> {
     const trimmed = content.trim()
-    if (trimmed.length === 0) {
+    const hasImageRefs = NoteStateCodec.extractImageRefs(content).length > 0
+    const noteHasText = NoteStateCodec.hasSubstantiveNoteText(content)
+    if (!noteHasText && !hasImageRefs) {
       throw new Error('笔记正文为空，无法优化')
     }
-    return AiNoteService.chatPlainText(
-      AiNotePrompt.OPTIMIZE_SYSTEM,
-      AiNotePrompt.buildOptimizeUserMessage(trimmed),
-      0.3,
+    const images = AiNoteImageLoader.loadFromNote(content, filesBasePath)
+    if (images.length === 0) {
+      if (!noteHasText) {
+        throw new Error('笔记图片未找到或无法读取，无法优化')
+      }
+      return AiNoteService.chatPlainText(
+        AiNotePrompt.OPTIMIZE_SYSTEM,
+        AiNotePrompt.buildOptimizeUserMessage(trimmed),
+        0.3,
+        8192,
+        true
+      )
+    }
+    const optimized = await AiNoteService.chatWithImages(
+      AiNotePrompt.OPTIMIZE_WITH_IMAGES_SYSTEM,
+      AiNotePrompt.buildOptimizeWithImagesUserMessage(content, images.length, noteHasText),
+      images,
+      0.35,
       8192
     )
+    return NoteStateCodec.mergeOptimizedWithTrailingImages(content, optimized)
   }
 
   async summarizeLink(url: string): Promise<AiLinkSummaryResult> {
@@ -58,7 +101,8 @@ export class AiNoteService {
       AiNotePrompt.LINK_SUMMARY_SYSTEM,
       AiNotePrompt.buildLinkSummaryUserMessage(link, excerpt),
       0.4,
-      1024
+      1024,
+      true
     )
     const parts = MarkdownUtils.splitLinkSummary(raw)
     return {
@@ -71,23 +115,80 @@ export class AiNoteService {
     system: string,
     user: string,
     temperature: number,
+    maxTokens: number,
+    reasoningSplit: boolean
+  ): Promise<string> {
+    const config = await AiNoteService.requireConfig()
+    const messages: ChatTextMessage[] = [
+      { role: 'system', content: system },
+      { role: 'user', content: user }
+    ]
+    return AiNoteService.postChatCompletion(
+      config,
+      config.model,
+      messages,
+      temperature,
+      maxTokens,
+      reasoningSplit
+    )
+  }
+
+  private static async chatWithImages(
+    system: string,
+    userText: string,
+    images: AiNoteImagePayload[],
+    temperature: number,
     maxTokens: number
   ): Promise<string> {
+    const config = await AiNoteService.requireConfig()
+    const userContent: ChatUserContentPart[] = [{ type: 'text', text: userText }]
+    for (let i = 0; i < images.length; i++) {
+      const imagePart: ChatImageContentPart = {
+        type: 'image_url',
+        image_url: {
+          url: images[i].dataUrl,
+          detail: 'default'
+        }
+      }
+      userContent.push(imagePart)
+    }
+    const messages: ChatMessage[] = [
+      { role: 'system', content: system },
+      { role: 'user', content: userContent }
+    ]
+    return AiNoteService.postChatCompletion(
+      config,
+      config.model,
+      messages,
+      temperature,
+      maxTokens,
+      false
+    )
+  }
+
+  private static async requireConfig(): Promise<AiTagConfigBody> {
     const config = await NoteApiClient.getInstance().fetchAiTagConfig()
     if (config === null) {
       throw new Error('未登录或服务不可用')
     }
+    return config
+  }
+
+  private static async postChatCompletion(
+    config: AiTagConfigBody,
+    model: string,
+    messages: ChatMessage[],
+    temperature: number,
+    maxTokens: number,
+    reasoningSplit: boolean
+  ): Promise<string> {
     const base = config.base_url.replace(/\/+$/, '')
     const url = `${base}/chat/completions`
-    const messages: ChatMessage[] = [
-      { role: 'system', content: system },
-      { role: 'user', content: user }
-    ]
     const body: ChatCompletionRequest = {
-      model: config.model,
+      model: model,
       temperature: temperature,
       max_tokens: maxTokens,
-      reasoning_split: true,
+      reasoning_split: reasoningSplit,
       messages: messages
     }
     const req = http.createHttp()
@@ -101,7 +202,7 @@ export class AiNoteService {
         extraData: JSON.stringify(body),
         expectDataType: http.HttpDataType.STRING,
         connectTimeout: 20000,
-        readTimeout: 90000
+        readTimeout: 120000
       })
       if (resp.responseCode < 200 || resp.responseCode >= 300) {
         throw new Error('AI 服务暂时不可用，请稍后重试')

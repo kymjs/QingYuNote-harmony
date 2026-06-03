@@ -19,6 +19,8 @@ import type { Note } from '../common/model/Note'
 import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
+import { NoteImagesChangedEventPayload, SyncConstants } from '../common/constants/SyncConstants'
+import { FileService } from '../services/FileService'
 import { TimeUtils } from '../common/utils/TimeUtils'
 import { Logger } from '../common/utils/Logger'
 import componentSnapshot from '@ohos.arkui.componentSnapshot'
@@ -37,6 +39,8 @@ import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
+import { NoteImageGalleryUtils } from '../common/utils/NoteImageGalleryUtils'
+import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { NoteFolderTree, type FolderSidebarRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 import { type NoteEditorEntryAction } from '../common/model/NoteEditorEntryAction'
 import { ShareCardTheme, ShareCardTone, ShareThemeColors } from '../share/ShareTheme'
@@ -156,6 +160,18 @@ struct NoteEdit {
   private saveTimer: number = -1
   private previewTimer: number = -1
   private previewDirty: boolean = true
+  /** 远端图片落盘后递增，强制预览区 Image 重建（正文未变时 blocks 解析会短路）。 */
+  @State previewImageRefreshKey: number = 0
+  private onNoteImagesChanged = (payload: NoteImagesChangedEventPayload): void => {
+    if (!this.lifecycle.isActive() || payload.noteId !== this.noteId) {
+      return
+    }
+    this.previewImageRefreshKey += 1
+    this.previewDirty = true
+    if (this.shouldRenderPreview()) {
+      this.schedulePreviewRefresh()
+    }
+  }
   private preferPreviewOnOpen: boolean = false
   private pendingInitialAction: NoteEditorEntryAction | null = null
   private initialActionHandled: boolean = false
@@ -181,10 +197,25 @@ struct NoteEdit {
     return AppContextHolder.tryGetContext()
   }
 
+  /** 打开图片画廊前保存的预览模式，返回编辑页后恢复（避免 onPageShow 误切回编辑）。 */
+  private pendingRestorePreviewMode: string = ''
+
   onPageShow(): void {
     void this.loadQuickActionBarPref()
     void this.loadFolderModePref()
-    void this.applyRouterParamsIfNeeded()
+    void this.onNoteEditPageShow()
+  }
+
+  private async onNoteEditPageShow(): Promise<void> {
+    const savedMode = this.pendingRestorePreviewMode
+    this.pendingRestorePreviewMode = ''
+    await this.applyRouterParamsIfNeeded()
+    if (savedMode.length > 0 && !this.isSplitMode()) {
+      this.previewMode = savedMode
+      if (savedMode === 'preview') {
+        this.preparePreviewForCurrentMode(this.content, true)
+      }
+    }
   }
 
   aboutToAppear(): void {
@@ -205,11 +236,20 @@ struct NoteEdit {
     void this.loadFolderModePref()
     void this.loadAiFeatureConfig()
     void this.initKeyboardAvoidArea()
+    try {
+      AppContextHolder.getContext().eventHub.on(SyncConstants.noteImagesChangedEvent, this.onNoteImagesChanged)
+    } catch (error) {
+      Logger.warn('NoteEdit', `eventHub.on note_images_changed failed: ${JSON.stringify(error)}`)
+    }
   }
 
   private async applyRouterParamsIfNeeded(): Promise<void> {
     const params = this.getUIContext().getRouter().getParams() as NoteEditParams
-    const nextNoteId = params?.noteId ?? ''
+    const nextNoteId = `${params?.noteId ?? ''}`.trim()
+    // 从子页面 router.back() 返回时 getParams 可能为空，勿因此重载笔记并丢掉预览模式。
+    if (nextNoteId.length === 0 && this.noteId.length > 0) {
+      return
+    }
     const nextPreview = params?.openWithPreview === true
     const nextAction = params?.initialAction ?? null
     if (nextNoteId === this.noteId &&
@@ -248,6 +288,11 @@ struct NoteEdit {
       this.previewTimer = -1
     }
     this.stopPathCaptionMarquee()
+    try {
+      AppContextHolder.getContext().eventHub.off(SyncConstants.noteImagesChangedEvent, this.onNoteImagesChanged)
+    } catch (_) {
+      // ignore
+    }
   }
 
   private async loadQuickActionBarPref(): Promise<void> {
@@ -1408,6 +1453,30 @@ struct NoteEdit {
     return url.length <= 40 ? url : `${url.slice(0, 40)}…`
   }
 
+  private openNoteImageGallery(tappedSrc: string): void {
+    const sources = NoteImageGalleryUtils.collectImageSources(this.previewBlocksState)
+    if (sources.length === 0) {
+      return
+    }
+    this.pendingRestorePreviewMode = this.previewMode
+    const trimmed = tappedSrc.trim()
+    const initialIndex = trimmed.length > 0 ? sources.indexOf(trimmed) : 0
+    try {
+      this.getUIContext().getRouter().pushUrl({
+        url: 'pages/NoteImageGallery',
+        params: {
+          imagesJson: JSON.stringify(sources),
+          initialIndex: initialIndex >= 0 ? initialIndex : 0,
+          filesDir: this.filesDirCache
+        }
+      }).catch((err: Error) => {
+        Logger.warn('NoteEdit', `openNoteImageGallery: ${JSON.stringify(err)}`)
+      })
+    } catch (error) {
+      Logger.warn('NoteEdit', `openNoteImageGallery: ${JSON.stringify(error)}`)
+    }
+  }
+
   private openPreviewLink(href: string): void {
     const url = href.trim()
     if (url.length === 0) {
@@ -1651,17 +1720,22 @@ struct NoteEdit {
     await NoteEdit.delayMs(mountDelayMs)
   }
 
-  /** 分享导出内容是否含网络头像或 Markdown 图片（ComponentSnapshot checkImage 需更久渲染）。 */
-  private shareExportContentHasImages(): boolean {
-    if (this.shareAvatarUrlTrim().length > 0) {
-      return true
-    }
+  /** 分享正文是否含 Markdown 图片块。 */
+  private shareExportBodyHasImages(): boolean {
     for (const block of this.previewBlocksState) {
       if (block.type === 'image') {
         return true
       }
     }
     return false
+  }
+
+  /** 分享导出内容是否含网络头像或 Markdown 图片（ComponentSnapshot checkImage 需更久渲染）。 */
+  private shareExportContentHasImages(): boolean {
+    if (this.shareAvatarUrlTrim().length > 0) {
+      return true
+    }
+    return this.shareExportBodyHasImages()
   }
 
   /** 长内容优先截 Scroll 视口，避免整卡高度超过 ComponentSnapshot 底层限制（约 8614px）。 */
@@ -2141,6 +2215,7 @@ struct NoteEdit {
 
     const jinshuLongBody =
       this.isJinshuLightExport() &&
+      !this.shareExportBodyHasImages() &&
       this.jinshuLightExportTextLen() > ShareThemeColors.JINSHU_LIGHT_BODY_CHARS_PER_CHUNK
     if (jinshuLongBody) {
       return await this.captureJinshuLightSegmented()
@@ -2761,23 +2836,28 @@ struct NoteEdit {
       return
     }
     const trimmed = this.content.trim()
-    if (trimmed.length === 0) {
+    const hasImageRefs = NoteStateCodec.extractImageRefs(this.content).length > 0
+    const noteHasText = NoteStateCodec.hasSubstantiveNoteText(this.content)
+    if (!noteHasText && !hasImageRefs) {
       this.showPreviewMessage('笔记正文为空，无法优化')
       return
     }
-    if (Array.from(trimmed).length < AiNotePrompt.OPTIMIZE_MIN_RUNES) {
+    if (noteHasText && !hasImageRefs && Array.from(trimmed).length < AiNotePrompt.OPTIMIZE_MIN_RUNES) {
       this.showPreviewMessage('内容过少，无需AI优化')
       return
     }
     this.aiNoteWorking = true
     this.aiMenuVisible = false
     const before = this.content
+    const filesDir = this.filesDirCache.length > 0
+      ? this.filesDirCache
+      : (this.obtainUiAbilityContext()?.filesDir ?? '')
     try {
-      const optimized = await AiNoteService.getInstance().optimizeContent(this.content)
+      const optimized = await AiNoteService.getInstance().optimizeContent(this.content, filesDir)
       this.captureAiUndoBaseline(before)
       this.content = optimized
       this.handleContentChange()
-      this.showPreviewMessage('AI 已优化笔记正文')
+      this.showPreviewMessage(noteHasText ? 'AI 已优化笔记正文' : 'AI 已根据图片生成笔记')
     } catch (e) {
       const msg = UserFacingMessage.forAi(
         e instanceof Error ? e.message : undefined,
@@ -3016,32 +3096,42 @@ struct NoteEdit {
     Stack() {
       Row({ space: 4 }) {
         Row() {
-          Row({ space: 4 }) {
-            Text('#')
-              .fontSize(14)
-              .fontColor($r('app.color.secondary_text'))
-              .fontWeight(FontWeight.Medium)
-            if (this.noteTagsSafe().length === 0) {
-              Text('标签')
-                .fontSize(12)
+          if (this.aiTagCreating) {
+            LoadingProgress()
+              .width(22)
+              .height(22)
+              .color($r('app.color.accent'))
+          } else {
+            Row({ space: 4 }) {
+              Text('#')
+                .fontSize(14)
                 .fontColor($r('app.color.secondary_text'))
-            } else {
-              this.buildTagChip(this.noteTagsSafe()[0])
-              if (this.noteTagsSafe().length > 1) {
-                Text('...')
+                .fontWeight(FontWeight.Medium)
+              if (this.noteTagsSafe().length === 0) {
+                Text('标签')
                   .fontSize(12)
                   .fontColor($r('app.color.secondary_text'))
+              } else {
+                this.buildTagChip(this.noteTagsSafe()[0])
+                if (this.noteTagsSafe().length > 1) {
+                  Text('...')
+                    .fontSize(12)
+                    .fontColor($r('app.color.secondary_text'))
+                }
               }
             }
+            SymbolGlyph($r('sys.symbol.chevron_down'))
+              .fontSize(14)
+              .fontColor([$r('app.color.secondary_text')])
           }
-          SymbolGlyph($r('sys.symbol.chevron_down'))
-            .fontSize(14)
-            .fontColor([$r('app.color.secondary_text')])
         }
         .padding({ left: 10, right: 10, top: 6, bottom: 6 })
         .backgroundColor($r('app.color.surface_muted'))
         .borderRadius(18)
         .onClick(() => {
+          if (this.aiTagCreating) {
+            return
+          }
           void this.refreshTagPool()
           this.tagMenuVisible = !this.tagMenuVisible
           if (this.tagMenuVisible) {
@@ -3332,6 +3422,7 @@ struct NoteEdit {
               showSplitTagRow: hasEditorTitleOrBody(this.title, this.content),
               previewBlocks: this.previewBlocksState,
               filesDirCache: this.filesDirCache,
+              imageRefreshKey: this.previewImageRefreshKey,
               onBackgroundTap: (): void => {
                 if (this.tagMenuVisible) {
                   this.tagMenuVisible = false
@@ -3342,6 +3433,9 @@ struct NoteEdit {
               },
               onCheckboxToggle: (lineIndex: number, checked: boolean): void => {
                 this.onPreviewCheckboxToggle(lineIndex, checked)
+              },
+              onImageTap: (src: string): void => {
+                this.openNoteImageGallery(src)
               },
               tagBarSlot: (): void => {
                 this.noteEditPreviewTagBarSlot()
@@ -3362,6 +3456,7 @@ struct NoteEdit {
               showSplitTagRow: hasEditorTitleOrBody(this.title, this.content) && !this.mobileFullPreviewChrome(),
               previewBlocks: this.previewBlocksState,
               filesDirCache: this.filesDirCache,
+              imageRefreshKey: this.previewImageRefreshKey,
               onBackgroundTap: (): void => {
                 if (this.tagMenuVisible) {
                   this.tagMenuVisible = false
@@ -3372,6 +3467,9 @@ struct NoteEdit {
               },
               onCheckboxToggle: (lineIndex: number, checked: boolean): void => {
                 this.onPreviewCheckboxToggle(lineIndex, checked)
+              },
+              onImageTap: (src: string): void => {
+                this.openNoteImageGallery(src)
               },
               tagBarSlot: (): void => {
                 this.noteEditPreviewTagBarSlot()

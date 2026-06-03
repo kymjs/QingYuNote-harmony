@@ -1,7 +1,9 @@
 import type { MarkdownBlock } from '../common/utils/MarkdownUtils'
 import type { ProfileBody } from '../services/NoteApiClient'
+import { fileUri } from '@kit.CoreFileKit'
 import { Logger } from '../common/utils/Logger'
 import { NoteEditMarkdownBlocksView } from '../pages/NoteEditMarkdownBlocksView'
+import { FileService } from '../services/FileService'
 import {
   DEFAULT_SHARE_CONTENT_PADDING,
   ShareCardTheme,
@@ -145,6 +147,78 @@ export struct NoteShareExportCard {
   private jinshuDisplayText(): string {
     const plain = ShareThemeColors.stripMarkdown(this.content)
     return plain.length > 0 ? plain : '开始写作后，这里会实时显示预览。'
+  }
+
+  private hasBodyImages(): boolean {
+    for (const block of this.previewBlocks) {
+      if (block.type === 'image') {
+        return true
+      }
+    }
+    return false
+  }
+
+  private jinshuBlockPlainText(block: MarkdownBlock): string {
+    if (block.type === 'unordered_list' || block.type === 'ordered_list') {
+      const lines: string[] = []
+      for (const item of block.items) {
+        let line = ''
+        for (const inline of item) {
+          line += inline.content
+        }
+        const trimmed = line.trim()
+        if (trimmed.length > 0) {
+          lines.push(trimmed)
+        }
+      }
+      return ShareThemeColors.stripMarkdown(lines.join('\n'))
+    }
+    if (block.type === 'checkbox_list') {
+      const lines: string[] = []
+      for (const item of block.checkboxItems ?? []) {
+        let line = ''
+        for (const inline of item.inlines) {
+          line += inline.content
+        }
+        const trimmed = line.trim()
+        if (trimmed.length > 0) {
+          lines.push(trimmed)
+        }
+      }
+      return ShareThemeColors.stripMarkdown(lines.join('\n'))
+    }
+    if (block.type === 'divider' || block.type === 'image') {
+      return ''
+    }
+    return ShareThemeColors.stripMarkdown(block.content)
+  }
+
+  private resolveLocalImageAbsPath(src: string): string {
+    if (src.startsWith('file://')) {
+      return src.replace('file://', '')
+    }
+    if (src.startsWith('/')) {
+      return src
+    }
+    return `${this.filesDirCache}/${src}`
+  }
+
+  private resolveImageSrc(src: string): string {
+    if (src.startsWith('http://') || src.startsWith('https://')) {
+      return src
+    }
+    return fileUri.getUriFromPath(this.resolveLocalImageAbsPath(src))
+  }
+
+  private isLocalNoteImageSrc(src: string): boolean {
+    return src.includes('qingyu-note-image')
+  }
+
+  private localNoteImageExists(src: string): boolean {
+    if (src.startsWith('http://') || src.startsWith('https://')) {
+      return true
+    }
+    return FileService.fileExists(this.resolveLocalImageAbsPath(src))
   }
 
   @Builder
@@ -296,8 +370,56 @@ export struct NoteShareExportCard {
   }
 
   @Builder
+  private buildJinshuShareImage(block: MarkdownBlock) {
+    if (this.isLocalNoteImageSrc(block.language) && !this.localNoteImageExists(block.language)) {
+      Column({ space: 10 }) {
+        LoadingProgress()
+          .width(28)
+          .height(28)
+          .color(this.palette().accent ?? '#FF39FF14')
+        Text(block.content.length > 0 ? block.content : '图片同步中…')
+          .fontSize(12)
+          .fontColor(this.palette().textSecondary)
+      }
+      .width('100%')
+      .padding({ top: 28, bottom: 28 })
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor(this.palette().codeBackground)
+      .borderRadius(12)
+    } else {
+      Image(this.resolveImageSrc(block.language))
+        .width('100%')
+        .objectFit(ImageFit.Cover)
+        .borderRadius(12)
+        .alt(block.content)
+    }
+  }
+
+  @Builder
+  private buildJinshuMixedBody(p: ShareThemePalette) {
+    Column({ space: 14 }) {
+      ForEach(this.previewBlocks, (block: MarkdownBlock, index: number) => {
+        if (block.type === 'image') {
+          this.buildJinshuShareImage(block)
+        } else if (block.type !== 'divider') {
+          if (this.jinshuBlockPlainText(block).length > 0) {
+            this.buildJinshuBodyContent(p, this.jinshuBlockPlainText(block))
+          }
+        }
+      }, (block: MarkdownBlock, index: number) =>
+        `${this.styleKey}_jinshu_mixed_${block.type}_${index}_${block.content.length}`)
+    }
+    .width('100%')
+  }
+
+  @Builder
   private buildJinshuBody(p: ShareThemePalette) {
-    this.buildJinshuBodyContent(p, this.jinshuDisplayText())
+    if (this.hasBodyImages()) {
+      this.buildJinshuMixedBody(p)
+    } else {
+      this.buildJinshuBodyContent(p, this.jinshuDisplayText())
+    }
   }
 
   @Builder
@@ -316,7 +438,18 @@ export struct NoteShareExportCard {
 
   @Builder
   private buildJinshuBodyLight(p: ShareThemePalette) {
-    if (this.isJinshuLight() && this.jinshuBodyChunks.length > 1) {
+    if (this.hasBodyImages()) {
+      Column() {
+        this.buildJinshuMixedBody(p)
+      }
+      .width('100%')
+      .padding({
+        left: JINSHU_LIGHT_BODY_H_PADDING,
+        right: JINSHU_LIGHT_BODY_H_PADDING
+      })
+      .backgroundColor(p.jinshuBackground ?? p.background)
+      .id(JINSHU_LIGHT_BODY_ID)
+    } else if (this.isJinshuLight() && this.jinshuBodyChunks.length > 1) {
       Column({ space: 0 }) {
         ForEach(this.jinshuBodyChunks, (chunkText: string, chunkIndex: number) => {
           this.buildJinshuBodyChunkWrap(p, chunkText, chunkIndex)

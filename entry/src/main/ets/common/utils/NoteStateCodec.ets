@@ -342,6 +342,45 @@ export class NoteStateCodec {
     return value.toFixed(fractionDigits)
   }
 
+  /** 除去 Markdown 图片与 NOTE_STATE 后是否仍有实质正文。 */
+  static hasSubstantiveNoteText(content: string): boolean {
+    let text = NoteStateCodec.stripStateBlock(content.replace(/\r/g, ''))
+    text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    return text.trim().length > 0
+  }
+
+  /** 按文档顺序提取 Markdown 图片语法片段（`![alt](url)`）。 */
+  static extractImageMarkdownSegments(content: string): string[] {
+    const visible = NoteStateCodec.stripStateBlock(content.replace(/\r/g, ''))
+    const segments: string[] = []
+    const regex = /!\[[^\]]*\]\([^)]+\)/g
+    let match: RegExpExecArray | null = regex.exec(visible)
+    while (match) {
+      segments.push(match[0])
+      match = regex.exec(visible)
+    }
+    return segments
+  }
+
+  /** AI 优化/生成正文后，将原笔记中的图片 Markdown 保留在末尾。 */
+  static mergeOptimizedWithTrailingImages(originalContent: string, optimizedContent: string): string {
+    const segments = NoteStateCodec.extractImageMarkdownSegments(originalContent)
+    if (segments.length === 0) {
+      return optimizedContent.trim()
+    }
+    let body = optimizedContent.trim()
+    for (let i = 0; i < segments.length; i++) {
+      body = body.split(segments[i]).join('')
+    }
+    body = body.replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim()
+    body = body.replace(/\n{3,}/g, '\n\n')
+    const imageBlock = segments.join('\n\n')
+    if (body.length === 0) {
+      return imageBlock
+    }
+    return `${body}\n\n${imageBlock}`
+  }
+
   static extractImageRefs(content: string): string[] {
     const refs = new Set<string>()
     let match: RegExpExecArray | null = IMAGE_REF_REGEX.exec(content)

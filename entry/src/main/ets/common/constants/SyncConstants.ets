@@ -24,4 +24,15 @@ export class SyncConstants {
   static readonly maxFullSyncPassesPerUserAction: number = 64
   /** 未配置 WebDAV 且未开通轻羽云会员时，同类提示的最小间隔（毫秒）。 */
   static readonly cloudSyncNotConfiguredNotifyIntervalMs: number = 5 * 60 * 1000
+  /** 笔记内图片下载落盘后通知编辑页刷新预览（与 Flutter `noteImagesChanged` 对齐）。 */
+  static readonly noteImagesChangedEvent: string = 'note_images_changed'
+}
+
+/** EventHub 载荷：已更新的笔记 id。 */
+export class NoteImagesChangedEventPayload {
+  noteId: string
+
+  constructor(noteId: string) {
+    this.noteId = noteId
+  }
 }

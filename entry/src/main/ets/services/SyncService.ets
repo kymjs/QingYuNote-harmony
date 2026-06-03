@@ -10,7 +10,7 @@ import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { Logger } from '../common/utils/Logger'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { AppContextHolder } from './AppContextHolder'
-import { SyncConstants } from '../common/constants/SyncConstants'
+import { NoteImagesChangedEventPayload, SyncConstants } from '../common/constants/SyncConstants'
 import { NoteSettingsRemoteSync } from './NoteSettingsRemoteSync'
 
 const TOMBSTONE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
@@ -1113,15 +1113,29 @@ export class SyncService {
     if (workItems.length === 0) {
       return
     }
+    let downloadedAny = false
     await this.runPoolLimited(workItems, IMAGE_WEBDAV_CONCURRENCY, async (item: ImageRefWorkItem) => {
       try {
         const bytes = await WebDAVClient.getInstance().downloadImage(item.fileName)
         FileService.writeFile(item.localPath, bytes)
+        downloadedAny = true
+        this.emitNoteImagesChanged(noteId)
       } catch (error) {
         Logger.warn('SyncService',
           `downloadImagesForNote failed for ${item.ref}: ${this.describeError(error as Object)}`)
       }
     })
+    if (downloadedAny) {
+      this.emitNoteImagesChanged(noteId)
+    }
+  }
+
+  private emitNoteImagesChanged(noteId: string): void {
+    if (noteId.length === 0) {
+      return
+    }
+    const hub = AppContextHolder.tryGetContext()?.eventHub
+    hub?.emit(SyncConstants.noteImagesChangedEvent, new NoteImagesChangedEventPayload(noteId))
   }
 
   private async deleteImagesForNote(content: string): Promise<void> {

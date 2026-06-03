@@ -14,6 +14,7 @@ export struct NoteEditPreviewPane {
   @Prop showSplitTagRow: boolean = false
   @Prop previewBlocks: MarkdownBlock[] = []
   @Prop filesDirCache: string = ''
+  @Prop imageRefreshKey: number = 0
   onBackgroundTap: () => void = () => {
   }
   onLinkToast: (href: string) => void = (_href: string) => {
@@ -21,6 +22,8 @@ export struct NoteEditPreviewPane {
   onCheckboxToggle: (lineIndex: number, checked: boolean) => void =
     (_lineIndex: number, _checked: boolean) => {
     }
+  onImageTap: (src: string) => void = (_src: string) => {
+  }
   @BuilderParam tagBarSlot: () => void = noteEditPreviewDefaultTagBar
 
   build() {
@@ -46,8 +49,10 @@ export struct NoteEditPreviewPane {
         NoteEditMarkdownBlocksView({
           blocks: this.previewBlocks,
           filesDirCache: this.filesDirCache,
+          imageRefreshKey: this.imageRefreshKey,
           onLinkToast: this.onLinkToast,
-          onCheckboxToggle: this.onCheckboxToggle
+          onCheckboxToggle: this.onCheckboxToggle,
+          onImageTap: this.onImageTap
         })
       }
       .width('100%')

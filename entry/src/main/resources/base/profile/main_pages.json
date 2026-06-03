@@ -13,6 +13,7 @@
     "pages/About",
     "pages/Feedback",
     "pages/H5WebContainer",
+    "pages/NoteImageGallery",
     "pages/Profile",
     "pages/AvatarCrop",
     "pages/TagManage",
