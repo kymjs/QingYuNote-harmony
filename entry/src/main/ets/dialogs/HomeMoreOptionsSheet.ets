@@ -100,7 +100,7 @@ export struct HomeMoreOptionsSheet {
           .margin({ left: 68 })
         this.buildOptionRow(
           $r('sys.symbol.picture'),
-          '拍照/图片',
+          '图片生成笔记',
           '白板记录/课堂笔记/日常打卡，秒变笔记',
           (): void => {
             this.params.onClose()

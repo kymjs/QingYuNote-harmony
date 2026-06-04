@@ -69,9 +69,9 @@ export struct NoteSharePreviewSheet {
     Text(label)
       .fontSize(14)
       .fontWeight(FontWeight.Medium)
-      .fontColor(selected ? Color.White : '#FF333333')
+      .fontColor(selected ? $r('app.color.on_accent') : $r('app.color.primary_text'))
       .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-      .backgroundColor(selected ? '#FF0DAA4A' : '#FFF0F0F0')
+      .backgroundColor(selected ? $r('app.color.accent') : $r('app.color.surface_muted'))
       .borderRadius(20)
       .onClick(onTap)
   }
@@ -82,17 +82,17 @@ export struct NoteSharePreviewSheet {
       Row() {
         SymbolGlyph(icon)
           .fontSize(22)
-          .fontColor(['#FF333333'])
+          .fontColor([$r('app.color.secondary_text')])
       }
       .width(48)
       .height(48)
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
-      .backgroundColor('#FFF0F0F0')
+      .backgroundColor($r('app.color.surface_muted'))
       .borderRadius(24)
       Text(label)
         .fontSize(12)
-        .fontColor('#FF666666')
+        .fontColor($r('app.color.secondary_text'))
     }
     .onClick(onTap)
   }
@@ -124,14 +124,14 @@ export struct NoteSharePreviewSheet {
       Column()
         .width(36)
         .height(4)
-        .backgroundColor('#FFDDDDDD')
+        .backgroundColor($r('app.color.divider'))
         .borderRadius(2)
         .alignSelf(ItemAlign.Center)
 
       Row({ space: 10 }) {
         Text('主题')
           .fontSize(13)
-          .fontColor('#FF888888')
+          .fontColor($r('app.color.secondary_text'))
           .width(40)
         Flex({
           wrap: FlexWrap.Wrap,
@@ -160,7 +160,7 @@ export struct NoteSharePreviewSheet {
       Row({ space: 10 }) {
         Text('色调')
           .fontSize(13)
-          .fontColor('#FF888888')
+          .fontColor($r('app.color.secondary_text'))
           .width(40)
         Flex({
           wrap: FlexWrap.Wrap,
@@ -189,7 +189,7 @@ export struct NoteSharePreviewSheet {
       Row({ space: 10 }) {
         Text('操作')
           .fontSize(13)
-          .fontColor('#FF888888')
+          .fontColor($r('app.color.secondary_text'))
           .width(40)
         Row({ space: 24 }) {
           this.buildAction($r('sys.symbol.arrow_down_to_line'), '保存到相册', (): void => {
@@ -207,8 +207,9 @@ export struct NoteSharePreviewSheet {
     }
     .width('100%')
     .padding({ left: 20, right: 20, top: 12, bottom: 24 })
-    .backgroundColor(Color.White)
-    .borderRadius({ topLeft: 20, topRight: 20 })
+    .backgroundBlurStyle(BlurStyle.Thin)
+    .backgroundColor($r('app.color.sheet_background'))
+    .borderRadius({ topLeft: 24, topRight: 24 })
   }
 }
 

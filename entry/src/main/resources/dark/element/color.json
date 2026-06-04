@@ -135,6 +135,10 @@
     {
       "name": "share_code_background",
       "value": "#FF252528"
+    },
+    {
+      "name": "sheet_background",
+      "value": "#EB141A22"
     }
   ]
 }

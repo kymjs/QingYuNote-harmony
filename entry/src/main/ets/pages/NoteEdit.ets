@@ -94,6 +94,7 @@ struct NoteEdit {
   @State aiFeatureEnabled: boolean = false
   @State aiMenuVisible: boolean = false
   @State aiNoteWorking: boolean = false
+  @State aiWorkingOverlayMessage: string = 'AI 处理中…'
   @State aiUndoAvailable: boolean = false
   private aiUndoBaselineContent: string | null = null
   @State parentId: string = ''
@@ -936,6 +937,8 @@ struct NoteEdit {
         this.openAiLinkExtractDialog()
       } else if (action === 'insertImage') {
         void this.insertImage()
+      } else if (action === 'generateNoteFromImage') {
+        void this.insertImage(true)
       } else if (action === 'todoList') {
         this.applyTodoListEntryDefaults()
       }
@@ -1513,7 +1516,7 @@ struct NoteEdit {
     return fileUri.getUriFromPath(absPath)
   }
 
-  private async insertImage(): Promise<void> {
+  private async insertImage(thenOptimize: boolean = false): Promise<void> {
     try {
       const photoSelectOptions: photoAccessHelper.PhotoSelectOptions = new photoAccessHelper.PhotoSelectOptions()
       photoSelectOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE
@@ -1555,6 +1558,9 @@ struct NoteEdit {
         this.schedulePreviewRefresh()
       } else {
         this.previewDirty = true
+      }
+      if (thenOptimize && this.lifecycle.isActive()) {
+        await this.onAiOptimizeContent()
       }
     } catch (error) {
       Logger.error('NoteEdit', `insertImage failed: ${JSON.stringify(error)}`)
@@ -2510,6 +2516,9 @@ struct NoteEdit {
     }
     const ok = await this.saveCachePngToGallery(this.sharePreviewPath)
     this.showPreviewMessage(ok ? '已保存到相册' : '保存到相册失败')
+    if (ok) {
+      this.closeSharePreview()
+    }
   }
 
   private async onSharePreviewShareOthers(): Promise<void> {
@@ -2521,8 +2530,10 @@ struct NoteEdit {
       this.showPreviewMessage('分享失败')
       return
     }
+    const cachePath = this.sharePreviewPath
+    this.closeSharePreview()
     try {
-      const uri = fileUri.getUriFromPath(this.sharePreviewPath)
+      const uri = fileUri.getUriFromPath(cachePath)
       const shareData: systemShare.SharedData = new systemShare.SharedData({
         utd: utd.UniformDataType.PNG,
         uri: uri
@@ -2846,6 +2857,8 @@ struct NoteEdit {
       this.showPreviewMessage('内容过少，无需AI优化')
       return
     }
+    this.aiWorkingOverlayMessage =
+      !noteHasText && hasImageRefs ? 'AI 生成笔记中…' : 'AI 处理中…'
     this.aiNoteWorking = true
     this.aiMenuVisible = false
     const before = this.content
@@ -2854,8 +2867,14 @@ struct NoteEdit {
       : (this.obtainUiAbilityContext()?.filesDir ?? '')
     try {
       const optimized = await AiNoteService.getInstance().optimizeContent(this.content, filesDir)
+      const parts = MarkdownUtils.splitLinkSummary(optimized)
       this.captureAiUndoBaseline(before)
-      this.content = optimized
+      if (hasImageRefs && parts.title.trim().length > 0) {
+        this.title = parts.title.trim()
+        this.content = parts.body
+      } else {
+        this.content = optimized
+      }
       this.handleContentChange()
       this.showPreviewMessage(noteHasText ? 'AI 已优化笔记正文' : 'AI 已根据图片生成笔记')
     } catch (e) {
@@ -2935,6 +2954,29 @@ struct NoteEdit {
     } finally {
       this.aiNoteWorking = false
     }
+  }
+
+  @Builder
+  buildAiWorkingOverlay() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('rgba(0,0,0,0.35)')
+      Column({ space: 16 }) {
+        LoadingProgress()
+          .width(40)
+          .height(40)
+          .color($r('app.color.accent'))
+        Text(this.aiWorkingOverlayMessage)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.primary_text'))
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .zIndex(10005)
   }
 
   @Builder
@@ -3556,6 +3598,10 @@ struct NoteEdit {
         }
           .position({ x: 0, y: 0 })
           .zIndex(998)
+      }
+
+      if (this.aiNoteWorking) {
+        this.buildAiWorkingOverlay()
       }
 
       if (this.shareExportActive) {

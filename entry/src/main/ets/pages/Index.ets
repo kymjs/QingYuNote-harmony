@@ -19,6 +19,7 @@ import {
   type FolderSidebarRow,
   type HomeSidebarFilterMode
 } from '../common/utils/NoteFolderTree'
+import { TagSortUtils } from '../common/utils/TagSortUtils'
 import { SyncConstants } from '../common/constants/SyncConstants'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { CloudSyncNotifyThrottle } from '../common/utils/CloudSyncNotifyThrottle'
@@ -448,7 +449,7 @@ struct Index {
         void this.openEditor(undefined, false, 'aiLinkExtract')
       },
       onPhotoImage: (): void => {
-        void this.openEditor(undefined, false, 'insertImage')
+        void this.openEditor(undefined, false, 'generateNoteFromImage')
       },
       onKnowledgeGraph: (): void => {
         void this.openFlowchartFromDrawer()
@@ -492,7 +493,7 @@ struct Index {
     await this.ensurePreferencesInitialized()
     const storedTags = await PreferencesService.getInstance().getNoteTags()
     const mergedTags = this.normalizeTags(this.extractTagsFromNotes(notes).concat(storedTags))
-    this.tags = mergedTags
+    this.tags = TagSortUtils.sortByNoteCountDesc(mergedTags, notes)
     this.validateSidebarSelection(notes)
   }
 

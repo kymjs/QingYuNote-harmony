@@ -4,6 +4,7 @@ import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
+import { TagSortUtils } from '../common/utils/TagSortUtils'
 
 @Entry
 @Component
@@ -34,7 +35,11 @@ struct TagManage {
       return
     }
     const mergedTags = this.normalizeTags(this.extractTagsFromNotes(this.activeNotes).concat(storedTags))
-    this.tags = mergedTags
+    this.tags = this.displayTags(mergedTags)
+  }
+
+  private displayTags(tags: string[]): string[] {
+    return TagSortUtils.sortByNoteCountDesc(tags, this.activeNotes)
   }
 
   private async ensurePreferencesInitialized(): Promise<void> {
@@ -118,7 +123,7 @@ struct TagManage {
     const previousTags = [...this.tags]
     const revertNewTag = this.newTag
     const nextTags = this.normalizeTags([...this.tags, candidate])
-    this.tags = nextTags
+    this.tags = this.displayTags(nextTags)
     this.newTag = ''
     void this.applyTagsPersist(previousTags, nextTags, revertNewTag)
   }
@@ -130,7 +135,7 @@ struct TagManage {
     }
     const previousTags = [...this.tags]
     const nextTags = this.tags.filter((item: string) => item !== tag)
-    this.tags = nextTags
+    this.tags = this.displayTags(nextTags)
     void this.applyTagsPersist(previousTags, nextTags)
   }
 
