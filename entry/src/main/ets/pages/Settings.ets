@@ -5,6 +5,7 @@ import { PreferencesService } from '../services/PreferencesService'
 import { runAppUpdateCheckManually } from '../services/AppUpdateUi'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
+import { SyncConstants } from '../common/constants/SyncConstants'
 
 /** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展，用于退出登录后避免返回敏感页。 */
 interface RouterWithOptionalClear {
@@ -23,19 +24,51 @@ struct Settings {
   @State folderModeEnabled: boolean = false
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
+  private noteSettingsChangedHandler = (): void => {
+    void this.loadNoteSettingsOnly()
+  }
 
   aboutToAppear(): void {
     this.lifecycle.appear()
     this.closeGuard.reset()
+    try {
+      AppContextHolder.getContext().eventHub.on(SyncConstants.noteSettingsChangedEvent,
+        this.noteSettingsChangedHandler)
+    } catch (_) {
+      // ignore
+    }
     void this.loadSettingsState()
   }
 
   aboutToDisappear(): void {
     this.lifecycle.disappear()
+    try {
+      AppContextHolder.getContext().eventHub.off(SyncConstants.noteSettingsChangedEvent,
+        this.noteSettingsChangedHandler)
+    } catch (_) {
+      // ignore
+    }
   }
 
   onPageShow(): void {
     void this.loadSettingsState()
+  }
+
+  private async loadNoteSettingsOnly(): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.quickActionBarEnabled =
+      await PreferencesService.getInstance().getNoteQuickActionBarEnabled()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.folderModeEnabled =
+      await PreferencesService.getInstance().getNoteFolderModeEnabled()
   }
 
   private async loadSettingsState(): Promise<void> {

@@ -1015,9 +1015,7 @@ struct Profile {
                   this.openTextEdit('姓名', 'username', (this.profile!.username ?? '').trim())
                 }
               )
-            }
-
-            ProfileMenuCard() {
+              this.rowDivider()
               this.kvRow(
                 this.phoneKvLabel(),
                 this.phoneKvRightValue(),

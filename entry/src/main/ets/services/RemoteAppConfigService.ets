@@ -145,7 +145,7 @@ export class RemoteAppConfigService {
     }
   }
 
-  /** 内测邀请：先校验 `beta_test_version` 闭区间，命中且 `beta_test == true` 时开启。 */
+  /** 公测邀请：先校验 `beta_test_version` 闭区间，命中且 `beta_test == true` 时开启。 */
   static async readBetaTestConfigFromCache(filesDir: string): Promise<boolean> {
     if (filesDir.length === 0) {
       return false

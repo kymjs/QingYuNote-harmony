@@ -7,6 +7,10 @@ const DRAWER_OFFSCREEN_PAD = 20
 const DRAWER_SPAN = DRAWER_WIDTH + DRAWER_OFFSCREEN_PAD
 /** 松手吸附动画时长（抽屉已由手指实时拖动，此处仅收尾过渡）。 */
 const DRAWER_SNAP_MS = 220
+/** 侧栏个人信息区上内边距（原 16，缩小 30%）。 */
+const DRAWER_USER_HEADER_PADDING_TOP_VP = 11
+/** 侧栏整体顶部内边距（原 20，缩小 30%）。 */
+const DRAWER_SIDEBAR_PADDING_TOP_VP = 14
 
 @Component
 export struct HomeDrawerLayer {
@@ -43,6 +47,17 @@ export struct HomeDrawerLayer {
   }
   onOpenSettings: () => void = () => {
   }
+  onOpenProfile: () => void = () => {
+  }
+
+  /** 侧栏顶部展示的用户昵称（已登录时）。 */
+  @Prop drawerUsername: string = ''
+  /** 侧栏顶部展示的头像 URL（已登录时）。 */
+  @Prop @Watch('handleDrawerAvatarUrlChanged') drawerAvatarUrl: string = ''
+  @Prop drawerGuestMode: boolean = false
+  @Prop drawerLoggedIn: boolean = false
+
+  @State drawerAvatarLoadFailed: boolean = false
 
   private handleToggleNonceChanged(): void {
     if (this.drawerToggleNonce === 0) {
@@ -53,6 +68,10 @@ export struct HomeDrawerLayer {
 
   private handleCloseNonceChanged(): void {
     this.closeDrawer()
+  }
+
+  private handleDrawerAvatarUrlChanged(): void {
+    this.drawerAvatarLoadFailed = false
   }
 
   private closeDrawer(): void {
@@ -171,17 +190,53 @@ export struct HomeDrawerLayer {
   }
 
   @Builder
-  private buildDrawerSidebar() {
-    Column({ space: 6 }) {
-      if (this.folderModeEnabled) {
-        this.buildFilterModeSwitcher()
+  private buildDrawerUserHeader() {
+    Row({ space: 12 }) {
+      if (this.drawerAvatarUrl.trim().length > 0 && !this.drawerAvatarLoadFailed) {
+        Image(this.drawerAvatarUrl.trim())
+          .width(44)
+          .height(44)
+          .borderRadius(22)
+          .objectFit(ImageFit.Cover)
+          .onError((): void => {
+            this.drawerAvatarLoadFailed = true
+          })
       } else {
-        Text('筛选标签')
-          .fontSize(13)
-          .fontColor($r('app.color.tertiary_text'))
-          .margin({ top: 8, bottom: 8, left: 6 })
+        Image($r('app.media.icon_app'))
+          .width(44)
+          .height(44)
+          .borderRadius(22)
+          .objectFit(ImageFit.Cover)
       }
+      Text(this.drawerDisplayName())
+        .fontSize($r('app.float.body_font_size'))
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.primary_text'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      Text('›')
+        .fontSize(22)
+        .fontColor($r('app.color.tertiary_text'))
+    }
+    .width('100%')
+    .padding({ left: 18, right: 14, top: DRAWER_USER_HEADER_PADDING_TOP_VP, bottom: 12 })
+    .onClick((): void => {
+      this.onOpenProfile()
+    })
+  }
 
+  private drawerDisplayName(): string {
+    if (this.drawerGuestMode || !this.drawerLoggedIn) {
+      return '未登录'
+    }
+    const name = this.drawerUsername.trim()
+    return name.length > 0 ? name : '未设置'
+  }
+
+  @Builder
+  private buildDrawerFilterList() {
+    Column({ space: 6 }) {
       if (this.folderModeEnabled && this.filterMode === 'folder') {
         this.buildDrawerFilterItem('根目录', this.allNotesTag, true)
       } else {
@@ -197,12 +252,36 @@ export struct HomeDrawerLayer {
           this.buildDrawerFolderItem(row)
         }, (row: FolderSidebarRow) => `folder_${row.noteId}_${row.depth}_${row.isExpanded}`)
       }
+    }
+    .width('100%')
+  }
 
-      Blank()
-        .layoutWeight(1)
-        .width('100%')
-        .onClick(() => {
-        })
+  @Builder
+  private buildDrawerSidebar() {
+    Column({ space: 6 }) {
+      this.buildDrawerUserHeader()
+
+      Divider()
+        .strokeWidth(1)
+        .color($r('app.color.divider'))
+        .margin({ bottom: 4 })
+
+      if (this.folderModeEnabled) {
+        this.buildFilterModeSwitcher()
+      } else {
+        Text('筛选标签')
+          .fontSize(13)
+          .fontColor($r('app.color.tertiary_text'))
+          .margin({ top: 8, bottom: 8, left: 6 })
+      }
+
+      Scroll() {
+        this.buildDrawerFilterList()
+      }
+      .layoutWeight(1)
+      .align(Alignment.TopStart)
+      .width('100%')
+      .scrollBar(BarState.Auto)
 
       Divider()
         .strokeWidth(1)
@@ -272,7 +351,7 @@ export struct HomeDrawerLayer {
     }
     .width('100%')
     .height('100%')
-    .padding({ left: 14, right: 14, top: 20, bottom: 18 })
+    .padding({ left: 14, right: 14, top: DRAWER_SIDEBAR_PADDING_TOP_VP, bottom: 18 })
     .backgroundColor($r('app.color.card_background'))
   }
 

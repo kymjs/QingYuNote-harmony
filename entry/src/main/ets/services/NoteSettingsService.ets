@@ -3,16 +3,32 @@ import { AppContextHolder } from './AppContextHolder'
 import { NoteSettingsDocument } from '../common/model/NoteSettingsDocument'
 import { PreferencesService } from './PreferencesService'
 import { Logger } from '../common/utils/Logger'
+import { SyncConstants } from '../common/constants/SyncConstants'
 
 const LOCAL_FILE_NAME = 'note_settings.json'
+
+/** EventHub 载荷：笔记设置文档 revision 递增。 */
+export class NoteSettingsChangedEventPayload {
+  revision: number
+
+  constructor(revision: number) {
+    this.revision = revision
+  }
+}
+
 /** 笔记设置本地 JSON + 与 Preferences 键同步。 */
 export class NoteSettingsService {
   private static instance: NoteSettingsService = new NoteSettingsService()
   private cached?: NoteSettingsDocument
   private loaded: boolean = false
+  private revision: number = 0
 
   static getInstance(): NoteSettingsService {
     return NoteSettingsService.instance
+  }
+
+  getRevision(): number {
+    return this.revision
   }
 
   async getNoteQuickActionBarEnabled(): Promise<boolean> {
@@ -32,7 +48,8 @@ export class NoteSettingsService {
       Date.now(),
       enabled,
       cur.folderModeEnabled,
-      cur.version
+      cur.version,
+      true
     )
     await this.persistLocal(next)
   }
@@ -46,7 +63,8 @@ export class NoteSettingsService {
       Date.now(),
       cur.quickActionBarEnabled,
       enabled,
-      cur.version
+      cur.version,
+      true
     )
     await this.persistLocal(next)
   }
@@ -108,7 +126,11 @@ export class NoteSettingsService {
 
   private async migrateFromLegacyPrefs(): Promise<NoteSettingsDocument> {
     const legacy = PreferencesService.getInstance().readLegacyNoteSettingsFlags()
-    const doc = new NoteSettingsDocument(Date.now(), legacy.quick, legacy.folder)
+    const doc = new NoteSettingsDocument(
+      NoteSettingsDocument.pristineUpdatedAt,
+      legacy.quick,
+      legacy.folder
+    )
     await this.persistLocal(doc, false)
     return doc
   }
@@ -135,6 +157,17 @@ export class NoteSettingsService {
         doc.quickActionBarEnabled,
         doc.folderModeEnabled
       )
+    }
+    this.revision += 1
+    const hub = AppContextHolder.tryGetContext()?.eventHub
+    if (hub !== undefined) {
+      try {
+        hub.emit(SyncConstants.noteSettingsChangedEvent,
+          new NoteSettingsChangedEventPayload(this.revision))
+      } catch (error) {
+        Logger.warn('NoteSettingsService',
+          `emit noteSettingsChanged failed: ${JSON.stringify(error)}`)
+      }
     }
   }
 }

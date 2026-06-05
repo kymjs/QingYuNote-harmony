@@ -26,6 +26,8 @@ export class SyncConstants {
   static readonly cloudSyncNotConfiguredNotifyIntervalMs: number = 5 * 60 * 1000
   /** 笔记内图片下载落盘后通知编辑页刷新预览（与 Flutter `noteImagesChanged` 对齐）。 */
   static readonly noteImagesChangedEvent: string = 'note_images_changed'
+  /** 笔记设置（快捷操作栏、文件夹模式）本地或远端变更后通知 UI 刷新。 */
+  static readonly noteSettingsChangedEvent: string = 'note_settings_changed'
 }
 
 /** EventHub 载荷：已更新的笔记 id。 */

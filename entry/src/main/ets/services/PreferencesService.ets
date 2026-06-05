@@ -33,8 +33,10 @@ const GUEST_MODE_KEY = 'guest_mode'
 const NOTE_QUICK_ACTION_BAR_ENABLED_KEY = 'note_quick_action_bar_enabled'
 /** 与 Flutter `prefNoteFolderModeEnabledKey` 一致 */
 const NOTE_FOLDER_MODE_ENABLED_KEY = 'note_folder_mode_enabled'
-/** 与 Flutter `prefBetaTestInviteDialogShownKey` 一致：内测邀请弹窗已展示过则不再弹出 */
+/** 与 Flutter `prefBetaTestInviteDialogShownKey` 一致：公测邀请弹窗已展示过则不再弹出 */
 const BETA_TEST_INVITE_DIALOG_SHOWN_KEY = 'beta_test_invite_dialog_shown'
+/** 与 Flutter `prefMembershipExpiryReminderLastShownYmdKey` 一致：会员到期提醒弹窗上次展示日期 */
+const MEMBERSHIP_EXPIRY_REMINDER_LAST_SHOWN_YMD_KEY = 'membership_expiry_reminder_last_shown_ymd'
 /** 与 Flutter `AppConst.prefShareCardThemeKey` 一致 */
 const SHARE_CARD_THEME_KEY = 'share_card_theme'
 /** 与 Flutter `AppConst.prefShareCardToneKey` 一致 */
@@ -623,7 +625,7 @@ export class PreferencesService {
     }
   }
 
-  /** 内测邀请弹窗是否已在本地展示过（设备维度，永久不再弹出）。 */
+  /** 公测邀请弹窗是否已在本地展示过（设备维度，永久不再弹出）。 */
   async hasBetaTestInviteDialogShown(): Promise<boolean> {
     try {
       const store = this.ensureStore()
@@ -643,6 +645,29 @@ export class PreferencesService {
     } catch (error) {
       Logger.warn('PreferencesService',
         `setBetaTestInviteDialogShown failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  /** 会员到期提醒弹窗上次展示日期（`YYYY-MM-DD`）；空表示当日尚未展示。 */
+  async getMembershipExpiryReminderLastShownYmd(): Promise<string> {
+    try {
+      const store = this.ensureStore()
+      return (store.getSync(MEMBERSHIP_EXPIRY_REMINDER_LAST_SHOWN_YMD_KEY, '') as string).trim()
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `getMembershipExpiryReminderLastShownYmd failed: ${this.describeError(error as Object)}`)
+      return ''
+    }
+  }
+
+  async setMembershipExpiryReminderLastShownYmd(ymd: string): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(MEMBERSHIP_EXPIRY_REMINDER_LAST_SHOWN_YMD_KEY, ymd.trim())
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `setMembershipExpiryReminderLastShownYmd failed: ${this.describeError(error as Object)}`)
     }
   }
 
@@ -703,11 +728,11 @@ export class PreferencesService {
       const store = this.ensureStore()
       const result: LegacyNoteSettingsFlags = {
         quick: store.getSync(NOTE_QUICK_ACTION_BAR_ENABLED_KEY, true) as boolean,
-        folder: store.getSync(NOTE_FOLDER_MODE_ENABLED_KEY, true) as boolean
+        folder: store.getSync(NOTE_FOLDER_MODE_ENABLED_KEY, false) as boolean
       }
       return result
     } catch (_) {
-      const fallback: LegacyNoteSettingsFlags = { quick: true, folder: true }
+      const fallback: LegacyNoteSettingsFlags = { quick: true, folder: false }
       return fallback
     }
   }

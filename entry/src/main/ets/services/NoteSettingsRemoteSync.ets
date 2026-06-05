@@ -27,12 +27,28 @@ export class NoteSettingsRemoteSync {
     }
   }
 
+  private async payloadForUpload(doc: NoteSettingsDocument): Promise<NoteSettingsDocument> {
+    if (doc.updatedAt > NoteSettingsDocument.pristineUpdatedAt) {
+      return doc
+    }
+    const stamped = new NoteSettingsDocument(
+      Date.now(),
+      doc.quickActionBarEnabled,
+      doc.folderModeEnabled,
+      doc.version,
+      doc.locallyModified
+    )
+    await NoteSettingsService.getInstance().applyRemoteDocument(stamped)
+    return stamped
+  }
+
   async pushIfPossible(doc: NoteSettingsDocument): Promise<void> {
     if (!(await this.canSync())) {
       return
     }
     try {
-      await WebDAVClient.getInstance().uploadNoteSettingsDocument(doc)
+      const payload = await this.payloadForUpload(doc)
+      await WebDAVClient.getInstance().uploadNoteSettingsDocument(payload)
     } catch (error) {
       Logger.warn('NoteSettingsRemoteSync',
         `push failed: ${JSON.stringify(error)}`)
@@ -56,12 +72,22 @@ export class NoteSettingsRemoteSync {
       await this.pushIfPossible(local)
       return
     }
+    if (!local.locallyModified &&
+      remote.updatedAt > NoteSettingsDocument.pristineUpdatedAt) {
+      await NoteSettingsService.getInstance().applyRemoteDocument(remote)
+      return
+    }
     if (remote.updatedAt > local.updatedAt) {
       await NoteSettingsService.getInstance().applyRemoteDocument(remote)
       return
     }
     if (local.updatedAt > remote.updatedAt) {
       await this.pushIfPossible(local)
+      return
     }
+    if (local.contentEquals(remote)) {
+      return
+    }
+    await NoteSettingsService.getInstance().applyRemoteDocument(remote)
   }
 }

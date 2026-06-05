@@ -12,7 +12,7 @@ import {
   tryAutoProvisionQingyuCloudOnHomeEntry
 } from '../services/QingyuCloudAutoProvision'
 import { WebDAVClient } from '../services/WebDAVClient'
-import { NoteApiClient } from '../services/NoteApiClient'
+import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
 import { Logger } from '../common/utils/Logger'
 import {
   NoteFolderTree,
@@ -73,6 +73,11 @@ struct Index {
   @State moreOptionsVisible: boolean = false
   /** 已配置自建 WebDAV，或轻羽云订阅有效（active/lifetime）时为 true，右上角不展示「去配置」图标；首帧默认 true 以免误闪。 */
   @State cloudSyncConfigured: boolean = true
+  /** 侧栏顶部用户信息，与 Flutter `HomePage` 抽屉区一致。 */
+  @State drawerUsername: string = ''
+  @State drawerAvatarUrl: string = ''
+  @State drawerGuestMode: boolean = false
+  @State drawerLoggedIn: boolean = false
   private hasShownOnce: boolean = false
   /** 仅统计「非首次」onPageShow 触发的 loadNotes 完成时间；与 initializeHome 首次加载无关，避免阻断从编辑页返回后的刷新。 */
   private lastPageShowNotesReloadAtMs: number = 0
@@ -88,6 +93,9 @@ struct Index {
   private cloudSyncNotConfiguredHandler = (): void => {
     this.showUserMessage('当前未配置云服务')
   }
+  private noteSettingsChangedHandler = (): void => {
+    void this.reloadNoteSettingsFromService()
+  }
   private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
@@ -96,6 +104,8 @@ struct Index {
       AppContextHolder.getContext().eventHub.on(SyncConstants.qingyuSyncBlockedEvent, this.qingyuBlockedHandler)
       AppContextHolder.getContext().eventHub.on(SyncConstants.cloudSyncNotConfiguredToastEvent,
         this.cloudSyncNotConfiguredHandler)
+      AppContextHolder.getContext().eventHub.on(SyncConstants.noteSettingsChangedEvent,
+        this.noteSettingsChangedHandler)
     } catch (_) {
       console.error('Index: eventHub.on qingyu_sync_blocked failed')
     }
@@ -108,6 +118,8 @@ struct Index {
       AppContextHolder.getContext().eventHub.off(SyncConstants.qingyuSyncBlockedEvent, this.qingyuBlockedHandler)
       AppContextHolder.getContext().eventHub.off(SyncConstants.cloudSyncNotConfiguredToastEvent,
         this.cloudSyncNotConfiguredHandler)
+      AppContextHolder.getContext().eventHub.off(SyncConstants.noteSettingsChangedEvent,
+        this.noteSettingsChangedHandler)
     } catch (_) {
       console.error('Index: eventHub.off qingyu_sync_blocked failed')
     }
@@ -146,8 +158,10 @@ struct Index {
     if (!this.lifecycle.isActive()) {
       return
     }
+    void this.loadDrawerUserProfile()
     void navigateToBindPhoneIfNeeded(this.getUIContext())
     void this.runHomeEntryNetworkSetup()
+    void this.loadDrawerUserProfile()
     if (!this.hasShownOnce) {
       this.hasShownOnce = true
       return
@@ -187,6 +201,7 @@ struct Index {
     if (!this.lifecycle.isActive()) {
       return
     }
+    void this.loadDrawerUserProfile()
     await this.loadNotes(this.allNotes.length === 0)
     if (!this.lifecycle.isActive()) {
       return
@@ -216,6 +231,27 @@ struct Index {
   private async startStartupSyncIfNeeded(): Promise<void> {
     if (await this.shouldRunStartupSync()) {
       void this.maybeSyncAfterInitialLoad()
+    }
+  }
+
+  private async reloadNoteSettingsFromService(): Promise<void> {
+    await this.ensurePreferencesInitialized()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.folderModeEnabled =
+      await PreferencesService.getInstance().getNoteFolderModeEnabled()
+    let filterMode = await PreferencesService.getInstance().getHomeSidebarFilterMode()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    if (!this.folderModeEnabled && filterMode === 'folder') {
+      filterMode = 'tag'
+      await PreferencesService.getInstance().setHomeSidebarFilterMode('tag')
+    }
+    if (this.lifecycle.isActive()) {
+      this.filterMode = filterMode
+      this.applyTagFilter()
     }
   }
 
@@ -706,6 +742,60 @@ struct Index {
       console.error(JSON.stringify(error))
       this.showUserMessage(this.formatActionError('打开设置页', error))
     }
+  }
+
+  private async loadDrawerUserProfile(): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    const uid = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
+    const guest = await PreferencesService.getInstance().isGuestMode()
+    const loggedIn = uid.length > 0
+    if (this.lifecycle.isActive()) {
+      this.drawerGuestMode = guest
+      this.drawerLoggedIn = loggedIn
+    }
+    if (!loggedIn) {
+      if (this.lifecycle.isActive()) {
+        this.drawerUsername = ''
+        this.drawerAvatarUrl = ''
+      }
+      return
+    }
+    const cachedRaw = await PreferencesService.getInstance().getCachedUserProfile()
+    const cached = cachedRaw !== null ? cachedRaw as ProfileBody : null
+    if (this.lifecycle.isActive() && cached !== null) {
+      this.drawerUsername = (cached.username ?? '').trim()
+      this.drawerAvatarUrl = (cached.avatar_url ?? '').trim()
+    }
+    const profile = await NoteApiClient.getInstance().fetchProfile()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    const resolved = profile ?? cached
+    if (resolved !== null) {
+      this.drawerUsername = (resolved.username ?? '').trim()
+      this.drawerAvatarUrl = (resolved.avatar_url ?? '').trim()
+    }
+  }
+
+  private async openProfileFromDrawer(): Promise<void> {
+    this.drawerCloseNonce += 1
+    try {
+      if (this.drawerGuestMode || !this.drawerLoggedIn) {
+        await this.getUIContext().getRouter().pushUrl({ url: 'pages/Login' })
+      } else {
+        await this.getUIContext().getRouter().pushUrl({ url: 'pages/Profile' })
+      }
+    } catch (error) {
+      console.error(JSON.stringify(error))
+      this.showUserMessage(this.formatActionError('打开个人信息', error))
+    }
+    void this.loadDrawerUserProfile()
   }
 
   private async openWebDAVSettings(): Promise<void> {
@@ -1279,7 +1369,14 @@ struct Index {
         },
         onOpenSettings: (): void => {
           void this.openSettingsFromDrawer()
-        }
+        },
+        onOpenProfile: (): void => {
+          void this.openProfileFromDrawer()
+        },
+        drawerUsername: this.drawerUsername,
+        drawerAvatarUrl: this.drawerAvatarUrl,
+        drawerGuestMode: this.drawerGuestMode,
+        drawerLoggedIn: this.drawerLoggedIn
       })
     }
     .width('100%')

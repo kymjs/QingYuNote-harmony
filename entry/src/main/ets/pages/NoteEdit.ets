@@ -43,6 +43,7 @@ import { NoteImageGalleryUtils } from '../common/utils/NoteImageGalleryUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { NoteFolderTree, type FolderSidebarRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 import { type NoteEditorEntryAction } from '../common/model/NoteEditorEntryAction'
+import { maybeShowMembershipExpiryReminderDialog } from '../common/utils/MembershipExpiryReminderNavigation'
 import { ShareCardTheme, ShareCardTone, ShareThemeColors } from '../share/ShareTheme'
 import {
   NoteShareExportCard,
@@ -173,6 +174,10 @@ struct NoteEdit {
       this.schedulePreviewRefresh()
     }
   }
+  private onNoteSettingsChanged = (): void => {
+    void this.loadQuickActionBarPref()
+    void this.loadFolderModePref()
+  }
   private preferPreviewOnOpen: boolean = false
   private pendingInitialAction: NoteEditorEntryAction | null = null
   private initialActionHandled: boolean = false
@@ -239,6 +244,7 @@ struct NoteEdit {
     void this.initKeyboardAvoidArea()
     try {
       AppContextHolder.getContext().eventHub.on(SyncConstants.noteImagesChangedEvent, this.onNoteImagesChanged)
+      AppContextHolder.getContext().eventHub.on(SyncConstants.noteSettingsChangedEvent, this.onNoteSettingsChanged)
     } catch (error) {
       Logger.warn('NoteEdit', `eventHub.on note_images_changed failed: ${JSON.stringify(error)}`)
     }
@@ -291,6 +297,7 @@ struct NoteEdit {
     this.stopPathCaptionMarquee()
     try {
       AppContextHolder.getContext().eventHub.off(SyncConstants.noteImagesChangedEvent, this.onNoteImagesChanged)
+      AppContextHolder.getContext().eventHub.off(SyncConstants.noteSettingsChangedEvent, this.onNoteSettingsChanged)
     } catch (_) {
       // ignore
     }
@@ -889,6 +896,7 @@ struct NoteEdit {
       this.preparePreviewForCurrentMode(this.content)
       void this.refreshAllNotes()
       this.runInitialActionIfNeeded()
+      this.scheduleMembershipExpiryReminderIfNeeded()
       return
     }
     const note = await NoteRepository.getInstance().getNote(this.noteId)
@@ -898,6 +906,7 @@ struct NoteEdit {
     if (!note) {
       this.preparePreviewForCurrentMode(this.content)
       this.runInitialActionIfNeeded()
+      this.scheduleMembershipExpiryReminderIfNeeded()
       return
     }
     this.title = note.title
@@ -921,6 +930,14 @@ struct NoteEdit {
     void this.refreshAllNotes()
     this.schedulePathCaptionMarquee()
     this.runInitialActionIfNeeded()
+    this.scheduleMembershipExpiryReminderIfNeeded()
+  }
+
+  private scheduleMembershipExpiryReminderIfNeeded(): void {
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    void maybeShowMembershipExpiryReminderDialog(this.getUIContext())
   }
 
   private runInitialActionIfNeeded(): void {

@@ -20,7 +20,7 @@ function isQingyuMember(profile: ProfileBody): boolean {
 }
 
 /**
- * 首页进入后：内测版本且未开通会员、未配置自建 WebDAV 时，一次性弹出内测邀请。
+ * 首页进入后：公测版本且未开通会员、未配置自建 WebDAV 时，一次性弹出公测邀请。
  */
 export async function maybeShowBetaTestInviteDialog(uiContext: UIContext): Promise<void> {
   if (betaTestInviteInFlight) {
@@ -64,8 +64,8 @@ export async function maybeShowBetaTestInviteDialog(uiContext: UIContext): Promi
     await PreferencesService.getInstance().setBetaTestInviteDialogShown(true)
 
     const confirmed = await showConfirmAlertDialog(uiContext, {
-      title: '内测邀请',
-      message: '尊贵的内测用户，感谢您的使用，添加作者微信可获赠一个月轻羽云会员。',
+      title: '公测邀请',
+      message: '尊贵的公测用户，感谢您的使用，添加作者微信可获赠一个月轻羽云会员。',
       cancelLabel: '取消',
       confirmLabel: '确定',
       confirmColor: '#0DAA4A'
