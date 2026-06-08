@@ -2,7 +2,7 @@ import { http } from '@kit.NetworkKit'
 import { AiNoteImageLoader, AiNoteImagePayload } from './AiNoteImageLoader'
 import { AiNotePrompt } from './AiNotePrompt'
 import { AiTagService } from './AiTagService'
-import { NoteApiClient, AiTagConfigBody } from './NoteApiClient'
+import { NoteApiClient, AiTagConfigBody, buildMiniMaxChatExtras } from './NoteApiClient'
 import { MarkdownUtils } from '../common/utils/MarkdownUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 
@@ -45,14 +45,6 @@ interface ChatMultimodalUserMessage {
 }
 
 type ChatMessage = ChatTextMessage | ChatMultimodalUserMessage
-
-interface ChatCompletionRequest {
-  model: string
-  temperature: number
-  max_tokens: number
-  reasoning_split: boolean
-  messages: ChatMessage[]
-}
 
 export class AiNoteService {
   private static instance: AiNoteService = new AiNoteService()
@@ -184,13 +176,14 @@ export class AiNoteService {
   ): Promise<string> {
     const base = config.base_url.replace(/\/+$/, '')
     const url = `${base}/chat/completions`
-    const body: ChatCompletionRequest = {
+    const body: Record<string, Object> = {
       model: model,
       temperature: temperature,
       max_tokens: maxTokens,
       reasoning_split: reasoningSplit,
       messages: messages
     }
+    Object.assign(body, buildMiniMaxChatExtras(config))
     const req = http.createHttp()
     try {
       const resp = await req.request(url, {

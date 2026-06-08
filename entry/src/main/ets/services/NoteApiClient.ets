@@ -94,6 +94,23 @@ export interface AiTagConfigBody {
   token_plan_key: string
   model: string
   base_url: string
+  reasoning?: {
+    effort: string
+  }
+}
+
+export function buildMiniMaxChatExtras(config: AiTagConfigBody): Record<string, Object> {
+  const effort = config.reasoning?.effort?.trim() ?? ''
+  if (effort.length === 0) {
+    return {}
+  }
+  const extras: Record<string, Object> = {
+    reasoning: { effort: effort }
+  }
+  if (effort === 'none') {
+    extras['thinking'] = { type: 'disabled' }
+  }
+  return extras
 }
 
 /** `GET /api/v1/me/profile` */
@@ -525,10 +542,19 @@ export class NoteApiClient {
     if (key.length === 0 || model.length === 0) {
       return null
     }
+    let reasoning: AiTagConfigBody['reasoning'] = undefined
+    const reasoningRaw = record['reasoning'] as Record<string, Object> | undefined
+    if (reasoningRaw !== undefined) {
+      const effort = `${reasoningRaw['effort'] ?? ''}`.trim()
+      if (effort.length > 0) {
+        reasoning = { effort: effort }
+      }
+    }
     const body: AiTagConfigBody = {
       token_plan_key: key,
       model: model,
-      base_url: baseUrl
+      base_url: baseUrl,
+      reasoning: reasoning
     }
     return body
   }

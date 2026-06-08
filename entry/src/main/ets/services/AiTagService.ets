@@ -1,17 +1,9 @@
 import { http } from '@kit.NetworkKit'
 import { AiTagPrompt } from './AiTagPrompt'
-import { NoteApiClient } from './NoteApiClient'
+import { NoteApiClient, buildMiniMaxChatExtras } from './NoteApiClient'
 interface ChatMessage {
   role: string
   content: string
-}
-
-interface ChatCompletionRequest {
-  model: string
-  temperature: number
-  max_tokens: number
-  reasoning_split: boolean
-  messages: ChatMessage[]
 }
 
 interface TagJsonCandidate {
@@ -51,13 +43,14 @@ export class AiTagService {
     let lastBodyEmpty: boolean = true
     for (let attempt = 0; attempt < AiTagService.MAX_ATTEMPTS; attempt++) {
       const useReasoningSplit = attempt === 0
-      const body: ChatCompletionRequest = {
+      const body: Record<string, Object> = {
         model: config.model,
         temperature: 0.2,
         max_tokens: 1024,
         reasoning_split: useReasoningSplit,
         messages: messages
       }
+      Object.assign(body, buildMiniMaxChatExtras(config))
       const req = http.createHttp()
       try {
         const resp = await req.request(url, {
