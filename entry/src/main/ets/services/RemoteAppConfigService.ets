@@ -79,7 +79,8 @@ export class RemoteAppConfigService {
     }
   }
 
-  static async readPayConfigFromCache(filesDir: string): Promise<boolean> {
+  /** 轻羽云充值：先校验 `pay_version` 闭区间，命中且 `pay == true` 时使用支付宝 App 支付；否则华为 IAP。 */
+  static async alipayPayEnabledFromCache(filesDir: string): Promise<boolean> {
     if (filesDir.length === 0) {
       return false
     }

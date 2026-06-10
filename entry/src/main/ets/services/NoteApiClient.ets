@@ -89,28 +89,79 @@ export interface PostAuthJsonStatusResult {
   obj: Object | null
 }
 
+/** MiniMax reasoning 配置 */
+export interface AiTagReasoningConfig {
+  effort: string
+}
+
+/** MiniMax thinking 配置 */
+export interface MiniMaxThinkingConfig {
+  type: string
+}
+
+/** MiniMax chat 额外参数 */
+export interface MiniMaxChatExtras {
+  reasoning?: AiTagReasoningConfig
+  thinking?: MiniMaxThinkingConfig
+}
+
 /** `GET /api/v1/me/ai-tag-config` */
 export interface AiTagConfigBody {
   token_plan_key: string
   model: string
   base_url: string
-  reasoning?: {
-    effort: string
-  }
+  reasoning?: AiTagReasoningConfig
 }
 
-export function buildMiniMaxChatExtras(config: AiTagConfigBody): Record<string, Object> {
+/** MiniMax chat/completions 请求体 */
+export interface ChatCompletionRequestBody {
+  model: string
+  temperature: number
+  max_tokens: number
+  reasoning_split: boolean
+  messages: Object[]
+  reasoning?: AiTagReasoningConfig
+  thinking?: MiniMaxThinkingConfig
+}
+
+export function buildMiniMaxChatExtras(config: AiTagConfigBody): MiniMaxChatExtras {
   const effort = config.reasoning?.effort?.trim() ?? ''
   if (effort.length === 0) {
-    return {}
+    const empty: MiniMaxChatExtras = {}
+    return empty
   }
-  const extras: Record<string, Object> = {
-    reasoning: { effort: effort }
-  }
+  const reasoning: AiTagReasoningConfig = { effort: effort }
+  const extras: MiniMaxChatExtras = { reasoning: reasoning }
   if (effort === 'none') {
-    extras['thinking'] = { type: 'disabled' }
+    const thinking: MiniMaxThinkingConfig = { type: 'disabled' }
+    extras.thinking = thinking
   }
   return extras
+}
+
+export function buildChatCompletionRequestBody(
+  model: string,
+  temperature: number,
+  maxTokens: number,
+  reasoningSplit: boolean,
+  messages: Object[],
+  config: AiTagConfigBody
+): ChatCompletionRequestBody {
+  const body: ChatCompletionRequestBody = {
+    model: model,
+    temperature: temperature,
+    max_tokens: maxTokens,
+    reasoning_split: reasoningSplit,
+    messages: messages
+  }
+  const extras = buildMiniMaxChatExtras(config)
+  if (extras.reasoning !== undefined) {
+    body.reasoning = extras.reasoning
+  }
+  if (extras.thinking !== undefined) {
+    body.thinking = extras.thinking
+  }
+  return body
 }
 
 /** `GET /api/v1/me/profile` */
@@ -542,12 +593,13 @@ export class NoteApiClient {
     if (key.length === 0 || model.length === 0) {
       return null
     }
-    let reasoning: AiTagConfigBody['reasoning'] = undefined
+    let reasoning: AiTagReasoningConfig | undefined = undefined
     const reasoningRaw = record['reasoning'] as Record<string, Object> | undefined
     if (reasoningRaw !== undefined) {
       const effort = `${reasoningRaw['effort'] ?? ''}`.trim()
       if (effort.length > 0) {
-        reasoning = { effort: effort }
+        const reasoningConfig: AiTagReasoningConfig = { effort: effort }
+        reasoning = reasoningConfig
       }
     }
     const body: AiTagConfigBody = {

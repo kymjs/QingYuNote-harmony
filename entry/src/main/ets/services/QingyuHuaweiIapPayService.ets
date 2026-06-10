@@ -66,7 +66,7 @@ export class QingyuHuaweiIapPayService {
     }
     const parameter: iap.PurchaseParameter = {
       productId: pid,
-      productType: iap.ProductType.CONSUMABLE
+      productType: iap.ProductType.NONRENEWABLE
     }
     try {
       const data: iap.CreatePurchaseResult = await iap.createPurchase(ctx, parameter)
@@ -84,7 +84,7 @@ export class QingyuHuaweiIapPayService {
   static async finishPurchase(ctx: common.UIAbilityContext,
     payload: QingyuHuaweiIapPurchasePayload): Promise<boolean> {
     const parameter: iap.FinishPurchaseParameter = {
-      productType: iap.ProductType.CONSUMABLE,
+      productType: iap.ProductType.NONRENEWABLE,
       purchaseToken: payload.purchaseToken,
       purchaseOrderId: payload.purchaseOrderId
     }

@@ -31,7 +31,6 @@ import {
   AvatarCropEmitCancel,
   AvatarCropEmitPath
 } from '../common/constants/AvatarCropConstants'
-import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
@@ -78,8 +77,6 @@ struct Profile {
   @State noteApiUserId: string = ''
   /** 正在拉起华为 OAuth，用于禁用行重复点击。 */
   @State bindBusy: boolean = false
-  /** 本地缓存的远程配置中 pay 字段为 true */
-  @State payConfigReady: boolean = false
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
 
@@ -101,8 +98,6 @@ struct Profile {
     if (!this.lifecycle.isActive()) {
       return
     }
-    const filesDir = context?.filesDir ?? ''
-    this.payConfigReady = await RemoteAppConfigService.readPayConfigFromCache(filesDir)
     await this.reload()
   }
 
@@ -985,24 +980,22 @@ struct Profile {
               })
             }
 
-            if (this.payConfigReady) {
-              ProfileMenuCard() {
-                this.kvRow(
-                  this.membershipTitle(this.profile!),
-                  this.membershipRight(this.profile!),
-                  !this.isLifetimeVip(this.profile!),
-                  false,
-                  (): void => {
-                    if (this.isLifetimeVip(this.profile!)) {
-                      return
-                    }
-                    this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
-                      console.error(`Profile push QingyuCloudRecharge: ${JSON.stringify(err)}`)
-                    })
-                  },
-                  !this.isLifetimeVip(this.profile!)
-                )
-              }
+            ProfileMenuCard() {
+              this.kvRow(
+                this.membershipTitle(this.profile!),
+                this.membershipRight(this.profile!),
+                !this.isLifetimeVip(this.profile!),
+                false,
+                (): void => {
+                  if (this.isLifetimeVip(this.profile!)) {
+                    return
+                  }
+                  this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
+                    console.error(`Profile push QingyuCloudRecharge: ${JSON.stringify(err)}`)
+                  })
+                },
+                !this.isLifetimeVip(this.profile!)
+              )
             }
 
             ProfileMenuCard() {

@@ -1,6 +1,6 @@
 import { http } from '@kit.NetworkKit'
 import { AiTagPrompt } from './AiTagPrompt'
-import { NoteApiClient, buildMiniMaxChatExtras } from './NoteApiClient'
+import { NoteApiClient, buildChatCompletionRequestBody } from './NoteApiClient'
 interface ChatMessage {
   role: string
   content: string
@@ -43,14 +43,14 @@ export class AiTagService {
     let lastBodyEmpty: boolean = true
     for (let attempt = 0; attempt < AiTagService.MAX_ATTEMPTS; attempt++) {
       const useReasoningSplit = attempt === 0
-      const body: Record<string, Object> = {
-        model: config.model,
-        temperature: 0.2,
-        max_tokens: 1024,
-        reasoning_split: useReasoningSplit,
-        messages: messages
-      }
-      Object.assign(body, buildMiniMaxChatExtras(config))
+      const body = buildChatCompletionRequestBody(
+        config.model,
+        0.2,
+        1024,
+        useReasoningSplit,
+        messages as Object[],
+        config
+      )
       const req = http.createHttp()
       try {
         const resp = await req.request(url, {

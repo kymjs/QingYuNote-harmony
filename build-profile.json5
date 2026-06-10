@@ -5,33 +5,46 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "/Users/kymjs/code/flutter/note/harmony/keys/qingyu.cer",
-          "keyAlias": "qingyunote",
-          "keyPassword": "0000001CD36337899FB75C8241CC09199E4721888A0356757879515BFC77169D50099E2E2B8BFA122F58CE48",
-          "profile": "/Users/kymjs/code/flutter/note/harmony/keys/Release.p7b",
-          "signAlg": "SHA256withECDSA",
           "storeFile": "/Users/kymjs/code/flutter/note/harmony/keys/qingyu.p12",
-          "storePassword": "0000001C9EB2B39CCF53502FF2124261D5AA9068F46498C3B2727474770751A9A2DA6F3E5BCF94AFE76AAD44"
+          "storePassword": "0000001C67CBA2496CCFF385FC85A5A5F1684588D566531E80F0337E5155AAAA1EB7F590F580C70F1A72AD78",
+          "keyAlias": "qingyunote",
+          "keyPassword": "0000001C31B7BC14FF3957965FA6D232A9D2848A2560293ADBCE51569456D9786E135D42180ABF0578D47E73",
+          "signAlg": "SHA256withECDSA",
+          "profile": "/Users/kymjs/code/flutter/note/harmony/keys/支持支付的发布证书Release.p7b",
+          "certpath": "/Users/kymjs/code/flutter/note/harmony/keys/qingyu.cer"
         }
       },
       {
         "name": "debug",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "/Users/kymjs/.ohos/config/debug_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.cer",
-          "keyAlias": "debugKey",
-          "keyPassword": "0000001B71959D29C8954C977B40D2CA1F287074638268A23CC8F531E9D4B1FC49DA411FA488384D6A131A",
-          "profile": "/Users/kymjs/.ohos/config/debug_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.p7b",
-          "signAlg": "SHA256withECDSA",
           "storeFile": "/Users/kymjs/.ohos/config/debug_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.p12",
-          "storePassword": "0000001B9F0E45094FCFF8C2BA69269AAF140015B85F621C376C649B028CC1DE41771CC9937D1258199A31"
+          "storePassword": "0000001BB4ABBA9FA7FA5E7C3E04D6E9C60332DFC4B9326CF441E13EA872AB49B5C61C44F77AAB2EEE9773",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001BF48B75FED886FCD5DEDE5DFFC0996118BEF5DB97E9D7C5C388BF04D5B55DD4926349D5F8D4DCDE",
+          "signAlg": "SHA256withECDSA",
+          "profile": "/Users/kymjs/.ohos/config/debug_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.p7b",
+          "certpath": "/Users/kymjs/Downloads/debug.cer"
+        }
+      },
+      {
+        "name": "debug2",
+        "type": "HarmonyOS",
+        "material": {
+          "storeFile": "/Users/kymjs/.ohos/config/debug2_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.p12",
+          "storePassword": "0000001ADC45696C5519582B92BCB70E08DA7A9E58F886865E52EED686C0F615DB2B343C54812D8EFACD",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001A2C5251C98912233FB687A925943E847D73BFDE8D1446C15EEA650C72501D00CA75EA13B9025A",
+          "signAlg": "SHA256withECDSA",
+          "profile": "/Users/kymjs/code/flutter/note/harmony/keys/支持支付的调试证书Debug.p7b",
+          "certpath": "/Users/kymjs/.ohos/config/debug2_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.cer"
         }
       }
     ],
     "products": [
       {
         "name": "debug",
-        "signingConfig": "debug",
+        "signingConfig": "debug2",
         "targetSdkVersion": "6.1.0(23)",
         "compatibleSdkVersion": "6.1.0(23)",
         "runtimeOS": "HarmonyOS",

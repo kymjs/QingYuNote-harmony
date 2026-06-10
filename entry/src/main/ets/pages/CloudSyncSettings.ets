@@ -6,7 +6,6 @@ import type { QingyuCloudSubscriptionStatus } from '../common/model/QingyuCloudS
 import { AppContextHolder } from '../services/AppContextHolder'
 import { Logger } from '../common/utils/Logger'
 import { buildQingyuCloudWebDavConfig } from '../services/QingyuCloudConfigHelper'
-import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 
 /** 与 `Login.ets` / `pushUrl` 参数一致，登录成功后 `router.back()` 返回云同步页 */
 const LOGIN_RETURN_CLOUD_SYNC = 'cloudSync'
@@ -43,8 +42,6 @@ struct CloudSyncSettings {
   @State qingyuSubButtonLabel: string = '立即续期'
   /** 与 Flutter `CloudSyncSettingPage` `_guestMode` 对齐 */
   @State guestMode: boolean = false
-  /** 本地缓存的远程配置中 pay 字段为 true */
-  @State payConfigReady: boolean = false
   private storedEncryptedPassword: string = ''
   private passwordTouched: boolean = false
   /** 页面是否仍在前台；异步回调返回前若已返回上一页则不再更新 @State，避免崩溃。 */
@@ -88,12 +85,10 @@ struct CloudSyncSettings {
       return
     }
     this.guestMode = await PreferencesService.getInstance().isGuestMode()
-    const filesDir = context?.filesDir ?? ''
-    this.payConfigReady = await RemoteAppConfigService.readPayConfigFromCache(filesDir)
     if (!this.isPageActive()) {
       return
     }
-    if (this.selectedProvider !== 'qingyu_cloud' || !this.payConfigReady) {
+    if (this.selectedProvider !== 'qingyu_cloud') {
       return
     }
     if (this.guestMode) {
@@ -112,8 +107,6 @@ struct CloudSyncSettings {
       return
     }
     this.guestMode = await PreferencesService.getInstance().isGuestMode()
-    const filesDir = context?.filesDir ?? ''
-    this.payConfigReady = await RemoteAppConfigService.readPayConfigFromCache(filesDir)
     const policy = await PreferencesService.getInstance().getSyncPolicy()
     const hasSavedCustom = await PreferencesService.getInstance().hasSavedCustomWebDAVConfig()
     if (!this.isPageActive()) {
@@ -618,7 +611,6 @@ struct CloudSyncSettings {
           Column({ space: 14 }) {
             this.buildProviderRadioRow()
           }
-          .visibility(this.payConfigReady?Visibility.Visible:Visibility.None)
           .padding(20)
           .margin({ bottom: 10 })
           .backgroundColor($r('app.color.card_background'))
@@ -631,7 +623,7 @@ struct CloudSyncSettings {
             offsetY: 4
           })
 
-          if (this.selectedProvider === 'webdav' || !this.payConfigReady) {
+          if (this.selectedProvider === 'webdav') {
             Column({ space: 14 }) {
               this.buildSectionTitle($r('app.string.settings_webdav_title'))
 
@@ -723,7 +715,7 @@ struct CloudSyncSettings {
             })
           }
 
-          if (this.selectedProvider === 'qingyu_cloud' && this.payConfigReady) {
+          if (this.selectedProvider === 'qingyu_cloud') {
             if (this.guestMode) {
               Column({ space: 14 }) {
                 this.buildSectionTitle($r('app.string.settings_qingyu_title'))

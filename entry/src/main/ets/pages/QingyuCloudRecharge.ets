@@ -1,4 +1,5 @@
 import { Want } from '@kit.AbilityKit'
+import { BusinessError } from '@kit.BasicServicesKit'
 import type { WebDAVConfig } from '../common/model/Note'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { PreferencesService } from '../services/PreferencesService'
@@ -16,7 +17,8 @@ import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
 /**
- * 轻羽云服务 — 会员档位；支持华为应用内支付（IAP）与支付宝 App 支付。
+ * 轻羽云服务 — 会员档位。
+ * 本地缓存 `config_hw.json`：`pay == true` 且当前版本在 `pay_version` 闭区间内走支付宝，否则华为 IAP。
  */
 @Entry
 @Component
@@ -25,6 +27,8 @@ struct QingyuCloudRecharge {
   @State applying: boolean = false
   /** 与 Flutter 充值页一致：`active` / `lifetime` 为「续期」，否则「开通」。 */
   @State payPrimaryCtaLabel: string = '开  通'
+  /** 本地缓存命中 `pay` + `pay_version` 时为 true，走支付宝 App 支付。 */
+  @State useAlipayPay: boolean = false
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
 
@@ -35,6 +39,7 @@ struct QingyuCloudRecharge {
     if (context) {
       void PreferencesService.getInstance().init(context)
     }
+    void this.refreshPaymentMode()
     void this.refreshPayPrimaryCtaLabel()
   }
 
@@ -43,7 +48,18 @@ struct QingyuCloudRecharge {
   }
 
   onPageShow(): void {
+    void this.refreshPaymentMode()
     void this.refreshPayPrimaryCtaLabel()
+  }
+
+  private async refreshPaymentMode(): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    const filesDir = context?.filesDir ?? ''
+    const useAlipay = await RemoteAppConfigService.alipayPayEnabledFromCache(filesDir)
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.useAlipayPay = useAlipay
   }
 
   private async refreshPayPrimaryCtaLabel(): Promise<void> {
@@ -514,7 +530,7 @@ struct QingyuCloudRecharge {
           })
 
           Column({ space: 10 }) {
-            Button(this.applying ? '处理中…' : `华为 · ${this.payPrimaryCtaLabel}`)
+            Button(this.applying ? '处理中…' : `${this.payPrimaryCtaLabel}`)
               .width('100%')
               .height(48)
               .fontSize($r('app.float.body_font_size'))
@@ -523,7 +539,7 @@ struct QingyuCloudRecharge {
               .backgroundColor($r('app.color.accent'))
               .borderRadius($r('app.float.pill_radius'))
               .enabled(!this.applying)
-              .visibility(Visibility.None)
+              .visibility(this.useAlipayPay ? Visibility.None : Visibility.Visible)
               .onClick(() => {
                 void this.onHuaweiPayTap()
               })
@@ -536,6 +552,7 @@ struct QingyuCloudRecharge {
               .backgroundColor($r('app.color.accent'))
               .borderRadius($r('app.float.pill_radius'))
               .enabled(!this.applying)
+              .visibility(this.useAlipayPay ? Visibility.Visible : Visibility.None)
               .onClick(() => {
                 void this.onAlipayTap()
               })
