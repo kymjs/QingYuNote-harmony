@@ -1,6 +1,8 @@
 import type { MarkdownBlock, MarkdownCheckboxItem, MarkdownInline } from '../common/utils/MarkdownUtils'
 import { CodeHighlight, type CodeHighlightToken, type CodeHighlightTokenKind } from '../common/utils/CodeHighlight'
+import { CachedNetworkImage } from '../components/CachedNetworkImage'
 import { KatexFormulaPreview } from '../components/KatexFormulaPreview'
+import { ImageCacheService } from '../services/ImageCacheService'
 import { KatexUtils } from '../common/utils/KatexUtils'
 import { fileUri } from '@kit.CoreFileKit'
 import display from '@ohos.display'
@@ -700,6 +702,19 @@ export struct NoteEditMarkdownBlocksView {
         .alignItems(HorizontalAlign.Center)
         .backgroundColor(this.codeBackgroundColor())
         .borderRadius(12)
+      } else if (ImageCacheService.isNetworkImageUrl(block.language)) {
+        CachedNetworkImage({
+          url: block.language,
+          imageWidth: '100%',
+          objectFit: ImageFit.Cover,
+          imageBorderRadius: 12,
+          alt: block.content
+        })
+          .onClick(() => {
+            if (!this.forShareExport) {
+              this.onImageTap(block.language)
+            }
+          })
       } else {
         Image(this.resolveImageSrc(block.language))
           .width('100%')

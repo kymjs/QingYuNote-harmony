@@ -2,7 +2,9 @@ import type { MarkdownBlock } from '../common/utils/MarkdownUtils'
 import type { ProfileBody } from '../services/NoteApiClient'
 import { fileUri } from '@kit.CoreFileKit'
 import { Logger } from '../common/utils/Logger'
+import { CachedNetworkImage } from '../components/CachedNetworkImage'
 import { NoteEditMarkdownBlocksView } from '../pages/NoteEditMarkdownBlocksView'
+import { ImageCacheService } from '../services/ImageCacheService'
 import { FileService } from '../services/FileService'
 import {
   DEFAULT_SHARE_CONTENT_PADDING,
@@ -224,14 +226,17 @@ export struct NoteShareExportCard {
   @Builder
   private buildAvatar() {
     if (this.avatarUrl().length > 0 && !this.shareAvatarNetworkFailed) {
-      Image(this.avatarUrl())
-        .width(SHARE_AVATAR_SIZE)
-        .height(SHARE_AVATAR_SIZE)
-        .borderRadius(SHARE_AVATAR_SIZE / 2)
-        .objectFit(ImageFit.Cover)
-        .onError(() => {
+      CachedNetworkImage({
+        url: this.avatarUrl(),
+        imageWidth: SHARE_AVATAR_SIZE,
+        imageHeight: SHARE_AVATAR_SIZE,
+        imageBorderRadius: SHARE_AVATAR_SIZE / 2,
+        objectFit: ImageFit.Cover,
+        showLoading: false,
+        onError: () => {
           this.shareAvatarNetworkFailed = true
-        })
+        }
+      })
     } else {
       Image($r('app.media.icon_app'))
         .width(SHARE_AVATAR_SIZE)
@@ -387,6 +392,14 @@ export struct NoteShareExportCard {
       .alignItems(HorizontalAlign.Center)
       .backgroundColor(this.palette().codeBackground)
       .borderRadius(12)
+    } else if (ImageCacheService.isNetworkImageUrl(block.language)) {
+      CachedNetworkImage({
+        url: block.language,
+        imageWidth: '100%',
+        objectFit: ImageFit.Cover,
+        imageBorderRadius: 12,
+        alt: block.content
+      })
     } else {
       Image(this.resolveImageSrc(block.language))
         .width('100%')

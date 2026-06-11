@@ -6,7 +6,9 @@ import {
   type EditorInsertResult,
   type EditorTextDiff
 } from '../common/utils/EditorMarkdownInsert'
+import { CachedNetworkImage } from '../components/CachedNetworkImage'
 import { EditorQuickActionBar, type EditorQuickActionType } from '../components/EditorQuickActionBar'
+import { ImageCacheService } from '../services/ImageCacheService'
 import {
   buildEditorLinkInsertDialogContent,
   type EditorLinkInsertDialogParams
@@ -2432,14 +2434,17 @@ struct NoteEdit {
   @Builder
   private buildShareAvatar() {
     if (this.shareAvatarUrlTrim().length > 0 && !this.shareAvatarNetworkFailed) {
-      Image(this.shareAvatarUrlTrim())
-        .width(NoteEdit.SHARE_AVATAR_SIZE)
-        .height(NoteEdit.SHARE_AVATAR_SIZE)
-        .borderRadius(NoteEdit.SHARE_AVATAR_SIZE / 2)
-        .objectFit(ImageFit.Cover)
-        .onError(() => {
+      CachedNetworkImage({
+        url: this.shareAvatarUrlTrim(),
+        imageWidth: NoteEdit.SHARE_AVATAR_SIZE,
+        imageHeight: NoteEdit.SHARE_AVATAR_SIZE,
+        imageBorderRadius: NoteEdit.SHARE_AVATAR_SIZE / 2,
+        objectFit: ImageFit.Cover,
+        showLoading: false,
+        onError: () => {
           this.shareAvatarNetworkFailed = true
-        })
+        }
+      })
     } else {
       Image($r('app.media.icon_app'))
         .width(NoteEdit.SHARE_AVATAR_SIZE)
@@ -2460,7 +2465,7 @@ struct NoteEdit {
       this.shareAvatarNetworkFailed = false
       this.shareProfile = await NoteApiClient.getInstance().fetchProfile()
       if (this.shareAvatarUrlTrim().length > 0) {
-        await NoteEdit.delayMs(220)
+        await ImageCacheService.getInstance().precache(this.shareAvatarUrlTrim())
       }
       await this.ensurePreferencesInitialized()
       const savedThemeRaw = await PreferencesService.getInstance().getShareCardTheme()

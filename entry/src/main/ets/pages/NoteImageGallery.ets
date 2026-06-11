@@ -1,5 +1,7 @@
 import { fileUri } from '@kit.CoreFileKit'
+import { CachedNetworkImage } from '../components/CachedNetworkImage'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
+import { ImageCacheService } from '../services/ImageCacheService'
 
 interface NoteImageGalleryParams {
   imagesJson?: string
@@ -20,29 +22,57 @@ struct GalleryImageItem {
   }
 
   build() {
-    Image(this.resolvedSrc.length > 0 ? this.resolvedSrc : this.src)
-      .width('100%')
-      .height('100%')
-      .objectFit(ImageFit.Contain)
-      .scale({
-        x: this.zoomScale,
-        y: this.zoomScale,
-        centerX: '50%',
-        centerY: '50%'
+    if (ImageCacheService.isNetworkImageUrl(this.src)) {
+      CachedNetworkImage({
+        url: this.src,
+        imageWidth: '100%',
+        imageHeight: '100%',
+        objectFit: ImageFit.Contain,
+        alt: this.src
       })
-      .alt(this.src)
-      .gesture(
-        GestureGroup(GestureMode.Exclusive,
-          TapGesture({ count: 2 })
-            .onAction(() => {
-              this.onToggleZoom()
-            }),
-          TapGesture({ count: 1 })
-            .onAction(() => {
-              this.onClose()
-            })
+        .scale({
+          x: this.zoomScale,
+          y: this.zoomScale,
+          centerX: '50%',
+          centerY: '50%'
+        })
+        .gesture(
+          GestureGroup(GestureMode.Exclusive,
+            TapGesture({ count: 2 })
+              .onAction(() => {
+                this.onToggleZoom()
+              }),
+            TapGesture({ count: 1 })
+              .onAction(() => {
+                this.onClose()
+              })
+          )
         )
-      )
+    } else {
+      Image(this.resolvedSrc.length > 0 ? this.resolvedSrc : this.src)
+        .width('100%')
+        .height('100%')
+        .objectFit(ImageFit.Contain)
+        .scale({
+          x: this.zoomScale,
+          y: this.zoomScale,
+          centerX: '50%',
+          centerY: '50%'
+        })
+        .alt(this.src)
+        .gesture(
+          GestureGroup(GestureMode.Exclusive,
+            TapGesture({ count: 2 })
+              .onAction(() => {
+                this.onToggleZoom()
+              }),
+            TapGesture({ count: 1 })
+              .onAction(() => {
+                this.onClose()
+              })
+          )
+        )
+    }
   }
 }
 

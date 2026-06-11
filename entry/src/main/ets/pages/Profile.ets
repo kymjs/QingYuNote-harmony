@@ -3,6 +3,7 @@ import { ComponentContent } from '@kit.ArkUI'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import fs from '@ohos.file.fs'
 import { PROFILE_ACCOUNT_BIND_SUPPORTED_HUAWEI } from '../common/constants/ProfileAccountBindConstants'
+import { CachedNetworkImage } from '../components/CachedNetworkImage'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { obtainHuaweiAuthorizationCode, describeHuaweiLoginError } from '../services/HuaweiAuthService'
 import {
@@ -956,14 +957,17 @@ struct Profile {
             ProfileMenuCard() {
               Row() {
                 if (this.avatarUrlTrim().length > 0 && !this.avatarNetworkLoadFailed) {
-                  Image(this.avatarUrlTrim())
-                    .width(56)
-                    .height(56)
-                    .borderRadius(28)
-                    .objectFit(ImageFit.Cover)
-                    .onError((): void => {
+                  CachedNetworkImage({
+                    url: this.avatarUrlTrim(),
+                    imageWidth: 56,
+                    imageHeight: 56,
+                    imageBorderRadius: 28,
+                    objectFit: ImageFit.Cover,
+                    showLoading: false,
+                    onError: (): void => {
                       this.avatarNetworkLoadFailed = true
-                    })
+                    }
+                  })
                 } else {
                   Image($r('app.media.icon_app'))
                     .width(56)

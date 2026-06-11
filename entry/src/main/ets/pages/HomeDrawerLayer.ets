@@ -1,3 +1,4 @@
+import { CachedNetworkImage } from '../components/CachedNetworkImage'
 import { DrawerModel } from '../common/model/DrawerModel'
 import type { FolderSidebarRow, HomeSidebarFilterMode } from '../common/utils/NoteFolderTree'
 
@@ -193,14 +194,17 @@ export struct HomeDrawerLayer {
   private buildDrawerUserHeader() {
     Row({ space: 12 }) {
       if (this.drawerAvatarUrl.trim().length > 0 && !this.drawerAvatarLoadFailed) {
-        Image(this.drawerAvatarUrl.trim())
-          .width(44)
-          .height(44)
-          .borderRadius(22)
-          .objectFit(ImageFit.Cover)
-          .onError((): void => {
+        CachedNetworkImage({
+          url: this.drawerAvatarUrl.trim(),
+          imageWidth: 44,
+          imageHeight: 44,
+          imageBorderRadius: 22,
+          objectFit: ImageFit.Cover,
+          showLoading: false,
+          onError: (): void => {
             this.drawerAvatarLoadFailed = true
-          })
+          }
+        })
       } else {
         Image($r('app.media.icon_app'))
           .width(44)
