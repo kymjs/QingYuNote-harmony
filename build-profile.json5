@@ -5,56 +5,43 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "storeFile": "/Users/kymjs/code/flutter/note/harmony/keys/qingyu.p12",
-          "storePassword": "0000001C67CBA2496CCFF385FC85A5A5F1684588D566531E80F0337E5155AAAA1EB7F590F580C70F1A72AD78",
+          "storeFile": "/Users/kymjs/code/flutter/note/harmony/keys/default_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.p12",
+          "storePassword": "0000001AAA277E2C7F4734849B670F1EF94A7991E5DF0AF5C07D8D376E22C815EF429FBBD99B4CDABA16",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001A8349CF3B9435B66DE92FA8E8836AE26142F4246BEC97551021484EAD964436580C79EC28CF28",
+          "signAlg": "SHA256withECDSA",
+          "profile": "/Users/kymjs/code/flutter/note/harmony/keys/defaultDebug.p7b",
+          "certpath": "/Users/kymjs/code/flutter/note/harmony/keys/default.cer"
+        }
+      },
+      {
+        "name": "beta",
+        "type": "HarmonyOS",
+        "material": {
+          "storeFile": "/Users/kymjs/code/flutter/note/harmony/keys/release.p12",
+          "storePassword": "0000001B7AE6ADF5B9AD1F53658F1487A71E1766F7388C04F794E411D9847BB6778B0CB0293DBF618B7E24",
           "keyAlias": "qingyunote",
-          "keyPassword": "0000001C31B7BC14FF3957965FA6D232A9D2848A2560293ADBCE51569456D9786E135D42180ABF0578D47E73",
+          "keyPassword": "0000001BA174CCDA27BDF80254D43E63279C7AE0057CBE8D5A799A748E05DB56F15B69EBF09D97ADBE8D9E",
           "signAlg": "SHA256withECDSA",
-          "profile": "/Users/kymjs/code/flutter/note/harmony/keys/支持支付的发布证书Release.p7b",
-          "certpath": "/Users/kymjs/code/flutter/note/harmony/keys/qingyu.cer"
+          "profile": "/Users/kymjs/code/flutter/note/harmony/keys/白名单Release.p7b",
+          "certpath": "/Users/kymjs/code/flutter/note/harmony/keys/release.cer"
         }
       },
       {
-        "name": "debug",
+        "name": "release",
         "type": "HarmonyOS",
         "material": {
-          "storeFile": "/Users/kymjs/.ohos/config/debug_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.p12",
-          "storePassword": "0000001BB4ABBA9FA7FA5E7C3E04D6E9C60332DFC4B9326CF441E13EA872AB49B5C61C44F77AAB2EEE9773",
-          "keyAlias": "debugKey",
-          "keyPassword": "0000001BF48B75FED886FCD5DEDE5DFFC0996118BEF5DB97E9D7C5C388BF04D5B55DD4926349D5F8D4DCDE",
+          "storeFile": "/Users/kymjs/code/flutter/note/harmony/keys/release.p12",
+          "storePassword": "0000001B7AE6ADF5B9AD1F53658F1487A71E1766F7388C04F794E411D9847BB6778B0CB0293DBF618B7E24",
+          "keyAlias": "qingyunote",
+          "keyPassword": "0000001BA174CCDA27BDF80254D43E63279C7AE0057CBE8D5A799A748E05DB56F15B69EBF09D97ADBE8D9E",
           "signAlg": "SHA256withECDSA",
-          "profile": "/Users/kymjs/.ohos/config/debug_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.p7b",
-          "certpath": "/Users/kymjs/Downloads/debug.cer"
-        }
-      },
-      {
-        "name": "debug2",
-        "type": "HarmonyOS",
-        "material": {
-          "storeFile": "/Users/kymjs/.ohos/config/debug2_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.p12",
-          "storePassword": "0000001ADC45696C5519582B92BCB70E08DA7A9E58F886865E52EED686C0F615DB2B343C54812D8EFACD",
-          "keyAlias": "debugKey",
-          "keyPassword": "0000001A2C5251C98912233FB687A925943E847D73BFDE8D1446C15EEA650C72501D00CA75EA13B9025A",
-          "signAlg": "SHA256withECDSA",
-          "profile": "/Users/kymjs/code/flutter/note/harmony/keys/支持支付的调试证书Debug.p7b",
-          "certpath": "/Users/kymjs/.ohos/config/debug2_harmony_ajn5AnmVpWqRDZMIdI14ZgyBxS0_tse9fwx0s_CVcEA=.cer"
+          "profile": "/Users/kymjs/code/flutter/note/harmony/keys/发布Release.p7b",
+          "certpath": "/Users/kymjs/code/flutter/note/harmony/keys/release.cer"
         }
       }
     ],
     "products": [
-      {
-        "name": "debug",
-        "signingConfig": "debug2",
-        "targetSdkVersion": "6.1.0(23)",
-        "compatibleSdkVersion": "6.1.0(23)",
-        "runtimeOS": "HarmonyOS",
-        "buildOption": {
-          "strictMode": {
-            "caseSensitiveCheck": true,
-            "useNormalizedOHMUrl": true
-          }
-        }
-      },
       {
         "name": "default",
         "signingConfig": "default",
@@ -67,15 +54,35 @@
             "useNormalizedOHMUrl": true
           }
         }
+      },
+      {
+        "name": "beta",
+        "signingConfig": "beta",
+        "targetSdkVersion": "6.1.0(23)",
+        "compatibleSdkVersion": "6.1.0(23)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      },
+      {
+        "name": "release",
+        "signingConfig": "release",
+        "targetSdkVersion": "6.1.0(23)",
+        "compatibleSdkVersion": "6.1.0(23)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
       }
     ],
     "buildModeSet": [
-      {
-        "name": "debug",
-      },
-      {
-        "name": "release"
-      }
     ]
   },
   "modules": [
@@ -87,7 +94,8 @@
           "name": "default",
           "applyToProducts": [
             "default",
-            "debug"
+            "beta",
+            "release"
           ]
         }
       ]
