@@ -3,6 +3,7 @@ import { CodeHighlight, type CodeHighlightToken, type CodeHighlightTokenKind } f
 import { KatexFormulaPreview } from '../components/KatexFormulaPreview'
 import { KatexUtils } from '../common/utils/KatexUtils'
 import { fileUri } from '@kit.CoreFileKit'
+import display from '@ohos.display'
 import { FileService } from '../services/FileService'
 
 /** 笔记预览/分享卡片共用的 Markdown 块渲染，独立于编辑页以缩小状态失效范围。 */
@@ -279,7 +280,7 @@ export struct NoteEditMarkdownBlocksView {
   @Builder
   private buildInlineText(inlines: MarkdownInline[], rawContent: string, fontSize: number | Resource,
     fontColor: ResourceColor, lineHeight: number, fontWeight: FontWeight = FontWeight.Regular,
-    onTap?: () => void) {
+    onTap?: () => void, wrapLongText: boolean = false) {
     if (this.hasMathInline(inlines) && !this.hasAnyMath()) {
       KatexFormulaPreview({
         source: rawContent,
@@ -291,7 +292,7 @@ export struct NoteEditMarkdownBlocksView {
     } else if (onTap) {
       Text() {
         ForEach(inlines, (inline: MarkdownInline, index: number) => {
-          this.buildInlineSpan(inline, fontColor)
+          this.buildInlineSpan(inline, fontColor, wrapLongText)
         }, (inline: MarkdownInline, index: number) => this.inlineKey(inline, index))
       }
       .fontSize(fontSize)
@@ -300,13 +301,14 @@ export struct NoteEditMarkdownBlocksView {
       .fontWeight(fontWeight)
       .width('100%')
       .constraintSize({ minHeight: 24 })
+      .wordBreak(wrapLongText ? WordBreak.BREAK_ALL : WordBreak.NORMAL)
       .onClick(() => {
         onTap()
       })
     } else {
       Text() {
         ForEach(inlines, (inline: MarkdownInline, index: number) => {
-          this.buildInlineSpan(inline, fontColor)
+          this.buildInlineSpan(inline, fontColor, wrapLongText)
         }, (inline: MarkdownInline, index: number) => this.inlineKey(inline, index))
       }
       .fontSize(fontSize)
@@ -315,11 +317,12 @@ export struct NoteEditMarkdownBlocksView {
       .fontWeight(fontWeight)
       .copyOption(CopyOptions.LocalDevice)
       .width('100%')
+      .wordBreak(wrapLongText ? WordBreak.BREAK_ALL : WordBreak.NORMAL)
     }
   }
 
   @Builder
-  private buildInlineSpan(inline: MarkdownInline, defaultColor: ResourceColor) {
+  private buildInlineSpan(inline: MarkdownInline, defaultColor: ResourceColor, plainInlineCode: boolean = false) {
     if (inline.type === 'bold') {
       Span(inline.content)
         .fontWeight(FontWeight.Bold)
@@ -329,7 +332,14 @@ export struct NoteEditMarkdownBlocksView {
         .fontStyle(FontStyle.Italic)
         .fontColor(defaultColor)
     } else if (inline.type === 'inline_code') {
-      this.buildInlineCodeTokenSpans(inline.content)
+      if (plainInlineCode) {
+        Span(inline.content)
+          .fontFamily('monospace')
+          .fontColor(this.codeTokenColor('plain'))
+          .backgroundColor(this.codeBackgroundColor())
+      } else {
+        this.buildInlineCodeTokenSpans(inline.content)
+      }
     } else if (inline.type === 'strikethrough') {
       Span(inline.content)
         .fontColor(defaultColor)
@@ -355,15 +365,25 @@ export struct NoteEditMarkdownBlocksView {
   }
 
   @Builder
-  private buildTableCell(inlines: MarkdownInline[], isHeader: boolean) {
+  private buildTableCell(inlines: MarkdownInline[], isHeader: boolean, wrapLongText: boolean = false) {
     Column() {
       this.buildInlineText(inlines, this.inlineSource(inlines),
         isHeader ? 15 : $r('app.float.body_font_size'),
         this.primaryTextColor(), this.contentLineHeight(22),
-        isHeader ? FontWeight.Medium : FontWeight.Regular)
+        isHeader ? FontWeight.Medium : FontWeight.Regular, undefined, wrapLongText)
     }
+    .width('100%')
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })
     .alignItems(HorizontalAlign.Start)
+  }
+
+  private readScreenWidthVp(): number {
+    try {
+      const dd = display.getDefaultDisplaySync()
+      return this.getUIContext().px2vp(dd.width)
+    } catch (_e) {
+      return 360
+    }
   }
 
   private tableColumnCount(block: MarkdownBlock): number {
@@ -376,6 +396,89 @@ export struct NoteEditMarkdownBlocksView {
     return count
   }
 
+  private screenWidthVp(): number {
+    return this.readScreenWidthVp()
+  }
+
+  private wideTableMaxColumnWidthVp(): number {
+    return this.screenWidthVp() * 0.4
+  }
+
+  private clampTableColumnWidthVp(width: number): number {
+    const maxWidth = this.wideTableMaxColumnWidthVp()
+    const minWidth = 48
+    return Math.min(maxWidth, Math.max(minWidth, width))
+  }
+
+  private estimateTableCellWidthVp(text: string, fontSize: number, fontWeight: FontWeight,
+    maxWidth: number, minWidth: number): number {
+    const padding = 20
+    if (text.trim().length === 0) {
+      return minWidth
+    }
+    const em = fontSize
+    const wideFactor = fontWeight === FontWeight.Medium || fontWeight === FontWeight.Bold ? 1.08 : 1
+    let maxLineWidth = 0
+    const lines = text.split('\n')
+    for (const line of lines) {
+      let lineWidth = 0
+      for (let i = 0; i < line.length; i++) {
+        const code = line.charCodeAt(i)
+        const isWide = code > 0x2E7F
+        lineWidth += isWide ? em * wideFactor : em * 0.56
+      }
+      maxLineWidth = Math.max(maxLineWidth, lineWidth)
+    }
+    const contentWidth = padding + maxLineWidth
+    if (contentWidth >= maxWidth) {
+      return maxWidth
+    }
+    return Math.max(minWidth, contentWidth)
+  }
+
+  private computeWideTableColumnWidths(block: MarkdownBlock, columnCount: number): number[] {
+    const maxWidth = this.wideTableMaxColumnWidthVp()
+    const minWidth = 48
+    const widths = new Array<number>(columnCount)
+    for (let col = 0; col < columnCount; col++) {
+      widths[col] = minWidth
+    }
+    const measureRows: Array<MarkdownInline[][]> = []
+    if ((block.tableHeaders ?? []).length > 0) {
+      measureRows.push(block.tableHeaders ?? [])
+    }
+    for (const row of block.tableRows ?? []) {
+      measureRows.push(row)
+    }
+    for (let col = 0; col < columnCount; col++) {
+      for (let rowIndex = 0; rowIndex < measureRows.length; rowIndex++) {
+        const row = measureRows[rowIndex]
+        const isHeader = rowIndex === 0 && (block.tableHeaders ?? []).length > 0
+        const cell = this.tableRowCells(row, columnCount)[col]
+        const text = this.inlineSource(cell)
+        const fontSize = 15
+        const fontWeight = isHeader ? FontWeight.Medium : FontWeight.Regular
+        const cellWidth = this.estimateTableCellWidthVp(text, fontSize, fontWeight, maxWidth, minWidth)
+        if (cellWidth > widths[col]) {
+          widths[col] = cellWidth
+        }
+      }
+      widths[col] = this.clampTableColumnWidthVp(widths[col])
+    }
+    return widths
+  }
+
+  private tableTotalWidthVp(columnWidthsVp: number[] | null): number {
+    if (columnWidthsVp === null || columnWidthsVp.length === 0) {
+      return 0
+    }
+    let total = 0
+    for (const width of columnWidthsVp) {
+      total += width
+    }
+    return total
+  }
+
   private tableRowCells(cells: MarkdownInline[][], columnCount: number): MarkdownInline[][] {
     const padded: MarkdownInline[][] = []
     for (let i = 0; i < columnCount; i++) {
@@ -385,45 +488,94 @@ export struct NoteEditMarkdownBlocksView {
   }
 
   @Builder
-  private buildTableDataRow(cells: MarkdownInline[][], rowIndex: number, isHeader: boolean, columnCount: number) {
-    Row() {
-      ForEach(this.tableRowCells(cells, columnCount), (cell: MarkdownInline[], colIndex: number) => {
-        Column() {
-          this.buildTableCell(cell, isHeader)
-        }
-        .layoutWeight(1)
-        .constraintSize({ minWidth: 72 })
-        .border({ width: { right: 1, bottom: 1 }, color: this.cardBorderColor() })
-        .backgroundColor(isHeader ? this.codeBackgroundColor() : Color.Transparent)
-      }, (cell: MarkdownInline[], colIndex: number) => this.tableCellKey(cell, rowIndex, colIndex))
+  private buildWideTableCell(cell: MarkdownInline[], isHeader: boolean, colWidth: number) {
+    Column() {
+      this.buildTableCell(cell, isHeader, true)
     }
-    .alignItems(VerticalAlign.Top)
-    .width('100%')
+    .width(colWidth)
+    .constraintSize({ minWidth: colWidth, maxWidth: colWidth })
+    .flexShrink(0)
+    .alignItems(HorizontalAlign.Start)
+    .justifyContent(FlexAlign.Start)
+    .border({ width: { right: 1, bottom: 1 }, color: this.cardBorderColor() })
+    .backgroundColor(isHeader ? this.codeBackgroundColor() : Color.Transparent)
+    .clip(true)
   }
 
   @Builder
-  private buildTableBlock(block: MarkdownBlock) {
-    Scroll() {
-      Column() {
-        if ((block.tableHeaders ?? []).length > 0) {
-          this.buildTableDataRow(block.tableHeaders ?? [], -1, true, this.tableColumnCount(block))
+  private buildTableDataRow(cells: MarkdownInline[][], rowIndex: number, isHeader: boolean, columnCount: number,
+    columnWidthsVp: number[] | null = null) {
+    Flex({
+      direction: FlexDirection.Row,
+      alignItems: ItemAlign.Stretch
+    }) {
+      ForEach(this.tableRowCells(cells, columnCount), (cell: MarkdownInline[], colIndex: number) => {
+        if (columnWidthsVp !== null && colIndex < columnWidthsVp.length) {
+          this.buildWideTableCell(cell, isHeader, this.clampTableColumnWidthVp(columnWidthsVp[colIndex]))
+        } else {
+          Column() {
+            this.buildTableCell(cell, isHeader)
+          }
+          .layoutWeight(1)
+          .constraintSize({ minWidth: 72 })
+          .alignItems(HorizontalAlign.Start)
+          .justifyContent(FlexAlign.Start)
+          .border({ width: { right: 1, bottom: 1 }, color: this.cardBorderColor() })
+          .backgroundColor(isHeader ? this.codeBackgroundColor() : Color.Transparent)
         }
-        ForEach(block.tableRows ?? [], (row: MarkdownInline[][], rowIndex: number) => {
-          this.buildTableDataRow(row, rowIndex, false, this.tableColumnCount(block))
-        }, (row: MarkdownInline[][], rowIndex: number) => {
-          const content = row
-            .map((cell: MarkdownInline[]) => cell.map((inline: MarkdownInline) => inline.content.slice(0, 12)).join(''))
-            .join('|')
-          return `${content}:${rowIndex}`
-        })
+      }, (cell: MarkdownInline[], colIndex: number) => this.tableCellKey(cell, rowIndex, colIndex))
+    }
+    .width(columnWidthsVp !== null ? this.tableTotalWidthVp(columnWidthsVp) : '100%')
+    .flexShrink(columnWidthsVp !== null ? 0 : 1)
+  }
+
+  @Builder
+  private buildTableBlockContent(block: MarkdownBlock, columnCount: number, columnWidthsVp: number[] | null) {
+    Column() {
+      if ((block.tableHeaders ?? []).length > 0) {
+        this.buildTableDataRow(block.tableHeaders ?? [], -1, true, columnCount, columnWidthsVp)
       }
-      .alignItems(HorizontalAlign.Start)
-      .border({ width: 1, color: this.cardBorderColor() })
-      .borderRadius(8)
+      ForEach(block.tableRows ?? [], (row: MarkdownInline[][], rowIndex: number) => {
+        this.buildTableDataRow(row, rowIndex, false, columnCount, columnWidthsVp)
+      }, (row: MarkdownInline[][], rowIndex: number) => {
+        const content = row
+          .map((cell: MarkdownInline[]) => cell.map((inline: MarkdownInline) => inline.content.slice(0, 12)).join(''))
+          .join('|')
+        return `${content}:${rowIndex}`
+      })
+    }
+    .alignItems(HorizontalAlign.Start)
+    .border({ width: 1, color: this.cardBorderColor() })
+    .borderRadius(8)
+    .width(columnWidthsVp !== null ? this.tableTotalWidthVp(columnWidthsVp) : '100%')
+    .constraintSize({
+      minWidth: columnWidthsVp !== null ? this.tableTotalWidthVp(columnWidthsVp) : 0
+    })
+    .flexShrink(columnWidthsVp !== null ? 0 : 1)
+  }
+
+  @Builder
+  private buildWideTableScroll(block: MarkdownBlock, columnCount: number, columnWidthsVp: number[]) {
+    Scroll() {
+      this.buildTableBlockContent(block, columnCount, columnWidthsVp)
     }
     .scrollable(ScrollDirection.Horizontal)
     .scrollBar(BarState.Auto)
     .width('100%')
+    .align(Alignment.TopStart)
+    .nestedScroll({
+      scrollForward: NestedScrollMode.SELF_FIRST,
+      scrollBackward: NestedScrollMode.SELF_FIRST
+    })
+  }
+
+  @Builder
+  private buildTableBlock(block: MarkdownBlock, columnCount: number) {
+    if (columnCount <= 3) {
+      this.buildTableBlockContent(block, columnCount, null)
+    } else {
+      this.buildWideTableScroll(block, columnCount, this.computeWideTableColumnWidths(block, columnCount))
+    }
   }
 
   @Builder
@@ -511,7 +663,7 @@ export struct NoteEditMarkdownBlocksView {
     } else if (block.type === 'checkbox_list') {
       this.buildCheckboxListBlock(block)
     } else if (block.type === 'table') {
-      this.buildTableBlock(block)
+      this.buildTableBlock(block, this.tableColumnCount(block))
     } else if (block.type === 'code') {
       Column({ space: 8 }) {
         if (block.language.length > 0) {

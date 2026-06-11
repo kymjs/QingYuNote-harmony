@@ -102,13 +102,28 @@ struct Profile {
   }
 
   private async reload(): Promise<void> {
+    await PreferencesService.getInstance().repairAbnormalLoginSessionIfNeeded()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    const loggedIn = await PreferencesService.getInstance().isUserLoggedIn()
+    const guest = await PreferencesService.getInstance().isGuestMode()
+    if (!loggedIn || guest) {
+      this.loading = false
+      this.loadError = ''
+      this.profile = null
+      this.noteApiUserId = ''
+      this.avatarNetworkLoadFailed = false
+      return
+    }
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (!this.lifecycle.isActive()) {
       return
     }
     if (tok === null || tok.length === 0) {
+      await PreferencesService.getInstance().clearLoginSession()
       this.loading = false
-      this.loadError = '请先登录'
+      this.loadError = ''
       this.profile = null
       this.noteApiUserId = ''
       this.avatarNetworkLoadFailed = false

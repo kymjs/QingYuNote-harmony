@@ -46,6 +46,7 @@ export default class EntryAbility extends UIAbility {
   private async bootstrapWindow(windowStage: window.WindowStage): Promise<void> {
     try {
       await PreferencesService.getInstance().init(this.context)
+      await PreferencesService.getInstance().repairAbnormalLoginSessionIfNeeded()
       const loggedIn = await PreferencesService.getInstance().isUserLoggedIn()
       const guest = await PreferencesService.getInstance().isGuestMode()
       if (!loggedIn && !guest) {

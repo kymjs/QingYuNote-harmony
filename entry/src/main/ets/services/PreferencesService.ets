@@ -693,6 +693,26 @@ export class PreferencesService {
     }
   }
 
+  /** 覆盖安装等场景：userId 与 token 仅残留其一时清除，由启动页重新登录。 */
+  async repairAbnormalLoginSessionIfNeeded(): Promise<boolean> {
+    try {
+      if (await this.isGuestMode()) {
+        return false
+      }
+      const hasUserId = (await this.getNoteApiUserId()).trim().length > 0
+      const tok = await this.getNoteApiAccessToken()
+      const hasToken = tok !== null && tok.length > 0
+      if (hasUserId === hasToken) {
+        return false
+      }
+      await this.clearLoginSession()
+      return true
+    } catch (error) {
+      Logger.warn('PreferencesService', `repairAbnormalLoginSessionIfNeeded failed: ${this.describeError(error as Object)}`)
+      return false
+    }
+  }
+
   async clearLoginSession(): Promise<void> {
     try {
       const store = this.ensureStore()
