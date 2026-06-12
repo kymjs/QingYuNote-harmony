@@ -19,6 +19,7 @@
     "pages/TagManage",
     "pages/FolderManage",
     "pages/TagNoteAssign",
-    "pages/Flowchart"
+    "pages/Flowchart",
+    "pages/AppLockPin"
   ]
 }

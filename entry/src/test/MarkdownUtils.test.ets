@@ -134,5 +134,26 @@ export default function markdownUtilsTest() {
       expect(shouldShowTodoNoteInHomeList('待办事项', '[ ] ', ['Todo'])).assertFalse()
       expect(shouldShowTodoNoteInHomeList('待办事项', '[ ] ', ['Work'])).assertTrue()
     })
+
+    it('should continue markdown marker on newline', 0, () => {
+      const bullet = MarkdownUtils.applyMarkdownMarkerOnNewline('* item', '* item\n')
+      expect(bullet?.text).assertEqual('* item\n* ')
+      const ordered = MarkdownUtils.applyMarkdownMarkerOnNewline('1. first', '1. first\n')
+      expect(ordered?.text).assertEqual('1. first\n2. ')
+      const unchecked = MarkdownUtils.applyMarkdownMarkerOnNewline('[ ] todo', '[ ] todo\n')
+      expect(unchecked?.text).assertEqual('[ ] todo\n[ ] ')
+      const checked = MarkdownUtils.applyMarkdownMarkerOnNewline('[-] done', '[-] done\n')
+      expect(checked?.text).assertEqual('[-] done\n[-] ')
+    })
+
+    it('should not continue marker-only line on newline', 0, () => {
+      expect(MarkdownUtils.applyMarkdownMarkerOnNewline('* ', '* \n')).assertNull()
+      expect(MarkdownUtils.applyMarkdownMarkerOnNewline('hello', 'hello\n')).assertNull()
+    })
+
+    it('should use todo fallback when enabled', 0, () => {
+      const result = MarkdownUtils.applyMarkdownMarkerOnNewline('hello', 'hello\n', true)
+      expect(result?.text).assertEqual('hello\n[ ] ')
+    })
   })
 }

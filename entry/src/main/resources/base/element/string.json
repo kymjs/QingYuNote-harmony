@@ -149,6 +149,26 @@
       "value": "启用文件夹模式"
     },
     {
+      "name": "app_lock_enabled",
+      "value": "应用锁"
+    },
+    {
+      "name": "app_lock_forgot_password",
+      "value": "忘记密码"
+    },
+    {
+      "name": "app_lock_syncing",
+      "value": "正在同步，请稍候…"
+    },
+    {
+      "name": "biometric_tap_face",
+      "value": "点击进行面容识别"
+    },
+    {
+      "name": "biometric_tap_fingerprint",
+      "value": "点击进行指纹识别"
+    },
+    {
       "name": "feedback_title",
       "value": "用户反馈"
     },
@@ -227,6 +247,10 @@
     {
       "name": "permission_vibrate_reason",
       "value": "用于流程图节点长按拖动时的触觉反馈"
+    },
+    {
+      "name": "permission_biometric_reason",
+      "value": "用于指纹或面容验证以解锁应用"
     },
     {
       "name": "login_title",

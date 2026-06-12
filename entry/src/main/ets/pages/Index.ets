@@ -27,6 +27,7 @@ import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { IdUtils } from '../common/utils/IdUtils'
 import { navigateToBindPhoneIfNeeded } from '../common/utils/BindPhoneNavigation'
 import { maybeShowBetaTestInviteDialog } from '../common/utils/BetaTestInviteNavigation'
+import { type NoteEditorEntryAction } from '../common/model/NoteEditorEntryAction'
 import { navigateToNoteEdit } from '../common/utils/NoteEditNavigation'
 import { navigateToFlowchart } from '../common/utils/FlowchartNavigation'
 import { HomeLiquidGlassTabBar } from '../components/HomeLiquidGlassTabBar'
@@ -34,7 +35,8 @@ import {
   buildHomeMoreOptionsSheetContent,
   type HomeMoreOptionsSheetParams
 } from '../dialogs/HomeMoreOptionsSheet'
-import { type NoteEditorEntryAction } from '../common/model/NoteEditorEntryAction'
+import { AppLockPinPanel } from '../components/AppLockPinPanel'
+import { AppLockService } from '../services/AppLockService'
 
 /** 与 HomeDrawerLayer 内 DRAWER_SPAN 一致，用于全屏横向拖动手势计算行程。 */
 const DRAWER_OFFSCREEN_PAD = 20
@@ -78,6 +80,8 @@ struct Index {
   @State drawerAvatarUrl: string = ''
   @State drawerGuestMode: boolean = false
   @State drawerLoggedIn: boolean = false
+  @State appLockBlocking: boolean = false
+  @State appLockRecovering: boolean = false
   private hasShownOnce: boolean = false
   /** 仅统计「非首次」onPageShow 触发的 loadNotes 完成时间；与 initializeHome 首次加载无关，避免阻断从编辑页返回后的刷新。 */
   private lastPageShowNotesReloadAtMs: number = 0
@@ -95,6 +99,7 @@ struct Index {
   }
   private noteSettingsChangedHandler = (): void => {
     void this.reloadNoteSettingsFromService()
+    void this.refreshAppLockState()
   }
   private lifecycle = new PageLifecycle()
 
@@ -201,6 +206,10 @@ struct Index {
     if (!this.lifecycle.isActive()) {
       return
     }
+    await this.refreshAppLockState()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     void this.loadDrawerUserProfile()
     await this.loadNotes(this.allNotes.length === 0)
     if (!this.lifecycle.isActive()) {
@@ -252,6 +261,31 @@ struct Index {
     if (this.lifecycle.isActive()) {
       this.filterMode = filterMode
       this.applyTagFilter()
+    }
+  }
+
+  private async refreshAppLockState(): Promise<void> {
+    const blocking = await AppLockService.getInstance().needsUnlockOnLaunch()
+    if (this.lifecycle.isActive()) {
+      this.appLockBlocking = blocking
+    }
+  }
+
+  private async handleAppLockForgotPassword(): Promise<void> {
+    if (this.appLockRecovering) {
+      return
+    }
+    this.appLockRecovering = true
+    try {
+      await AppLockService.getInstance().forgotPasswordOnLaunch()
+    } finally {
+      if (this.lifecycle.isActive()) {
+        this.appLockRecovering = false
+        this.appLockBlocking = false
+      }
+    }
+    if (this.lifecycle.isActive()) {
+      await this.ensureLoggedInOrRedirectToLogin()
     }
   }
 
@@ -1378,6 +1412,23 @@ struct Index {
         drawerGuestMode: this.drawerGuestMode,
         drawerLoggedIn: this.drawerLoggedIn
       })
+
+      if (this.appLockBlocking) {
+        AppLockPinPanel({
+          mode: 'unlock',
+          showForgotPassword: true,
+          recovering: this.appLockRecovering,
+          onSuccess: (): void => {
+            this.appLockBlocking = false
+          },
+          onForgotPassword: (): void => {
+            void this.handleAppLockForgotPassword()
+          }
+        })
+          .width('100%')
+          .height('100%')
+          .zIndex(20000)
+      }
     }
     .width('100%')
     .height('100%')

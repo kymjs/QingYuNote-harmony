@@ -37,12 +37,16 @@ const NOTE_FOLDER_MODE_ENABLED_KEY = 'note_folder_mode_enabled'
 const BETA_TEST_INVITE_DIALOG_SHOWN_KEY = 'beta_test_invite_dialog_shown'
 /** 与 Flutter `prefMembershipExpiryReminderLastShownYmdKey` 一致：会员到期提醒弹窗上次展示日期 */
 const MEMBERSHIP_EXPIRY_REMINDER_LAST_SHOWN_YMD_KEY = 'membership_expiry_reminder_last_shown_ymd'
+/** 与 Flutter `prefAiMembershipGateDialogShownKey` 一致：AI 会员拦截弹窗已展示过则不再弹出 */
+const AI_MEMBERSHIP_GATE_DIALOG_SHOWN_KEY = 'ai_membership_gate_dialog_shown'
 /** 与 Flutter `AppConst.prefShareCardThemeKey` 一致 */
 const SHARE_CARD_THEME_KEY = 'share_card_theme'
 /** 与 Flutter `AppConst.prefShareCardToneKey` 一致 */
 const SHARE_CARD_TONE_KEY = 'share_card_tone'
 /** 登录成功后导航：`Login` 消费并清空（OAuth 返回后 router params 可能丢失） */
 const LOGIN_RETURN_TARGET_KEY = 'login_return_target'
+/** 与 Flutter `AppConst.prefBiometricLockEnabledKey` 一致：本机生物识别锁，不同步远端 */
+const APP_BIOMETRIC_LOCK_ENABLED_KEY = 'app_biometric_lock_enabled'
 
 export interface LegacyNoteSettingsFlags {
   quick: boolean
@@ -660,6 +664,29 @@ export class PreferencesService {
     }
   }
 
+  /** AI 会员拦截弹窗是否已在本地展示过（设备维度，再次点击直达充值页）。 */
+  async hasAiMembershipGateDialogShown(): Promise<boolean> {
+    try {
+      const store = this.ensureStore()
+      return store.getSync(AI_MEMBERSHIP_GATE_DIALOG_SHOWN_KEY, false) as boolean
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `hasAiMembershipGateDialogShown failed: ${this.describeError(error as Object)}`)
+      return false
+    }
+  }
+
+  async setAiMembershipGateDialogShown(value: boolean): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(AI_MEMBERSHIP_GATE_DIALOG_SHOWN_KEY, value)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `setAiMembershipGateDialogShown failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
   async setMembershipExpiryReminderLastShownYmd(ymd: string): Promise<void> {
     try {
       const store = this.ensureStore()
@@ -791,6 +818,49 @@ export class PreferencesService {
     await NoteSettingsRemoteSync.getInstance().pushIfPossible(
       await NoteSettingsService.getInstance().exportDocument()
     )
+  }
+
+  async getAppLockEnabled(): Promise<boolean> {
+    return await NoteSettingsService.getInstance().getAppLockEnabled()
+  }
+
+  async getAppLockPasswordEnc(): Promise<string> {
+    return await NoteSettingsService.getInstance().getAppLockPasswordEnc()
+  }
+
+  async enableAppLock(encryptedPassword: string): Promise<void> {
+    await NoteSettingsService.getInstance().enableAppLock(encryptedPassword)
+    await NoteSettingsRemoteSync.getInstance().pushIfPossible(
+      await NoteSettingsService.getInstance().exportDocument()
+    )
+  }
+
+  async disableAppLock(): Promise<void> {
+    await NoteSettingsService.getInstance().disableAppLock()
+    await this.setBiometricLockEnabled(false)
+    await NoteSettingsRemoteSync.getInstance().pushIfPossible(
+      await NoteSettingsService.getInstance().exportDocument()
+    )
+  }
+
+  async getBiometricLockEnabled(): Promise<boolean> {
+    try {
+      return this.ensureStore().getSync(APP_BIOMETRIC_LOCK_ENABLED_KEY, false) as boolean
+    } catch (error) {
+      Logger.warn('PreferencesService', `getBiometricLockEnabled failed: ${this.describeError(error as Object)}`)
+      return false
+    }
+  }
+
+  async setBiometricLockEnabled(enabled: boolean): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(APP_BIOMETRIC_LOCK_ENABLED_KEY, enabled)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setBiometricLockEnabled failed: ${this.describeError(error as Object)}`)
+      throw this.toRuntimeError(error as Object)
+    }
   }
 
   async getHomeSidebarFilterMode(): Promise<'tag' | 'folder'> {

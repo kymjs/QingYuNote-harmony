@@ -200,12 +200,7 @@ export class MarkdownUtils {
     return lines.join('\n')
   }
 
-  /** Todo 标签笔记换行时，在新行行首自动插入 `[ ] `。 */
-  static applyTodoCheckboxOnNewline(
-    oldContent: string,
-    newContent: string,
-    caret: number
-  ): EditorInsertResult | null {
+  private static findNewlineInsertAt(oldContent: string, newContent: string): number | null {
     if (newContent.length <= oldContent.length) {
       return null
     }
@@ -222,17 +217,118 @@ export class MarkdownUtils {
     if (insertAt === -1 || newContent[insertAt] !== '\n') {
       return null
     }
+    return insertAt
+  }
+
+  private static lineStartBefore(text: string, offset: number): number {
+    if (offset <= 0) {
+      return 0
+    }
+    const idx = text.lastIndexOf('\n', offset - 1)
+    return idx < 0 ? 0 : idx + 1
+  }
+
+  private static lineAlreadyHasContinuableMarker(lineContent: string): boolean {
+    const trimmed = lineContent.trimStart()
+    if (trimmed.length === 0) {
+      return false
+    }
+    if (MarkdownUtils.isCheckboxLine(trimmed)) {
+      return true
+    }
+    if (/^[-*+]\s+/.test(trimmed)) {
+      return true
+    }
+    if (/^\d+\.\s+/.test(trimmed)) {
+      return true
+    }
+    if (trimmed.startsWith('>')) {
+      return true
+    }
+    return false
+  }
+
+  /** 从行首提取可在换行后延续的 Markdown 标记；仅含标记无正文时返回 null（退出列表）。 */
+  static lineMarkerPrefixForContinuation(line: string): string | null {
+    const trimmed = line.trimStart()
+    const leading = line.slice(0, line.length - trimmed.length)
+    if (MarkdownUtils.isUncheckedCheckboxLine(trimmed)) {
+      const text = MarkdownUtils.checkboxLineText(trimmed)
+      if (text.trim().length === 0) {
+        return null
+      }
+      return `${leading}[ ] `
+    }
+    if (MarkdownUtils.isCheckedCheckboxLine(trimmed)) {
+      const text = MarkdownUtils.checkboxLineText(trimmed)
+      if (text.trim().length === 0) {
+        return null
+      }
+      return `${leading}[-] `
+    }
+    const bulletMatch = /^([-*+])\s+(.*)$/.exec(trimmed)
+    if (bulletMatch !== null) {
+      if ((bulletMatch[2] ?? '').trim().length === 0) {
+        return null
+      }
+      return `${leading}${bulletMatch[1]} `
+    }
+    const orderedMatch = /^(\d+)\.\s+(.*)$/.exec(trimmed)
+    if (orderedMatch !== null) {
+      if ((orderedMatch[2] ?? '').trim().length === 0) {
+        return null
+      }
+      const number = parseInt(orderedMatch[1] ?? '0', 10)
+      return `${leading}${number + 1}. `
+    }
+    if (trimmed.startsWith('>')) {
+      const text = trimmed.replace(/^>\s?/, '')
+      if (text.trim().length === 0) {
+        return null
+      }
+      return `${leading}> `
+    }
+    return null
+  }
+
+  /** 换行时延续上一行行首 Markdown 标记；todoFallback 为 true 且无标记时插入 `[ ] `。 */
+  static applyMarkdownMarkerOnNewline(
+    oldContent: string,
+    newContent: string,
+    todoFallback: boolean = false
+  ): EditorInsertResult | null {
+    const insertAt = MarkdownUtils.findNewlineInsertAt(oldContent, newContent)
+    if (insertAt === null) {
+      return null
+    }
+    const prevLineStart = MarkdownUtils.lineStartBefore(oldContent, insertAt)
+    const prevLine = oldContent.slice(prevLineStart, insertAt)
+    let prefix = MarkdownUtils.lineMarkerPrefixForContinuation(prevLine)
+    if (prefix === null && todoFallback) {
+      prefix = '[ ] '
+    }
+    if (prefix === null) {
+      return null
+    }
     const lineStart = insertAt + 1
     const lineEnd = newContent.indexOf('\n', lineStart)
     const lineContent = lineEnd === -1
       ? newContent.slice(lineStart)
       : newContent.slice(lineStart, lineEnd)
-    if (lineContent.startsWith('[ ]') || lineContent.startsWith('[-]') || lineContent.startsWith('☐')) {
+    if (MarkdownUtils.lineAlreadyHasContinuableMarker(lineContent)) {
       return null
     }
-    const prefix = '[ ] '
     const updated = `${newContent.slice(0, lineStart)}${prefix}${newContent.slice(lineStart)}`
     return { text: updated, caret: lineStart + prefix.length }
+  }
+
+  /** Todo 标签笔记换行时，在新行行首自动插入 `[ ] `。 */
+  static applyTodoCheckboxOnNewline(
+    oldContent: string,
+    newContent: string,
+    caret: number
+  ): EditorInsertResult | null {
+    return MarkdownUtils.applyMarkdownMarkerOnNewline(oldContent, newContent, true)
   }
 
   static summary(content: string, maxLength: number = 100): string {

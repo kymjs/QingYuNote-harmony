@@ -39,6 +39,14 @@ export class NoteSettingsService {
     return (await this.current()).folderModeEnabled
   }
 
+  async getAppLockEnabled(): Promise<boolean> {
+    return (await this.current()).appLockEnabled
+  }
+
+  async getAppLockPasswordEnc(): Promise<string> {
+    return (await this.current()).appLockPasswordEnc
+  }
+
   async setNoteQuickActionBarEnabled(enabled: boolean): Promise<void> {
     const cur = await this.current()
     if (cur.quickActionBarEnabled === enabled) {
@@ -49,7 +57,9 @@ export class NoteSettingsService {
       enabled,
       cur.folderModeEnabled,
       cur.version,
-      true
+      true,
+      cur.appLockEnabled,
+      cur.appLockPasswordEnc
     )
     await this.persistLocal(next)
   }
@@ -64,7 +74,40 @@ export class NoteSettingsService {
       cur.quickActionBarEnabled,
       enabled,
       cur.version,
-      true
+      true,
+      cur.appLockEnabled,
+      cur.appLockPasswordEnc
+    )
+    await this.persistLocal(next)
+  }
+
+  async enableAppLock(encryptedPassword: string): Promise<void> {
+    const cur = await this.current()
+    const next = new NoteSettingsDocument(
+      Date.now(),
+      cur.quickActionBarEnabled,
+      cur.folderModeEnabled,
+      cur.version,
+      true,
+      true,
+      encryptedPassword
+    )
+    await this.persistLocal(next)
+  }
+
+  async disableAppLock(): Promise<void> {
+    const cur = await this.current()
+    if (!cur.appLockEnabled && cur.appLockPasswordEnc.length === 0) {
+      return
+    }
+    const next = new NoteSettingsDocument(
+      Date.now(),
+      cur.quickActionBarEnabled,
+      cur.folderModeEnabled,
+      cur.version,
+      true,
+      false,
+      ''
     )
     await this.persistLocal(next)
   }

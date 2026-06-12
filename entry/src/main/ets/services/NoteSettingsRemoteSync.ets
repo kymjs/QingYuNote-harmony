@@ -36,7 +36,9 @@ export class NoteSettingsRemoteSync {
       doc.quickActionBarEnabled,
       doc.folderModeEnabled,
       doc.version,
-      doc.locallyModified
+      doc.locallyModified,
+      doc.appLockEnabled,
+      doc.appLockPasswordEnc
     )
     await NoteSettingsService.getInstance().applyRemoteDocument(stamped)
     return stamped

@@ -46,6 +46,7 @@ import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { NoteFolderTree, type FolderSidebarRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 import { type NoteEditorEntryAction } from '../common/model/NoteEditorEntryAction'
 import { maybeShowMembershipExpiryReminderDialog } from '../common/utils/MembershipExpiryReminderNavigation'
+import { ensureAiMembershipAccess } from '../common/utils/AiMembershipGateNavigation'
 import { ShareCardTheme, ShareCardTone, ShareThemeColors } from '../share/ShareTheme'
 import {
   NoteShareExportCard,
@@ -549,11 +550,14 @@ struct NoteEdit {
   }
 
   private handleContentChange(): void {
-    if (!this.suppressContentCaretSync && this.noteTagsSafe().includes('Todo')) {
+    if (!this.suppressContentCaretSync) {
       const oldText = this.previousContent
       const newText = this.content
-      const caret = this.currentContentCaret()
-      const result = MarkdownUtils.applyTodoCheckboxOnNewline(oldText, newText, caret)
+      const result = MarkdownUtils.applyMarkdownMarkerOnNewline(
+        oldText,
+        newText,
+        this.noteTagsSafe().includes('Todo')
+      )
       if (result !== null) {
         this.applyContentInsert(result)
         this.previousContent = result.text
@@ -778,6 +782,9 @@ struct NoteEdit {
     if (this.aiTagCreating) {
       return
     }
+    if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+      return
+    }
     this.aiTagCreating = true
     this.tagMenuVisible = false
     try {
@@ -954,7 +961,7 @@ struct NoteEdit {
         return
       }
       if (action === 'aiLinkExtract') {
-        this.openAiLinkExtractDialog()
+        void this.openAiLinkExtractDialog()
       } else if (action === 'insertImage') {
         void this.insertImage()
       } else if (action === 'generateNoteFromImage') {
@@ -1537,6 +1544,9 @@ struct NoteEdit {
   }
 
   private async insertImage(thenOptimize: boolean = false): Promise<void> {
+    if (thenOptimize && !(await ensureAiMembershipAccess(this.getUIContext()))) {
+      return
+    }
     try {
       const photoSelectOptions: photoAccessHelper.PhotoSelectOptions = new photoAccessHelper.PhotoSelectOptions()
       photoSelectOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE
@@ -2880,6 +2890,9 @@ struct NoteEdit {
     if (this.aiNoteWorking) {
       return
     }
+    if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+      return
+    }
     const trimmed = this.content.trim()
     const hasImageRefs = NoteStateCodec.extractImageRefs(this.content).length > 0
     const noteHasText = NoteStateCodec.hasSubstantiveNoteText(this.content)
@@ -2923,7 +2936,10 @@ struct NoteEdit {
     }
   }
 
-  private openAiLinkExtractDialog(): void {
+  private async openAiLinkExtractDialog(): Promise<void> {
+    if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+      return
+    }
     const ui = this.getUIContext()
     let holder: ComponentContent<EditorAiLinkExtractDialogParams> | undefined = undefined
     const params: EditorAiLinkExtractDialogParams = {
@@ -2990,6 +3006,19 @@ struct NoteEdit {
     }
   }
 
+  private async onMobileAiButtonPressed(): Promise<void> {
+    if (this.aiNoteWorking) {
+      return
+    }
+    if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+      return
+    }
+    this.aiMenuVisible = !this.aiMenuVisible
+    if (this.aiMenuVisible) {
+      this.tagMenuVisible = false
+    }
+  }
+
   @Builder
   buildAiWorkingOverlay() {
     Stack({ alignContent: Alignment.Center }) {
@@ -3039,10 +3068,7 @@ struct NoteEdit {
           if (this.aiNoteWorking) {
             return
           }
-          this.aiMenuVisible = !this.aiMenuVisible
-          if (this.aiMenuVisible) {
-            this.tagMenuVisible = false
-          }
+          void this.onMobileAiButtonPressed()
         })
         .shadow({
           radius: 18,

@@ -1,6 +1,6 @@
 /** 笔记设置页开关的跨端 JSON（与 Flutter `NoteSettingsDocument` 对齐）。 */
 export class NoteSettingsDocument {
-  static readonly currentVersion: number = 1
+  static readonly currentVersion: number = 2
   /** 自旧 Preferences 迁移、尚未被用户在本机修改过的文档时间戳。 */
   static readonly pristineUpdatedAt: number = 0
 
@@ -8,6 +8,10 @@ export class NoteSettingsDocument {
   updatedAt: number
   quickActionBarEnabled: boolean
   folderModeEnabled: boolean
+  /** 是否启用应用锁（启动时需输入 4 位数字密码）。 */
+  appLockEnabled: boolean
+  /** RSA/AES 加密后的 4 位数字密码（密钥与笔记正文一致）。 */
+  appLockPasswordEnc: string
   /** 用户在本机通过设置页改过开关；迁移文档为 `false`。 */
   locallyModified: boolean
 
@@ -16,12 +20,16 @@ export class NoteSettingsDocument {
     quickActionBarEnabled: boolean = true,
     folderModeEnabled: boolean = false,
     version: number = NoteSettingsDocument.currentVersion,
-    locallyModified: boolean = false
+    locallyModified: boolean = false,
+    appLockEnabled: boolean = false,
+    appLockPasswordEnc: string = ''
   ) {
     this.version = version
     this.updatedAt = updatedAt
     this.quickActionBarEnabled = quickActionBarEnabled
     this.folderModeEnabled = folderModeEnabled
+    this.appLockEnabled = appLockEnabled
+    this.appLockPasswordEnc = appLockPasswordEnc
     this.locallyModified = locallyModified
   }
 
@@ -32,7 +40,9 @@ export class NoteSettingsDocument {
 
   contentEquals(other: NoteSettingsDocument): boolean {
     return this.quickActionBarEnabled === other.quickActionBarEnabled &&
-      this.folderModeEnabled === other.folderModeEnabled
+      this.folderModeEnabled === other.folderModeEnabled &&
+      this.appLockEnabled === other.appLockEnabled &&
+      this.appLockPasswordEnc === other.appLockPasswordEnc
   }
 
   static fromJsonRecord(json: Record<string, Object>): NoteSettingsDocument {
@@ -41,7 +51,9 @@ export class NoteSettingsDocument {
       NoteSettingsDocument.asBool(json['quickActionBarEnabled'], true),
       NoteSettingsDocument.asBool(json['folderModeEnabled'], false),
       NoteSettingsDocument.asInt(json['version'], NoteSettingsDocument.currentVersion),
-      NoteSettingsDocument.asBool(json['locallyModified'], false)
+      NoteSettingsDocument.asBool(json['locallyModified'], false),
+      NoteSettingsDocument.asBool(json['appLockEnabled'], false),
+      NoteSettingsDocument.asString(json['appLockPasswordEnc'])
     )
   }
 
@@ -51,6 +63,10 @@ export class NoteSettingsDocument {
     out['updatedAt'] = this.updatedAt
     out['quickActionBarEnabled'] = this.quickActionBarEnabled
     out['folderModeEnabled'] = this.folderModeEnabled
+    out['appLockEnabled'] = this.appLockEnabled
+    if (this.appLockPasswordEnc.length > 0) {
+      out['appLockPasswordEnc'] = this.appLockPasswordEnc
+    }
     out['locallyModified'] = this.locallyModified
     return out
   }
@@ -80,5 +96,12 @@ export class NoteSettingsDocument {
       return false
     }
     return fallback
+  }
+
+  private static asString(value: Object | undefined): string {
+    if (value === undefined || value === null) {
+      return ''
+    }
+    return `${value}`
   }
 }

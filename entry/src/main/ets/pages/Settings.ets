@@ -6,6 +6,7 @@ import { runAppUpdateCheckManually } from '../services/AppUpdateUi'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { SyncConstants } from '../common/constants/SyncConstants'
+import { BiometricLockService } from '../services/BiometricLockService'
 
 /** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展，用于退出登录后避免返回敏感页。 */
 interface RouterWithOptionalClear {
@@ -22,6 +23,10 @@ struct Settings {
   @State noteSettingsLoading: boolean = true
   @State quickActionBarEnabled: boolean = true
   @State folderModeEnabled: boolean = false
+  @State appLockEnabled: boolean = false
+  @State biometricAvailable: boolean = false
+  @State biometricLockEnabled: boolean = false
+  @State biometricLockLabel: string = '指纹锁'
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
   private noteSettingsChangedHandler = (): void => {
@@ -69,6 +74,23 @@ struct Settings {
     }
     this.folderModeEnabled =
       await PreferencesService.getInstance().getNoteFolderModeEnabled()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.appLockEnabled =
+      await PreferencesService.getInstance().getAppLockEnabled()
+    await this.loadBiometricSettings()
+  }
+
+  private async loadBiometricSettings(): Promise<void> {
+    await BiometricLockService.getInstance().ensureConsistentWithAppLock(this.appLockEnabled)
+    const kind = await BiometricLockService.getInstance().getAvailableKind()
+    const enabled = await PreferencesService.getInstance().getBiometricLockEnabled()
+    if (this.lifecycle.isActive()) {
+      this.biometricAvailable = kind !== 'none'
+      this.biometricLockEnabled = enabled && this.appLockEnabled
+      this.biometricLockLabel = BiometricLockService.getInstance().settingsLabelFor(kind)
+    }
   }
 
   private async loadSettingsState(): Promise<void> {
@@ -95,6 +117,12 @@ struct Settings {
     }
     this.folderModeEnabled =
       await PreferencesService.getInstance().getNoteFolderModeEnabled()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.appLockEnabled =
+      await PreferencesService.getInstance().getAppLockEnabled()
+    await this.loadBiometricSettings()
     if (this.lifecycle.isActive()) {
       this.noteSettingsLoading = false
     }
@@ -131,6 +159,84 @@ struct Settings {
 
   private toggleFolderMode(): void {
     void this.setFolderModeEnabled(!this.folderModeEnabled)
+  }
+
+  private async setAppLockEnabled(enabled: boolean): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+    if (enabled) {
+      const hasPassword =
+        (await PreferencesService.getInstance().getAppLockPasswordEnc()).length > 0
+      if (hasPassword) {
+        const enc = await PreferencesService.getInstance().getAppLockPasswordEnc()
+        await PreferencesService.getInstance().enableAppLock(enc)
+        if (this.lifecycle.isActive()) {
+          this.appLockEnabled = true
+        }
+        return
+      }
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/AppLockPin',
+        params: { mode: 'setup' }
+      })
+      if (this.lifecycle.isActive()) {
+        this.appLockEnabled = await PreferencesService.getInstance().getAppLockEnabled()
+      }
+      return
+    }
+    await this.getUIContext().getRouter().pushUrl({
+      url: 'pages/AppLockPin',
+      params: { mode: 'verifyDisable' }
+    })
+    if (this.lifecycle.isActive()) {
+      this.appLockEnabled = await PreferencesService.getInstance().getAppLockEnabled()
+      await this.loadBiometricSettings()
+    }
+  }
+
+  private async setBiometricLockEnabled(enabled: boolean): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+    if (enabled) {
+      if (!this.appLockEnabled) {
+        this.showToast('请先开启应用锁')
+        return
+      }
+      const outcome = await BiometricLockService.getInstance().authenticate(
+        `验证${this.biometricLockLabel.replace('锁', '')}以开启`)
+      if (outcome !== 'success') {
+        return
+      }
+      await PreferencesService.getInstance().setBiometricLockEnabled(true)
+      if (this.lifecycle.isActive()) {
+        this.biometricLockEnabled = true
+      }
+      return
+    }
+    await PreferencesService.getInstance().setBiometricLockEnabled(false)
+    if (this.lifecycle.isActive()) {
+      this.biometricLockEnabled = false
+    }
+  }
+
+  private toggleBiometricLock(): void {
+    void this.setBiometricLockEnabled(!this.biometricLockEnabled)
+  }
+
+  private showToast(message: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: message, duration: 2000 })
+    } catch (_) {
+      console.error(`Settings toast: ${message}`)
+    }
+  }
+
+  private toggleAppLock(): void {
+    void this.setAppLockEnabled(!this.appLockEnabled)
   }
 
   private async handleLogout(): Promise<void> {
@@ -360,6 +466,60 @@ struct Settings {
               .onClick(() => {
                 this.toggleFolderMode()
               })
+
+              Divider()
+                .color($r('app.color.divider'))
+                .strokeWidth(1)
+
+              Row() {
+                Text($r('app.string.app_lock_enabled'))
+                  .fontSize($r('app.float.body_font_size'))
+                  .fontColor($r('app.color.primary_text'))
+                  .layoutWeight(1)
+                Toggle({ type: ToggleType.Switch, isOn: this.appLockEnabled })
+                  .selectedColor($r('app.color.accent'))
+                  .hitTestBehavior(HitTestMode.None)
+              }
+              .width('100%')
+              .padding({
+                left: 20,
+                right: 16,
+                top: 14,
+                bottom: 14
+              })
+              .justifyContent(FlexAlign.SpaceBetween)
+              .alignItems(VerticalAlign.Center)
+              .onClick(() => {
+                this.toggleAppLock()
+              })
+
+              if (this.biometricAvailable) {
+                Divider()
+                  .color($r('app.color.divider'))
+                  .strokeWidth(1)
+
+                Row() {
+                  Text(this.biometricLockLabel)
+                    .fontSize($r('app.float.body_font_size'))
+                    .fontColor($r('app.color.primary_text'))
+                    .layoutWeight(1)
+                  Toggle({ type: ToggleType.Switch, isOn: this.biometricLockEnabled })
+                    .selectedColor($r('app.color.accent'))
+                    .hitTestBehavior(HitTestMode.None)
+                }
+                .width('100%')
+                .padding({
+                  left: 20,
+                  right: 16,
+                  top: 14,
+                  bottom: 14
+                })
+                .justifyContent(FlexAlign.SpaceBetween)
+                .alignItems(VerticalAlign.Center)
+                .onClick(() => {
+                  this.toggleBiometricLock()
+                })
+              }
             }
             .width('100%')
             .backgroundColor($r('app.color.card_background'))
