@@ -21,6 +21,8 @@ export interface NoteShareExportCardParams {
   snapshotCompatMode?: boolean
   /** 导出快照跳过 footer 二维码 Image，规避 checkImage 失败。 */
   snapshotSkipQr?: boolean
+  /** 为 true 时底部展示图标，否则展示官网二维码。 */
+  showAppIcon?: boolean
   styleKey?: string
   title: string
   content: string
@@ -81,6 +83,8 @@ export struct NoteShareExportCard {
   @Prop snapshotCompatMode: boolean = false
   /** 导出快照跳过 footer 二维码 Image。 */
   @Prop snapshotSkipQr: boolean = false
+  /** 为 true 时底部展示图标，否则展示官网二维码。 */
+  @Prop showAppIcon: boolean = false
   /** 含 captureKey，主题/色调切换时强制 Markdown 块重建。 */
   @Prop styleKey: string = ''
   @Prop title: string = ''
@@ -309,10 +313,15 @@ export struct NoteShareExportCard {
 
   @Builder
   private buildQrCode(p: ShareThemePalette) {
-    if (this.snapshotSkipQr) {
+    if (this.snapshotSkipQr && !this.showAppIcon) {
       Column()
         .width(this.qrSize())
         .height(this.qrSize())
+    } else if (this.showAppIcon) {
+      Image($r('app.media.icon_app'))
+        .width(this.qrSize())
+        .height(this.qrSize())
+        .objectFit(ImageFit.Contain)
     } else if (this.useTransparentQr()) {
       Image($r('app.media.website_qrcode'))
         .width(this.qrSize())

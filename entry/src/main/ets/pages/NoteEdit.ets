@@ -161,6 +161,7 @@ struct NoteEdit {
   @State shareExportTone: ShareCardTone = ShareCardTone.DARK
   @State shareExportSnapshotCompatMode: boolean = false
   @State shareExportSnapshotSkipQr: boolean = false
+  @State shareShowAppIcon: boolean = false
   private saveTimer: number = -1
   private previewTimer: number = -1
   private previewDirty: boolean = true
@@ -2474,6 +2475,7 @@ struct NoteEdit {
       const savedTone = ShareThemeColors.parseTone(savedToneRaw)
       this.shareTheme = savedTheme
       this.shareTone = savedTone
+      this.shareShowAppIcon = false
       const path = await this.exportShareImageToCache(savedTheme, savedTone)
       if (!path || path.length === 0) {
         this.showPreviewMessage('生成长图失败')
@@ -2581,6 +2583,7 @@ struct NoteEdit {
     NoteSharePreviewSheet({
       theme: this.shareTheme,
       tone: this.shareTone,
+      showAppIcon: this.shareShowAppIcon,
       sheetRevision: this.shareSheetRevision,
       params: {
         onThemeChange: (theme: ShareCardTheme): void => {
@@ -2605,12 +2608,18 @@ struct NoteEdit {
             void this.regenerateSharePreview(this.shareTheme, tone)
           }
         },
+        onFooterImageToggle: (): void => {
+          this.shareShowAppIcon = !this.shareShowAppIcon
+          Logger.info('NoteEdit',
+            `shareSheet button=footerImage showAppIcon=${this.shareShowAppIcon}`)
+          void this.regenerateSharePreview()
+        },
         onSave: (): void => {
           Logger.info('NoteEdit', 'shareSheet button=action label=保存到相册')
           void this.onSharePreviewSave()
         },
         onShare: (): void => {
-          Logger.info('NoteEdit', 'shareSheet button=action label=分享到其他')
+          Logger.info('NoteEdit', 'shareSheet button=action label=分享')
           void this.onSharePreviewShareOthers()
         },
         onCancel: (): void => {
@@ -2619,12 +2628,14 @@ struct NoteEdit {
         }
       }
     })
+      .key(`share_preview_sheet_${this.shareShowAppIcon}`)
   }
 
   private shareExportMountKey(): string {
     return `${this.shareCardCaptureKey}_${this.shareExportTheme}_${this.shareExportTone}_` +
       `${this.shareExportSnapshotCompatMode ? 'compat' : 'normal'}_` +
-      `${this.shareExportSnapshotSkipQr ? 'noqr' : 'qr'}`
+      `${this.shareExportSnapshotSkipQr ? 'noqr' : 'qr'}_` +
+      `${this.shareShowAppIcon ? 'appicon' : 'qrcode'}`
   }
 
   @Builder
@@ -2634,6 +2645,7 @@ struct NoteEdit {
       tone: this.shareExportTone,
       snapshotCompatMode: this.shareExportSnapshotCompatMode,
       snapshotSkipQr: this.shareExportSnapshotSkipQr,
+      showAppIcon: this.shareShowAppIcon,
       styleKey: `${this.shareCardCaptureKey}_${this.shareExportTheme}_${this.shareExportTone}`,
       title: this.title,
       content: this.content,

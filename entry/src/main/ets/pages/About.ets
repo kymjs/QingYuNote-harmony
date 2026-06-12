@@ -130,7 +130,7 @@ struct About {
                 .lineHeight(22)
                 .textAlign(TextAlign.Center)
                 .width('100%')
-              Text('轻羽云笔记是一款跨平台云笔记应用，同时支持 Android、iOS、HarmonyOS、macOS、Windows、Linux，无论你正在使用哪台设备，笔记都在手边。')
+              Text('轻羽云笔记是一款多平台云笔记应用，同时支持 Android、iOS、HarmonyOS、macOS、Windows、Linux，无论你正在使用哪台设备，笔记都在手边。')
                 .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.secondary_text'))
                 .lineHeight(22)

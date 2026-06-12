@@ -3,10 +3,13 @@ import { Logger } from '../common/utils/Logger'
 import { ShareCardTheme, ShareCardTone, ShareThemeColors } from './ShareTheme'
 
 const SHARE_PREVIEW_SHEET_LOG_TAG: string = 'NoteSharePreviewSheet'
+const SHARE_ACTION_BUTTON_SIZE: number = 48
+const SHARE_ACTION_ICON_SIZE: number = SHARE_ACTION_BUTTON_SIZE * 0.4
 
 export interface NoteSharePreviewSheetParams {
   onThemeChange: (theme: ShareCardTheme) => void
   onToneChange: (tone: ShareCardTone) => void
+  onFooterImageToggle: () => void
   onSave: () => void
   onShare: () => void
   onCancel: () => void
@@ -16,10 +19,12 @@ export interface NoteSharePreviewSheetParams {
 export struct NoteSharePreviewSheet {
   @Prop @Watch('onThemePropChanged') theme: ShareCardTheme = ShareCardTheme.CLASSIC
   @Prop @Watch('onTonePropChanged') tone: ShareCardTone = ShareCardTone.DARK
+  @Prop showAppIcon: boolean = false
   @Prop sheetRevision: number = 0
   @Prop params: NoteSharePreviewSheetParams = {
     onThemeChange: (_t: ShareCardTheme): void => {},
     onToneChange: (_t: ShareCardTone): void => {},
+    onFooterImageToggle: (): void => {},
     onSave: (): void => {},
     onShare: (): void => {},
     onCancel: (): void => {}
@@ -196,10 +201,57 @@ export struct NoteSharePreviewSheet {
             this.logButtonTap('action', '保存到相册')
             this.params.onSave()
           })
-          this.buildAction($r('sys.symbol.share'), '分享到其他应用', (): void => {
-            this.logButtonTap('action', '分享到其他')
+          this.buildAction($r('sys.symbol.share'), '分享', (): void => {
+            this.logButtonTap('action', '分享')
             this.params.onShare()
           })
+          if (this.showAppIcon) {
+            Column({ space: 4 }) {
+              Row() {
+                Image($r('app.media.website_qrcode'))
+                  .width(SHARE_ACTION_ICON_SIZE)
+                  .height(SHARE_ACTION_ICON_SIZE)
+                  .objectFit(ImageFit.Contain)
+              }
+              .width(SHARE_ACTION_BUTTON_SIZE)
+              .height(SHARE_ACTION_BUTTON_SIZE)
+              .justifyContent(FlexAlign.Center)
+              .alignItems(VerticalAlign.Center)
+              .backgroundColor($r('app.color.surface_muted'))
+              .borderRadius(SHARE_ACTION_BUTTON_SIZE / 2)
+              Text('展示二维码')
+                .fontSize(12)
+                .fontColor($r('app.color.secondary_text'))
+            }
+            .key('footer_image_qr')
+            .onClick((): void => {
+              this.logButtonTap('action', '展示二维码')
+              this.params.onFooterImageToggle()
+            })
+          } else {
+            Column({ space: 4 }) {
+              Row() {
+                Image($r('app.media.icon_app'))
+                  .width(SHARE_ACTION_ICON_SIZE)
+                  .height(SHARE_ACTION_ICON_SIZE)
+                  .objectFit(ImageFit.Contain)
+              }
+              .width(SHARE_ACTION_BUTTON_SIZE)
+              .height(SHARE_ACTION_BUTTON_SIZE)
+              .justifyContent(FlexAlign.Center)
+              .alignItems(VerticalAlign.Center)
+              .backgroundColor($r('app.color.surface_muted'))
+              .borderRadius(SHARE_ACTION_BUTTON_SIZE / 2)
+              Text('展示图标')
+                .fontSize(12)
+                .fontColor($r('app.color.secondary_text'))
+            }
+            .key('footer_image_app')
+            .onClick((): void => {
+              this.logButtonTap('action', '展示图标')
+              this.params.onFooterImageToggle()
+            })
+          }
         }
       }
       .width('100%')
