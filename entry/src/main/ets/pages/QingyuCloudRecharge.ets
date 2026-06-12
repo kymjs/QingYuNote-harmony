@@ -503,7 +503,7 @@ struct QingyuCloudRecharge {
               $r('app.string.qingyu_privilege_multi_desc'))
             Divider().color($r('app.color.divider')).strokeWidth(1).margin({ left: 58 })
 
-            this.buildPrivilegeRow('图', $r('app.string.qingyu_privilege_media_title'),
+            this.buildPrivilegeRow('AI', $r('app.string.qingyu_privilege_media_title'),
               $r('app.string.qingyu_privilege_media_desc'))
             Divider().color($r('app.color.divider')).strokeWidth(1).margin({ left: 58 })
 

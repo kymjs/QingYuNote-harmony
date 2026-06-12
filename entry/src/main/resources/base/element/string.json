@@ -94,11 +94,11 @@
     },
     {
       "name": "qingyu_privilege_media_title",
-      "value": "图片"
+      "value": "AI 辅助"
     },
     {
       "name": "qingyu_privilege_media_desc",
-      "value": "正文内图片随笔记一并云端保存。"
+      "value": "AI 辅助写作，板书/PPT一键转笔记。"
     },
     {
       "name": "qingyu_privilege_safe_title",
