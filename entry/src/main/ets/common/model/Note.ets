@@ -118,6 +118,8 @@ export interface CreateNoteInput {
   tags: string[]
   /** 为 true 且 title 为空时，不调用 MarkdownUtils.extractTitle。 */
   skipTitleAutoFill?: boolean
+  /** 写入笔记 state 的 userData JSON 字符串。 */
+  userData?: string
 }
 
 export interface UpdateNoteInput {

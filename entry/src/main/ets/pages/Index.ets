@@ -20,7 +20,7 @@ import {
   type HomeSidebarFilterMode
 } from '../common/utils/NoteFolderTree'
 import { TagSortUtils } from '../common/utils/TagSortUtils'
-import { SyncConstants } from '../common/constants/SyncConstants'
+import { SyncConstants, WereadImportToastPayload } from '../common/constants/SyncConstants'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { CloudSyncNotifyThrottle } from '../common/utils/CloudSyncNotifyThrottle'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
@@ -101,6 +101,12 @@ struct Index {
     void this.reloadNoteSettingsFromService()
     void this.refreshAppLockState()
   }
+  private wereadImportToastHandler = (payload: WereadImportToastPayload): void => {
+    const message = payload?.message ?? ''
+    if (message.trim().length > 0) {
+      this.showUserMessage(message.trim())
+    }
+  }
   private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
@@ -111,6 +117,8 @@ struct Index {
         this.cloudSyncNotConfiguredHandler)
       AppContextHolder.getContext().eventHub.on(SyncConstants.noteSettingsChangedEvent,
         this.noteSettingsChangedHandler)
+      AppContextHolder.getContext().eventHub.on(SyncConstants.wereadImportToastEvent,
+        this.wereadImportToastHandler)
     } catch (_) {
       console.error('Index: eventHub.on qingyu_sync_blocked failed')
     }
@@ -125,6 +133,8 @@ struct Index {
         this.cloudSyncNotConfiguredHandler)
       AppContextHolder.getContext().eventHub.off(SyncConstants.noteSettingsChangedEvent,
         this.noteSettingsChangedHandler)
+      AppContextHolder.getContext().eventHub.off(SyncConstants.wereadImportToastEvent,
+        this.wereadImportToastHandler)
     } catch (_) {
       console.error('Index: eventHub.off qingyu_sync_blocked failed')
     }

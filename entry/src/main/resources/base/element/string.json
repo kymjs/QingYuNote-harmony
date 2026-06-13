@@ -25,6 +25,22 @@
       "value": "云同步设置"
     },
     {
+      "name": "settings_weread_import",
+      "value": "导入微信读书笔记"
+    },
+    {
+      "name": "weread_import_title",
+      "value": "导入笔记"
+    },
+    {
+      "name": "weread_import_hint",
+      "value": "请先获取 API Key，粘贴后点击导入。\n导入过程中可返回，任务会在后台继续。"
+    },
+    {
+      "name": "weread_import_get_api_key",
+      "value": "获取 API Key"
+    },
+    {
       "name": "logout",
       "value": "退出登录"
     },

@@ -47,6 +47,8 @@ const SHARE_CARD_TONE_KEY = 'share_card_tone'
 const LOGIN_RETURN_TARGET_KEY = 'login_return_target'
 /** 与 Flutter `AppConst.prefBiometricLockEnabledKey` 一致：本机生物识别锁，不同步远端 */
 const APP_BIOMETRIC_LOCK_ENABLED_KEY = 'app_biometric_lock_enabled'
+/** 与 Flutter `AppConst.prefWereadApiKeyKey` 一致：微信读书 Skills API Key */
+const WEREAD_API_KEY = 'weread_api_key'
 
 export interface LegacyNoteSettingsFlags {
   quick: boolean
@@ -766,6 +768,26 @@ export class PreferencesService {
       await store.flush()
     } catch (error) {
       Logger.warn('PreferencesService', `saveNoteTags failed: ${this.describeError(error as Object)}`)
+      throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  getWereadApiKey(): string {
+    try {
+      const store = this.ensureStore()
+      return (store.getSync(WEREAD_API_KEY, '') as string) ?? ''
+    } catch (_) {
+      return ''
+    }
+  }
+
+  async setWereadApiKey(value: string): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(WEREAD_API_KEY, value.trim())
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setWereadApiKey failed: ${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)
     }
   }

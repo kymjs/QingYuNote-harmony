@@ -1,8 +1,6 @@
-import { Want } from '@kit.AbilityKit'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
-import { runAppUpdateCheckManually } from '../services/AppUpdateUi'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { SyncConstants } from '../common/constants/SyncConstants'
@@ -267,21 +265,6 @@ struct Settings {
     }
   }
 
-  private openPrivacyPolicy(): void {
-    const context = AppContextHolder.tryGetContext()
-    if (context === undefined) {
-      return
-    }
-    const want: Want = {
-      action: 'ohos.want.action.viewData',
-      entities: ['entity.system.browsable'],
-      uri: 'https://note.kymjs.com/private/harmony.html'
-    }
-    context.startAbility(want).catch((err: Error) => {
-      console.error(`openPrivacyPolicy: ${JSON.stringify(err)}`)
-    })
-  }
-
   private handleToolbarBack(): void {
     this.closeGuard.runBack(() => {
       this.getUIContext().getRouter().back()
@@ -291,21 +274,6 @@ struct Settings {
   onBackPress(): boolean {
     this.handleToolbarBack()
     return true
-  }
-
-  private openTermsOfService(): void {
-    const context = AppContextHolder.tryGetContext()
-    if (context === undefined) {
-      return
-    }
-    const want: Want = {
-      action: 'ohos.want.action.viewData',
-      entities: ['entity.system.browsable'],
-      uri: 'https://note.kymjs.com/private/terms.html'
-    }
-    context.startAbility(want).catch((err: Error) => {
-      console.error(`openTermsOfService: ${JSON.stringify(err)}`)
-    })
   }
 
   build() {
@@ -563,6 +531,34 @@ struct Settings {
               .strokeWidth(1)
 
             Row() {
+              Text($r('app.string.settings_weread_import'))
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor($r('app.color.primary_text'))
+                .layoutWeight(1)
+              Text('›')
+                .fontSize(22)
+                .fontColor($r('app.color.tertiary_text'))
+            }
+            .width('100%')
+            .padding({
+              left: 20,
+              right: 16,
+              top: 14,
+              bottom: 14
+            })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              this.getUIContext().getRouter().pushUrl({ url: 'pages/WereadImport' }).catch((err: Error) => {
+                console.error(`openWereadImport: ${JSON.stringify(err)}`)
+              })
+            })
+
+            Divider()
+              .color($r('app.color.divider'))
+              .strokeWidth(1)
+
+            Row() {
               Text($r('app.string.feedback_title'))
                 .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.primary_text'))
@@ -591,32 +587,6 @@ struct Settings {
                 console.error(`openFeedback: ${JSON.stringify(err)}`)
               })
             })
-
-            Divider()
-              .color($r('app.color.divider'))
-              .strokeWidth(1)
-
-            Row() {
-              Text($r('app.string.check_update'))
-                .fontSize($r('app.float.body_font_size'))
-                .fontColor($r('app.color.primary_text'))
-                .layoutWeight(1)
-              Text('›')
-                .fontSize(22)
-                .fontColor($r('app.color.tertiary_text'))
-            }
-            .width('100%')
-            .padding({
-              left: 20,
-              right: 16,
-              top: 14,
-              bottom: 14
-            })
-            .justifyContent(FlexAlign.SpaceBetween)
-            .alignItems(VerticalAlign.Center)
-            .onClick(() => {
-              void runAppUpdateCheckManually(this.getUIContext())
-            })
           }
           .width('100%')
           .backgroundColor($r('app.color.card_background'))
@@ -630,58 +600,6 @@ struct Settings {
           })
 
           Column({ space: 0 }) {
-            Row() {
-              Text($r('app.string.privacy_policy'))
-                .fontSize($r('app.float.body_font_size'))
-                .fontColor($r('app.color.primary_text'))
-                .layoutWeight(1)
-              Text('›')
-                .fontSize(22)
-                .fontColor($r('app.color.tertiary_text'))
-            }
-            .width('100%')
-            .padding({
-              left: 20,
-              right: 16,
-              top: 14,
-              bottom: 14
-            })
-            .justifyContent(FlexAlign.SpaceBetween)
-            .alignItems(VerticalAlign.Center)
-            .onClick(() => {
-              this.openPrivacyPolicy()
-            })
-
-            Divider()
-              .color($r('app.color.divider'))
-              .strokeWidth(1)
-
-            Row() {
-              Text($r('app.string.terms_of_service'))
-                .fontSize($r('app.float.body_font_size'))
-                .fontColor($r('app.color.primary_text'))
-                .layoutWeight(1)
-              Text('›')
-                .fontSize(22)
-                .fontColor($r('app.color.tertiary_text'))
-            }
-            .width('100%')
-            .padding({
-              left: 20,
-              right: 16,
-              top: 14,
-              bottom: 14
-            })
-            .justifyContent(FlexAlign.SpaceBetween)
-            .alignItems(VerticalAlign.Center)
-            .onClick(() => {
-              this.openTermsOfService()
-            })
-
-            Divider()
-              .color($r('app.color.divider'))
-              .strokeWidth(1)
-
             Row() {
               Text($r('app.string.about_title'))
                 .fontSize($r('app.float.body_font_size'))

@@ -28,6 +28,17 @@ export class SyncConstants {
   static readonly noteImagesChangedEvent: string = 'note_images_changed'
   /** 笔记设置（快捷操作栏、文件夹模式）本地或远端变更后通知 UI 刷新。 */
   static readonly noteSettingsChangedEvent: string = 'note_settings_changed'
+  /** 微信读书笔记后台导入完成或失败时 Toast 提示。 */
+  static readonly wereadImportToastEvent: string = 'weread_import_toast'
+}
+
+/** EventHub 载荷：微信读书导入结果提示文案。 */
+export class WereadImportToastPayload {
+  message: string
+
+  constructor(message: string) {
+    this.message = message
+  }
 }
 
 /** EventHub 载荷：已更新的笔记 id。 */

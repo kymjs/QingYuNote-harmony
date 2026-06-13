@@ -1,5 +1,15 @@
 import { webview } from '@kit.ArkWeb'
+import { http } from '@kit.NetworkKit'
+import { common } from '@kit.AbilityKit'
+import { fileIo, fileUri } from '@kit.CoreFileKit'
+import { photoAccessHelper } from '@kit.MediaLibraryKit'
+import { util } from '@kit.ArkTS'
+import { deviceInfo } from '@kit.BasicServicesKit'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
+import { WereadQrSaveBridge } from '../common/utils/WereadQrSaveBridge'
+
+/** 微信读书 Skill / API Key 页（导入笔记「获取 API Key」入口，与 Flutter `kWereadSkillsUrl` 对齐）。 */
+const WEREAD_SKILLS_URL = 'https://weread.qq.com/r/weread-skills'
 
 /** 设置页「用户反馈」飞书表单地址（与 Flutter `kFeedbackFormUrl` 对齐）。 */
 const FEEDBACK_FORM_URL =
@@ -95,12 +105,203 @@ const HIDE_FEISHU_VOICE_INPUT_JS: string = `(function () {
   }
 })();`
 
+/** 内置浏览器打开微信读书 Skill 页时，隐藏与 API Key 无关的营销与 Skill 安装步骤（与 Flutter 对齐）。 */
+const HIDE_WEREAD_SKILLS_EXTRA_JS: string = `(function () {
+  if (window.__qingyuHideWereadSkillsExtraInstalled) {
+    return;
+  }
+  window.__qingyuHideWereadSkillsExtraInstalled = true;
+
+  var STYLE_ID = 'qingyu-hide-weread-skills-extra-style';
+
+  function injectStyle() {
+    if (document.getElementById(STYLE_ID)) {
+      return;
+    }
+    var style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent =
+      '.wr_skillsFeaturesSection,.wr_skillsSetup_header,.wr_skillsStepCard.qingyu-wr-hidden,.wr_skillsStepNum.qingyu-wr-hidden{display:none!important;visibility:hidden!important;pointer-events:none!important;height:0!important;max-height:0!important;overflow:hidden!important;margin:0!important;padding:0!important;}html,body,.wr_skillsPage{background:#f4f5f7!important;}.wr_skillsSetupSection{background:#f4f5f7!important;margin-top:0!important;padding-top:70px!important;}@media (min-width:641px){.wr_skillsSetupSection{padding-top:170px!important;}}';
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function hideElement(el) {
+    if (!el || el.nodeType !== 1) {
+      return;
+    }
+    el.style.setProperty('display', 'none', 'important');
+    el.style.setProperty('visibility', 'hidden', 'important');
+    el.style.setProperty('pointer-events', 'none', 'important');
+    el.classList.add('qingyu-wr-hidden');
+  }
+
+  function containsText(el, text) {
+    if (!el) {
+      return false;
+    }
+    return (el.textContent || '').indexOf(text) >= 0;
+  }
+
+  var LOGIN_HINT_NEW = '请截图保存到本地，导入微信后识别登录';
+  var LONG_PRESS_MS = 500;
+
+  function isMobileViewport() {
+    return (
+      window.matchMedia('(max-width: 640px)').matches ||
+      /Android|iPhone|iPod|Mobile|HarmonyOS/i.test(navigator.userAgent)
+    );
+  }
+
+  function notifySaveQr(payload) {
+    if (!payload) {
+      return;
+    }
+    try {
+      if (window.QingyuWereadBridge) {
+        if (typeof window.QingyuWereadBridge.postMessage === 'function') {
+          window.QingyuWereadBridge.postMessage(payload);
+          return;
+        }
+        if (typeof window.QingyuWereadBridge.saveQrImage === 'function') {
+          window.QingyuWereadBridge.saveQrImage(payload);
+        }
+      }
+    } catch (_) {}
+  }
+
+  function getQrPayload(node) {
+    if (!node) {
+      return '';
+    }
+    var tag = (node.tagName || '').toUpperCase();
+    if (tag === 'IMG') {
+      return node.src || '';
+    }
+    if (tag === 'CANVAS') {
+      try {
+        return node.toDataURL('image/png');
+      } catch (_) {}
+    }
+    var img = node.querySelector('img');
+    if (img && img.src) {
+      return img.src;
+    }
+    var canvas = node.querySelector('canvas');
+    if (canvas) {
+      try {
+        return canvas.toDataURL('image/png');
+      } catch (_) {}
+    }
+    return '';
+  }
+
+  function bindQrLongPress(node) {
+    if (!node || node.getAttribute('data-qingyu-qr-save') === '1') {
+      return;
+    }
+    node.setAttribute('data-qingyu-qr-save', '1');
+    var timer = null;
+    function clearTimer() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    }
+    function onLongPress() {
+      notifySaveQr(getQrPayload(node));
+    }
+    node.addEventListener(
+      'touchstart',
+      function () {
+        clearTimer();
+        timer = setTimeout(onLongPress, LONG_PRESS_MS);
+      },
+      { passive: true }
+    );
+    node.addEventListener('touchend', clearTimer);
+    node.addEventListener('touchmove', clearTimer);
+    node.addEventListener('touchcancel', clearTimer);
+    node.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      onLongPress();
+    });
+  }
+
+  function patchLoginModalMobile() {
+    if (!isMobileViewport()) {
+      return;
+    }
+    try {
+      document.querySelectorAll('.wr_login_modal_lang').forEach(function (el) {
+        var text = (el.textContent || '').replace(/\\s+/g, '');
+        if (text.indexOf('扫一扫') >= 0 || text.indexOf('微信读书') >= 0) {
+          el.textContent = LOGIN_HINT_NEW;
+        }
+      });
+    } catch (_) {}
+    try {
+      [
+        '.wr_login_modal_qr_img',
+        '.wr_login_modal_qr_wrapper img',
+        '.wr_login_modal_qr_wrapper canvas',
+        '.login_qrcode_container img',
+        '.login_qrcode_container canvas'
+      ].forEach(function (selector) {
+        document.querySelectorAll(selector).forEach(bindQrLongPress);
+      });
+      document
+        .querySelectorAll('.wr_login_modal_qr_wrapper,.login_qrcode_container')
+        .forEach(bindQrLongPress);
+    } catch (_) {}
+  }
+
+  function run() {
+    injectStyle();
+    try {
+      document.querySelectorAll('.wr_skillsFeaturesSection,.wr_skillsSetup_header').forEach(hideElement);
+    } catch (_) {}
+    try {
+      document.querySelectorAll('.wr_skillsStepCard').forEach(function (card) {
+        var h3 = card.querySelector('h3');
+        if (h3 && containsText(h3, '复制 Skill 安装指令')) {
+          hideElement(card);
+          return;
+        }
+        if (h3 && containsText(h3, '获取 API Key')) {
+          var num = card.querySelector('.wr_skillsStepNum');
+          if (num) {
+            hideElement(num);
+          }
+        }
+      });
+    } catch (_) {}
+    patchLoginModalMobile();
+  }
+
+  run();
+  new MutationObserver(run).observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+  for (var i = 1; i <= 20; i++) {
+    setTimeout(run, i * 500);
+  }
+})();`
+
 function isFeedbackFormUrl(url: string): boolean {
   const trimmed = url.trim()
   if (trimmed.length === 0) {
     return false
   }
   return trimmed === FEEDBACK_FORM_URL || trimmed.includes('shrcnexjZUlhIkZ4eD9BjcDfdkb')
+}
+
+function isWereadSkillsUrl(url: string): boolean {
+  const trimmed = url.trim()
+  if (trimmed.length === 0) {
+    return false
+  }
+  return trimmed === WEREAD_SKILLS_URL || trimmed.includes('/r/weread-skills')
 }
 
 interface H5WebContainerParams {
@@ -116,6 +317,8 @@ struct H5WebContainer {
   @State isLoading: boolean = false
   private webController: webview.WebviewController = new webview.WebviewController()
   private closeGuard = new PageCloseGuard()
+  private qrSaveBridge: WereadQrSaveBridge = new WereadQrSaveBridge()
+  private readonly base64: util.Base64Helper = new util.Base64Helper()
 
   private shouldShowLoadingOverlay(): boolean {
     return this.isLoading &&
@@ -124,6 +327,9 @@ struct H5WebContainer {
 
   aboutToAppear(): void {
     this.closeGuard.reset()
+    this.qrSaveBridge.bind((payload: string) => {
+      void this.saveWereadQr(payload)
+    })
     try {
       const params = this.getUIContext().getRouter().getParams() as H5WebContainerParams
       const titleRaw = params?.title
@@ -154,6 +360,103 @@ struct H5WebContainer {
     }
   }
 
+  private isMobileContainer(): boolean {
+    return deviceInfo.deviceType !== '2in1'
+  }
+
+  private shouldEnableWereadQrBridge(): boolean {
+    return isWereadSkillsUrl(this.webUrl) && this.isMobileContainer()
+  }
+
+  private showToast(message: string): void {
+    if (message.trim().length === 0) {
+      return
+    }
+    try {
+      this.getUIContext().getPromptAction().showToast({
+        message: message.trim(),
+        duration: 2000
+      })
+    } catch (_) {
+    }
+  }
+
+  private async saveWereadQrToGallery(cachePath: string): Promise<boolean> {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext
+    const helper = photoAccessHelper.getPhotoAccessHelper(context)
+    const srcFileUris: Array<string> = [fileUri.getUriFromPath(cachePath)]
+    const photoCreationConfigs: Array<photoAccessHelper.PhotoCreationConfig> = [
+      {
+        title: `weread_login_qr_${Date.now()}`,
+        fileNameExtension: 'png',
+        photoType: photoAccessHelper.PhotoType.IMAGE,
+        subtype: photoAccessHelper.PhotoSubtype.DEFAULT
+      }
+    ]
+    const destUris: Array<string> =
+      await helper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs)
+    if (destUris.length === 0) {
+      return false
+    }
+    const src = fileIo.openSync(cachePath, fileIo.OpenMode.READ_ONLY)
+    const dest = await fileIo.open(destUris[0], fileIo.OpenMode.WRITE_ONLY)
+    await fileIo.copyFile(src.fd, dest.fd)
+    fileIo.closeSync(src)
+    fileIo.closeSync(dest)
+    return true
+  }
+
+  private async saveWereadQr(payload: string): Promise<void> {
+    const trimmed = payload.trim()
+    if (trimmed.length === 0 || !this.shouldEnableWereadQrBridge()) {
+      return
+    }
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext
+    const cachePath = `${context.cacheDir}/weread_login_qr_${Date.now()}.png`
+    try {
+      if (trimmed.startsWith('data:')) {
+        const comma = trimmed.indexOf(',')
+        if (comma < 0) {
+          this.showToast('保存失败，请稍后重试')
+          return
+        }
+        const bytes = this.base64.decodeSync(trimmed.substring(comma + 1), util.Type.BASIC)
+        const f = fileIo.openSync(cachePath,
+          fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC)
+        const outBuf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+        fileIo.writeSync(f.fd, outBuf)
+        fileIo.closeSync(f)
+      } else {
+        const req = http.createHttp()
+        try {
+          const resp = await req.request(trimmed, {
+            method: http.RequestMethod.GET,
+            expectDataType: http.HttpDataType.ARRAY_BUFFER,
+            connectTimeout: 20000,
+            readTimeout: 20000
+          })
+          if (resp.responseCode !== 200 || resp.result === undefined) {
+            this.showToast('保存失败，请稍后重试')
+            return
+          }
+          const f = fileIo.openSync(cachePath,
+            fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC)
+          fileIo.writeSync(f.fd, resp.result as ArrayBuffer)
+          fileIo.closeSync(f)
+        } finally {
+          req.destroy()
+        }
+      }
+      const ok = await this.saveWereadQrToGallery(cachePath)
+      if (ok) {
+        this.showToast('已保存到相册')
+      }
+    } catch (error) {
+      console.error(`H5WebContainer saveWereadQr: ${JSON.stringify(error)}`)
+      this.showToast('保存失败，请稍后重试')
+    }
+  }
+
   private handleToolbarBack(): void {
     this.closeGuard.runBack(() => {
       this.getUIContext().getRouter().back()
@@ -165,6 +468,11 @@ struct H5WebContainer {
     return true
   }
 
+  private runPageScriptsIfNeeded(): void {
+    this.hideFeishuVoiceInputIfNeeded()
+    this.hideWereadSkillsExtraIfNeeded()
+  }
+
   private hideFeishuVoiceInputIfNeeded(): void {
     if (!isFeedbackFormUrl(this.webUrl)) {
       return
@@ -173,6 +481,17 @@ struct H5WebContainer {
       this.webController.runJavaScript(HIDE_FEISHU_VOICE_INPUT_JS)
     } catch (e) {
       console.error(`H5WebContainer hideFeishuVoiceInput: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private hideWereadSkillsExtraIfNeeded(): void {
+    if (!isWereadSkillsUrl(this.webUrl)) {
+      return
+    }
+    try {
+      this.webController.runJavaScript(HIDE_WEREAD_SKILLS_EXTRA_JS)
+    } catch (e) {
+      console.error(`H5WebContainer hideWereadSkillsExtra: ${JSON.stringify(e)}`)
     }
   }
 
@@ -221,11 +540,17 @@ struct H5WebContainer {
           .height('100%')
           .javaScriptAccess(true)
           .domStorageAccess(true)
+          .javaScriptProxy({
+            object: this.qrSaveBridge,
+            name: 'QingyuWereadBridge',
+            methodList: ['saveQrImage'],
+            controller: this.webController
+          })
           .onPageBegin(() => {
             this.isLoading = true
           })
           .onPageEnd(() => {
-            this.hideFeishuVoiceInputIfNeeded()
+            this.runPageScriptsIfNeeded()
             this.isLoading = false
           })
           .onErrorReceive(() => {

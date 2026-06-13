@@ -112,6 +112,10 @@ export class NoteRepository {
       input.skipTitleAutoFill === true && trimmedTitle.length === 0 ? '' :
         trimmedTitle.length > 0 ? trimmedTitle : MarkdownUtils.extractTitle(trimmedContent)
     const state = NoteStateCodec.createDefaultState(id, resolvedTitle, now)
+    const userData = (input.userData ?? '').trim()
+    if (userData.length > 0) {
+      state.userData = userData
+    }
     const note = this.createNoteFromState(state, trimmedContent, {
       noteId: id,
       remoteModified: 0,
