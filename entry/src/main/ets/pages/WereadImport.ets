@@ -1,5 +1,5 @@
 import { Want } from '@kit.AbilityKit'
-import { deviceInfo } from '@kit.BasicServicesKit'
+import { deviceInfo, pasteboard } from '@kit.BasicServicesKit'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
@@ -11,6 +11,7 @@ import {
 } from '../services/WereadImportService'
 
 const WEREAD_API_KEY_URL = 'https://weread.qq.com/r/weread-skills'
+const WEREAD_API_KEY_PREFIX = 'wrk-'
 
 @Entry
 @Component
@@ -23,6 +24,10 @@ struct WereadImport {
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
   private progressTimer: number = -1
+  // 标记「点过获取 API Key」，下一次 onPageShow 时再读取剪贴板（与 Flutter _tryImportFromClipboard 行为对齐）
+  private awaitingApiKeyReturn: boolean = false
+  // 防抖：记录上次成功粘贴的 API Key，避免 onPageShow 反复触发同一导入
+  private lastImportedKey: string = ''
 
   aboutToAppear(): void {
     this.lifecycle.appear()
@@ -35,6 +40,13 @@ struct WereadImport {
   aboutToDisappear(): void {
     this.lifecycle.disappear()
     this.stopProgressPolling()
+  }
+
+  onPageShow(): void {
+    if (this.awaitingApiKeyReturn) {
+      this.awaitingApiKeyReturn = false
+      void this.tryImportFromClipboard()
+    }
   }
 
   onBackPress(): boolean {
@@ -138,6 +150,7 @@ struct WereadImport {
   }
 
   private openApiKeyPage(): void {
+    this.awaitingApiKeyReturn = true
     if (this.isPcDevice()) {
       this.openApiKeyPageInSystemBrowser()
       return
@@ -164,6 +177,7 @@ struct WereadImport {
       this.showToast('请输入微信读书 API Key')
       return
     }
+    this.lastImportedKey = trimmed
 
     void WereadImportService.getInstance().importAllNotes(trimmed).catch((error: Object) => {
       if (error instanceof WereadImportException) {
@@ -171,6 +185,71 @@ struct WereadImport {
       }
     })
     this.syncImportUi()
+  }
+
+  /** WebView 关闭后被调用:优先取 H5WebContainer 通过 AppStorage 传过来的 wrk- key;读不到再读系统剪贴板兜底。 */
+  private async tryImportFromClipboard(): Promise<void> {
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    if (WereadImportService.getInstance().isImportRunning()) {
+      return
+    }
+
+    // 1. 优先:取 H5WebContainer 通过 AppStorage 传过来的 wrk- key
+    // (Harmony WebView 内的 navigator.clipboard 与系统剪贴板隔离,
+    //  靠 JS 从页面 DOM 抓取后存到 AppStorage 是最可靠的来源)
+    let trimmed: string = ''
+    try {
+      const stored: string | undefined = AppStorage.get<string>('pendingWereadApiKey')
+      if (stored && stored.length > 0) {
+        AppStorage.delete('pendingWereadApiKey')
+        trimmed = stored.trim()
+        if (trimmed.length > 0 && trimmed.startsWith(WEREAD_API_KEY_PREFIX)) {
+          this.startImportWithKey(trimmed)
+          return
+        }
+        trimmed = ''
+      }
+    } catch (e) {
+      console.error(`WereadImport readAppStorage: ${JSON.stringify(e)}`)
+    }
+
+    // 2. 兜底:轮询读系统剪贴板(用户手动复制、桌面端系统浏览器、PC Harmony 等场景)
+    let text: string = ''
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const systemPasteboard = pasteboard.getSystemPasteboard()
+        const data = await systemPasteboard.getData()
+        text = data.getPrimaryText()
+      } catch (error) {
+        console.error(`WereadImport readClipboard: ${JSON.stringify(error)}`)
+        return
+      }
+      trimmed = (text ?? '').trim()
+      if (trimmed.length > 0 && trimmed.startsWith(WEREAD_API_KEY_PREFIX)) {
+        break
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 120))
+    }
+    if (trimmed.length === 0 || !trimmed.startsWith(WEREAD_API_KEY_PREFIX)) {
+      return
+    }
+    this.startImportWithKey(trimmed)
+  }
+
+  private startImportWithKey(trimmed: string): void {
+    if (trimmed === this.lastImportedKey) {
+      // 同一 Key 已经在本次会话导入过，避免重复触发
+      return
+    }
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.token = trimmed
+    this.lastImportedKey = trimmed
+    this.showToast('已识别 API Key，正在开始导入…')
+    this.onConfirm()
   }
 
   build() {

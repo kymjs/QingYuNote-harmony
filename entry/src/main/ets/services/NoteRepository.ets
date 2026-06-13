@@ -23,6 +23,7 @@ import { AppContextHolder } from './AppContextHolder'
 import { PreferencesService } from './PreferencesService'
 import { WebDAVClient } from './WebDAVClient'
 import { NoteContentEncryptionService } from './NoteContentEncryptionService'
+import { WereadImportService } from './WereadImportService'
 
 export class NoteRepository {
   private static instance: NoteRepository = new NoteRepository()
@@ -537,6 +538,9 @@ export class NoteRepository {
 
   /** 退出登录时清空本地笔记、图片与同步库，并重置标签/同步游标（保留 WebDAV 配置）。 */
   async clearAllLocalNotes(): Promise<void> {
+    // 若仍有正在跑的微信读书导入，先把它停掉再清空，避免它在我们删除笔记文件之后
+    // 继续往本地写新笔记（旧账号的内容残留到下一个会话）。
+    await WereadImportService.getInstance().cancelImport()
     await this.init()
     this.beginBulkNotification()
     try {

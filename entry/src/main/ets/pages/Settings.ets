@@ -18,6 +18,8 @@ struct Settings {
   @State accountSubId: string = ''
   /** 与 Flutter `SettingsHubPage` 对齐：游客模式下不展示退出登录 */
   @State guestMode: boolean = false
+  /** 退出登录中：true 时 Stack 覆盖一层全屏遮罩并禁用退出登录按钮 */
+  @State loggingOut: boolean = false
   @State noteSettingsLoading: boolean = true
   @State quickActionBarEnabled: boolean = true
   @State folderModeEnabled: boolean = false
@@ -238,6 +240,10 @@ struct Settings {
   }
 
   private async handleLogout(): Promise<void> {
+    if (this.loggingOut) {
+      return
+    }
+    this.loggingOut = true
     try {
       const context = AppContextHolder.tryGetContext()
       if (context) {
@@ -252,8 +258,10 @@ struct Settings {
         routerWithClear.clear()
       }
       await router.replaceUrl({ url: 'pages/Login' })
+      // router.replaceUrl 成功后 Settings 页被销毁，遮罩随页面一并销毁
     } catch (error) {
       console.error(`handleLogout: ${JSON.stringify(error)}`)
+      this.loggingOut = false
       try {
         this.getUIContext().getPromptAction().showToast({
           message: '退出登录失败，请稍后重试',
@@ -277,6 +285,7 @@ struct Settings {
   }
 
   build() {
+    Stack() {
     Column() {
       Row() {
         Row() {
@@ -531,7 +540,7 @@ struct Settings {
               .strokeWidth(1)
 
             Row() {
-              Text($r('app.string.settings_weread_import'))
+              Text($r('app.string.import_notes_title'))
                 .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.primary_text'))
                 .layoutWeight(1)
@@ -549,8 +558,8 @@ struct Settings {
             .justifyContent(FlexAlign.SpaceBetween)
             .alignItems(VerticalAlign.Center)
             .onClick(() => {
-              this.getUIContext().getRouter().pushUrl({ url: 'pages/WereadImport' }).catch((err: Error) => {
-                console.error(`openWereadImport: ${JSON.stringify(err)}`)
+              this.getUIContext().getRouter().pushUrl({ url: 'pages/ImportNotes' }).catch((err: Error) => {
+                console.error(`openImportNotes: ${JSON.stringify(err)}`)
               })
             })
 
@@ -648,6 +657,7 @@ struct Settings {
               .backgroundColor($r('app.color.danger'))
               .borderRadius($r('app.float.pill_radius'))
               .margin({ top: 8 })
+              .enabled(!this.loggingOut)
               .onClick((): void => {
                 void this.handleLogout()
               })
@@ -670,5 +680,30 @@ struct Settings {
       right: 16
     })
     .backgroundColor($r('app.color.app_background'))
+
+      if (this.loggingOut) {
+        this.buildLogoutOverlay()
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  private buildLogoutOverlay() {
+    Column() {
+      LoadingProgress()
+        .width(40)
+        .height(40)
+        .color($r('app.color.accent'))
+      Text($r('app.string.logout_in_progress'))
+        .fontSize($r('app.float.body_font_size'))
+        .fontColor(Color.White)
+        .margin({ top: 16 })
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor('#B3000000')
   }
 }

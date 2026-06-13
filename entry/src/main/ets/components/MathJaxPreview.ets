@@ -1,6 +1,7 @@
 import { webview } from '@kit.ArkWeb'
 import { MathJaxHeightBridge } from '../common/utils/MathJaxHeightBridge'
 import { MathJaxUtils } from '../common/utils/MathJaxUtils'
+import { WebViewSessionCleaner } from '../common/utils/WebViewSessionCleaner'
 
 /** 使用 MathJax 渲染单段 LaTeX（行内或块级）。 */
 @Component
@@ -19,6 +20,11 @@ export struct MathJaxPreview {
     this.heightBridge.bind((height: number) => {
       this.applyMeasuredHeight(height)
     })
+    WebViewSessionCleaner.registerController(this.webController)
+  }
+
+  aboutToDisappear(): void {
+    WebViewSessionCleaner.unregisterController(this.webController)
   }
 
   onLatexChanged(): void {

@@ -1,12 +1,14 @@
 import { webview } from '@kit.ArkWeb'
 import { http } from '@kit.NetworkKit'
-import { common } from '@kit.AbilityKit'
+import { abilityAccessCtrl, common } from '@kit.AbilityKit'
 import { fileIo, fileUri } from '@kit.CoreFileKit'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
+import { pasteboard } from '@kit.BasicServicesKit'
 import { util } from '@kit.ArkTS'
 import { deviceInfo } from '@kit.BasicServicesKit'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { WereadQrSaveBridge } from '../common/utils/WereadQrSaveBridge'
+import { WebViewSessionCleaner } from '../common/utils/WebViewSessionCleaner'
 
 /** 微信读书 Skill / API Key 页（导入笔记「获取 API Key」入口，与 Flutter `kWereadSkillsUrl` 对齐）。 */
 const WEREAD_SKILLS_URL = 'https://weread.qq.com/r/weread-skills'
@@ -304,9 +306,149 @@ function isWereadSkillsUrl(url: string): boolean {
   return trimmed === WEREAD_SKILLS_URL || trimmed.includes('/r/weread-skills')
 }
 
+/** 监听微信读书 Skill 页「复制 API Key」按钮的点击（与 Flutter `_kWatchWereadApiKeyCopyJs` 对齐）。 */
+const WATCH_WEREAD_API_KEY_COPY_JS: string = `(function () {
+  if (window.__qingyuWatchWereadApiKeyCopyInstalled) {
+    return;
+  }
+  window.__qingyuWatchWereadApiKeyCopyInstalled = true;
+
+  var BOUND_ATTR = 'data-qingyu-key-copy-bound';
+  var DELAY_MS = 60;
+
+  function notifyApiKeyCopied() {
+    try {
+      // 不再从 DOM 抓 key(WeRead 页面结构会变,DOM 抓取不可靠)。
+      // 具体 key 的内容由原生侧读取系统剪贴板拿到;
+      // 这里把 writeText 的入参透传给原生,作为剪贴板读取失败/被清空时的兑底。
+      if (window.QingyuWereadBridge && typeof window.QingyuWereadBridge.onApiKeyCopied === 'function') {
+        setTimeout(function () {
+          try { window.QingyuWereadBridge.onApiKeyCopied(''); } catch (_) {}
+        }, DELAY_MS);
+      }
+    } catch (_) {}
+  }
+
+  function isApiKeyCopyText(text) {
+    if (!text) {
+      return false;
+    }
+    var trimmed = String(text).trim();
+    if (trimmed.length === 0 || trimmed.length > 30) {
+      return false;
+    }
+    if (!/复制|copy/i.test(trimmed)) {
+      return false;
+    }
+    if (!/key/i.test(trimmed)) {
+      return false;
+    }
+    return true;
+  }
+
+  function findApiKeyCard() {
+    var cards = document.querySelectorAll('.wr_skillsStepCard');
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      var h3 = card.querySelector('h3');
+      if (h3 && (h3.textContent || '').indexOf('获取 API Key') >= 0) {
+        return card;
+      }
+    }
+    return null;
+  }
+
+  function bindCopyKeyInCard(card) {
+    if (!card) {
+      return false;
+    }
+    var candidates = card.querySelectorAll(
+      'button, [role="button"], .ant-btn, a, div, span'
+    );
+    for (var i = 0; i < candidates.length; i++) {
+      var el = candidates[i];
+      if (el.getAttribute(BOUND_ATTR) === '1') {
+        continue;
+      }
+      var text = el.textContent || '';
+      if (!isApiKeyCopyText(text)) {
+        continue;
+      }
+      el.setAttribute(BOUND_ATTR, '1');
+      el.addEventListener('click', function () {
+        notifyApiKeyCopied();
+      }, true);
+      return true;
+    }
+    return false;
+  }
+
+  function hookClipboard() {
+    if (window.__qingyuWereadClipboardHooked) {
+      return;
+    }
+    window.__qingyuWereadClipboardHooked = true;
+    try {
+      var cb = navigator.clipboard;
+      if (!cb || typeof cb.writeText !== 'function') {
+        return;
+      }
+      var original = cb.writeText.bind(cb);
+      cb.writeText = function (text) {
+        try {
+          if (typeof text === 'string' && text.indexOf('wrk-') === 0) {
+            notifyApiKeyCopied();
+          }
+        } catch (_) {}
+        return original(text);
+      };
+    } catch (_) {}
+  }
+
+  function run() {
+    hookClipboard();
+    if (bindCopyKeyInCard(findApiKeyCard())) {
+      return;
+    }
+    try {
+      var all = document.querySelectorAll(
+        'button, [role="button"], .ant-btn, a, div, span'
+      );
+      for (var j = 0; j < all.length; j++) {
+        var node = all[j];
+        if (node.getAttribute(BOUND_ATTR) === '1') {
+          continue;
+        }
+        if (!isApiKeyCopyText(node.textContent || '')) {
+          continue;
+        }
+        node.setAttribute(BOUND_ATTR, '1');
+        node.addEventListener('click', function () {
+          notifyApiKeyCopied();
+        }, true);
+        return;
+      }
+    } catch (_) {}
+  }
+
+  run();
+  new MutationObserver(run).observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+  for (var i = 1; i <= 20; i++) {
+    setTimeout(run, i * 500);
+  }
+})();`
+
 interface H5WebContainerParams {
   title?: string
   url?: string
+}
+
+interface PermissionRequestResult {
+  permission: string
+  grantStatus: number
 }
 
 @Entry
@@ -319,6 +461,8 @@ struct H5WebContainer {
   private closeGuard = new PageCloseGuard()
   private qrSaveBridge: WereadQrSaveBridge = new WereadQrSaveBridge()
   private readonly base64: util.Base64Helper = new util.Base64Helper()
+  // 「复制 API Key」流程已被处理,防止用户连点/动画期间再次 Router.back() 把上一页(导入笔记页面)也弹掉
+  private apiKeyHandled: boolean = false
 
   private shouldShowLoadingOverlay(): boolean {
     return this.isLoading &&
@@ -330,6 +474,11 @@ struct H5WebContainer {
     this.qrSaveBridge.bind((payload: string) => {
       void this.saveWereadQr(payload)
     })
+    this.qrSaveBridge.bindKeyCopied((key: string) => {
+      this.handleApiKeyCopiedFromJs(key)
+    })
+    // 登出时统一清理缓存（与 Flutter `WebViewSessionCleaner.register` 对齐）。
+    WebViewSessionCleaner.registerController(this.webController)
     try {
       const params = this.getUIContext().getRouter().getParams() as H5WebContainerParams
       const titleRaw = params?.title
@@ -360,12 +509,99 @@ struct H5WebContainer {
     }
   }
 
+  aboutToDisappear(): void {
+    WebViewSessionCleaner.unregisterController(this.webController)
+  }
+
   private isMobileContainer(): boolean {
     return deviceInfo.deviceType !== '2in1'
   }
 
   private shouldEnableWereadQrBridge(): boolean {
     return isWereadSkillsUrl(this.webUrl) && this.isMobileContainer()
+  }
+
+  private async handleApiKeyCopiedFromJs(key: string): Promise<void> {
+    if (!this.shouldEnableWereadQrBridge()) {
+      return
+    }
+    if (this.apiKeyHandled) {
+      return
+    }
+    this.apiKeyHandled = true
+    // WeRead 的「复制 API Key」按钮在用户点击后通过 navigator.clipboard.writeText 把
+    // wrk- 开头的 key 写入 WebView 剪贴板(HarmonyOS NEXT 上 WebView 剪贴板与系统剪贴板互通),
+    // JS 侧只负责通知「Key 已被复制」,具体 key 的内容由原生侧读取系统剪贴板拿到。
+    // 主动申请 READ_PASTEBOARD 用户授权(在点击复制按钮的瞬间触发,与 Flutter 行为对齐)。
+    let trimmed: string = ''
+    try {
+      const granted = await this.requestReadPasteboardPermission()
+      if (!granted) {
+        console.error('H5WebContainer handleApiKeyCopiedFromJs: READ_PASTEBOARD denied')
+        this.showToast('读取剪贴板权限被拒绝,无法自动导入 API Key')
+        try {
+          this.getUIContext().getRouter().back()
+        } catch (e) {
+          console.error(`H5WebContainer handleApiKeyCopiedFromJs back: ${JSON.stringify(e)}`)
+        }
+        return
+      }
+      const systemPasteboard = pasteboard.getSystemPasteboard()
+      const data = await systemPasteboard.getData()
+      const text = data.getPrimaryText()
+      trimmed = (text ?? '').trim()
+    } catch (e) {
+      console.error(`H5WebContainer readClipboard: ${JSON.stringify(e)}`)
+      try {
+        this.getUIContext().getRouter().back()
+      } catch (err) {
+        console.error(`H5WebContainer handleApiKeyCopiedFromJs back: ${JSON.stringify(err)}`)
+      }
+      return
+    }
+    // 兜底:JS 侧 hook 时把 writeText 的参数(text)也带回来了,如果读剪贴板失败/被清空,
+    // 可以用 key 参数兜底(只有当 text 看起来像 wrk- key 时)。
+    if ((trimmed.length === 0 || trimmed.indexOf('wrk-') !== 0) &&
+      typeof key === 'string') {
+      const fromJs = key.trim()
+      if (fromJs.length > 0 && fromJs.indexOf('wrk-') === 0) {
+        trimmed = fromJs
+      }
+    }
+    if (trimmed.length > 0 && trimmed.indexOf('wrk-') === 0) {
+      try {
+        AppStorage.setOrCreate<string>('pendingWereadApiKey', trimmed)
+      } catch (e) {
+        console.error(`H5WebContainer setAppStorage: ${JSON.stringify(e)}`)
+      }
+    } else {
+      console.error(`H5WebContainer handleApiKeyCopiedFromJs: invalid clipboard content`)
+      this.showToast('剪贴板内容不是有效的微信读书 API Key')
+    }
+    // 只关 WebView;启动导入由导入笔记页面 onPageShow 统一处理。
+    try {
+      this.getUIContext().getRouter().back()
+    } catch (e) {
+      console.error(`H5WebContainer handleApiKeyCopiedFromJs: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private async requestReadPasteboardPermission(): Promise<boolean> {
+    try {
+      const atManager = abilityAccessCtrl.createAtManager()
+      const context: common.UIAbilityContext = this.getUIContext().getHostContext() as common.UIAbilityContext
+      const result = await atManager.requestPermissionsFromUser(context, ['ohos.permission.READ_PASTEBOARD'])
+      if (!Array.isArray(result)) {
+        return false
+      }
+      return result.some((r: PermissionRequestResult) =>
+        r.permission === 'ohos.permission.READ_PASTEBOARD' &&
+        r.grantStatus === abilityAccessCtrl.GrantStatus.PERMISSION_GRANTED
+      )
+    } catch (e) {
+      console.error(`H5WebContainer requestReadPasteboardPermission: ${JSON.stringify(e)}`)
+      return false
+    }
   }
 
   private showToast(message: string): void {
@@ -471,6 +707,7 @@ struct H5WebContainer {
   private runPageScriptsIfNeeded(): void {
     this.hideFeishuVoiceInputIfNeeded()
     this.hideWereadSkillsExtraIfNeeded()
+    this.watchWereadApiKeyCopyIfNeeded()
   }
 
   private hideFeishuVoiceInputIfNeeded(): void {
@@ -492,6 +729,17 @@ struct H5WebContainer {
       this.webController.runJavaScript(HIDE_WEREAD_SKILLS_EXTRA_JS)
     } catch (e) {
       console.error(`H5WebContainer hideWereadSkillsExtra: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private watchWereadApiKeyCopyIfNeeded(): void {
+    if (!isWereadSkillsUrl(this.webUrl) || !this.isMobileContainer()) {
+      return
+    }
+    try {
+      this.webController.runJavaScript(WATCH_WEREAD_API_KEY_COPY_JS)
+    } catch (e) {
+      console.error(`H5WebContainer watchWereadApiKeyCopy: ${JSON.stringify(e)}`)
     }
   }
 
@@ -543,7 +791,7 @@ struct H5WebContainer {
           .javaScriptProxy({
             object: this.qrSaveBridge,
             name: 'QingyuWereadBridge',
-            methodList: ['saveQrImage'],
+            methodList: ['saveQrImage', 'onApiKeyCopied'],
             controller: this.webController
           })
           .onPageBegin(() => {

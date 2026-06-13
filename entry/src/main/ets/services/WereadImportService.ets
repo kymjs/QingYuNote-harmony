@@ -35,6 +35,15 @@ export class WereadImportException extends Error {
   }
 }
 
+/** 内部哨兵异常：由 WereadImportService.cancelImport 触发（例如登出），
+ *  由外层 try/catch 静默吞掉，不弹 toast、不向上抛。 */
+export class WereadImportCancelledException extends Error {
+  constructor() {
+    super('weread_import_cancelled')
+    this.name = 'WereadImportCancelledException'
+  }
+}
+
 interface WereadNotebookItem {
   bookId?: string
   title?: string
@@ -149,6 +158,8 @@ export class WereadImportService {
   private inFlight: Promise<WereadImportResult> | null = null
   private running: boolean = false
   private currentProgress: WereadImportProgress | null = null
+  private cancelled: boolean = false
+  private currentRequest: http.HttpRequest | null = null
 
   static getInstance(): WereadImportService {
     return WereadImportService.instance
@@ -174,12 +185,42 @@ export class WereadImportService {
       return this.inFlight
     }
     this.running = true
+    this.cancelled = false
     this.inFlight = this.importAllNotesImpl(apiKey, onProgress).finally(() => {
       this.running = false
       this.inFlight = null
       this.currentProgress = null
+      this.currentRequest = null
+      this.cancelled = false
     })
     return this.inFlight
+  }
+
+  /** 中止正在进行的导入任务（如登出场景）。多次调用安全；无正在进行的任务时为 no-op。
+   *  会 await 内部 Promise 走完 finally 收尾，确保返回时 isImportRunning() === false。 */
+  async cancelImport(): Promise<void> {
+    const inFlight = this.inFlight
+    if (inFlight === null) {
+      return
+    }
+    this.cancelled = true
+    try {
+      this.currentRequest?.destroy()
+    } catch (_) {
+      // destroy 抛错可忽略，下游 await 会因连接中断而抛，由 gateway 翻成 cancelled 异常。
+    }
+    try {
+      await inFlight
+    } catch (_) {
+      // 取消引发的异常已在 importAllNotesImpl 内部吞掉，这里再兜一层；
+      // 其余导入失败本身就是该任务的预期返回路径，不在 cancel 流程里处理。
+    }
+  }
+
+  private throwIfCancelled(): void {
+    if (this.cancelled) {
+      throw new WereadImportCancelledException()
+    }
   }
 
   private async importAllNotesImpl(
@@ -214,6 +255,7 @@ export class WereadImportService {
       NoteRepository.getInstance().beginBulkNotification()
       try {
         for (let i = 0; i < exportable.length; i++) {
+          this.throwIfCancelled()
           const item = exportable[i]
           const bookId = this.bookIdFromNotebook(item)
           const bookTitle = this.bookTitleFromNotebook(item)
@@ -242,6 +284,10 @@ export class WereadImportService {
       this.emitToast(this.completionMessage(result))
       return result
     } catch (error) {
+      if (error instanceof WereadImportCancelledException) {
+        // 登出 / 外部取消：静默退出，不弹 toast、不向上抛错。
+        return new WereadImportResult()
+      }
       if (error instanceof WereadImportException) {
         this.emitToast(error.message)
         throw error
@@ -848,7 +894,9 @@ export class WereadImportService {
   }
 
   private async gateway(token: string, body: Record<string, Object>): Promise<Record<string, Object>> {
+    this.throwIfCancelled()
     const req = http.createHttp()
+    this.currentRequest = req
     try {
       const resp = await req.request(WEREAD_GATEWAY_URL, {
         method: http.RequestMethod.POST,
@@ -880,12 +928,18 @@ export class WereadImportService {
       }
       return parsed
     } catch (error) {
+      if (this.cancelled) {
+        throw new WereadImportCancelledException()
+      }
       if (error instanceof WereadImportException) {
         throw error as WereadImportException
       }
       Logger.warn('WereadImportService', `gateway failed: ${JSON.stringify(error)}`)
       throw new WereadImportException('导入失败，请稍后重试')
     } finally {
+      if (this.currentRequest === req) {
+        this.currentRequest = null
+      }
       req.destroy()
     }
   }

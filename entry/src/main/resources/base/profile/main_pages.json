@@ -9,6 +9,7 @@
     "pages/Settings",
     "pages/CloudSyncSettings",
     "pages/WereadImport",
+    "pages/ImportNotes",
     "pages/QingyuCloudRecharge",
     "pages/RecycleBin",
     "pages/About",

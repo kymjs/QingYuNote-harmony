@@ -1,6 +1,7 @@
 import { webview } from '@kit.ArkWeb'
 import { FormulaPreviewLog } from '../common/utils/FormulaPreviewLog'
 import { KatexHeightBridge } from '../common/utils/KatexHeightBridge'
+import { WebViewSessionCleaner } from '../common/utils/WebViewSessionCleaner'
 /** 本地 KaTeX：先加载 preview_shell.html，再 runJavaScript 注入正文（避免 loadData 被 src 导航 abort）。 */
 @Component
 export struct KatexFormulaPreview {
@@ -23,6 +24,11 @@ export struct KatexFormulaPreview {
       this.onHeightMessage(message)
     })
     FormulaPreviewLog.info(`appear displayBlock=${this.displayBlock} len=${this.source.length}`)
+    WebViewSessionCleaner.registerController(this.webController)
+  }
+
+  aboutToDisappear(): void {
+    WebViewSessionCleaner.unregisterController(this.webController)
   }
 
   onSourceChanged(): void {

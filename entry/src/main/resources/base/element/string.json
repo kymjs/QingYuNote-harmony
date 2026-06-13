@@ -29,12 +29,28 @@
       "value": "导入微信读书笔记"
     },
     {
+      "name": "import_notes_title",
+      "value": "导入笔记"
+    },
+    {
+      "name": "import_notes_weread",
+      "value": "导入微信读书笔记"
+    },
+    {
+      "name": "import_notes_youdao",
+      "value": "导入有道云笔记"
+    },
+    {
+      "name": "import_notes_files",
+      "value": "导入md/doc/txt等文件"
+    },
+    {
       "name": "weread_import_title",
       "value": "导入笔记"
     },
     {
       "name": "weread_import_hint",
-      "value": "请先获取 API Key，粘贴后点击导入。\n导入过程中可返回，任务会在后台继续。"
+      "value": "请先点击下方按钮获取 API Key，复制后会自动开始导入。\n导入过程中可返回，任务会在后台继续。"
     },
     {
       "name": "weread_import_get_api_key",
@@ -43,6 +59,10 @@
     {
       "name": "logout",
       "value": "退出登录"
+    },
+    {
+      "name": "logout_in_progress",
+      "value": "正在退出登录…"
     },
     {
       "name": "login_guest_mode",
@@ -267,6 +287,10 @@
     {
       "name": "permission_biometric_reason",
       "value": "用于指纹或面容验证以解锁应用"
+    },
+    {
+      "name": "permission_read_pasteboard_reason",
+      "value": "用于在 H5 页面点击复制微信读书 API Key 后,读取系统剪贴板内容以便自动开始导入笔记;仅在前台导入流程中使用,不会在后台读取剪贴板"
     },
     {
       "name": "login_title",

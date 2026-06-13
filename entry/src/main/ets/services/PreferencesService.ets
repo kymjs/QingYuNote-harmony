@@ -6,6 +6,7 @@ import { Logger } from '../common/utils/Logger'
 import { buildQingyuCloudWebDavConfig } from './QingyuCloudConfigHelper'
 import { NoteSettingsService } from './NoteSettingsService'
 import { NoteSettingsRemoteSync } from './NoteSettingsRemoteSync'
+import { WebViewSessionCleaner } from '../common/utils/WebViewSessionCleaner'
 
 const PREFERENCES_NAME = 'qingyu_preferences'
 const TAG_LIST_KEY = 'note_tags'
@@ -753,7 +754,12 @@ export class PreferencesService {
       store.putSync(NOTE_API_EXPIRES_AT_MS_KEY, 0)
       store.putSync(LOGIN_RETURN_TARGET_KEY, '')
       store.putSync(NOTE_API_CACHED_USER_PROFILE_KEY, '')
+      // 微信读书导入 Key 与账号绑定，登出后必须清空，避免下一个账号沿用上一个用户的 token。
+      store.putSync(WEREAD_API_KEY, '')
       await store.flush()
+      // 登出后清空 WebView 缓存与 Cookie，防止 H5 容器（飞书表单、微信读书 Skill 等）
+      // 残留上一个账号的会话状态。
+      await WebViewSessionCleaner.clearAll()
     } catch (error) {
       Logger.warn('PreferencesService', `clearLoginSession failed: ${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)
