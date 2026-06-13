@@ -245,7 +245,7 @@ struct WereadImport {
                   this.token = value
                 })
 
-              Button('确定')
+              Button('导入')
                 .type(ButtonType.Capsule)
                 .enabled(!this.importing && !this.loadingToken)
                 .backgroundColor($r('app.color.accent'))
