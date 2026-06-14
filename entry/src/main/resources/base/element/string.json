@@ -41,6 +41,10 @@
       "value": "导入有道云笔记"
     },
     {
+      "name": "import_notes_yinxiang",
+      "value": "导入印象笔记"
+    },
+    {
       "name": "import_notes_files",
       "value": "导入md/doc/txt等文件"
     },
@@ -54,6 +58,30 @@
     },
     {
       "name": "weread_import_get_api_key",
+      "value": "获取 API Key"
+    },
+    {
+      "name": "youdao_import_title",
+      "value": "导入笔记"
+    },
+    {
+      "name": "youdao_import_hint",
+      "value": "请先点击下方按钮获取 API Key，复制后会自动开始导入。\n导入过程中可返回，任务会在后台继续。"
+    },
+    {
+      "name": "youdao_import_get_api_key",
+      "value": "获取 API Key"
+    },
+    {
+      "name": "yinxiang_import_title",
+      "value": "导入笔记"
+    },
+    {
+      "name": "yinxiang_import_hint",
+      "value": "请先点击下方按钮获取 API Key，复制后会自动开始导入。\n导入过程中可返回，任务会在后台继续。"
+    },
+    {
+      "name": "yinxiang_import_get_api_key",
       "value": "获取 API Key"
     },
     {

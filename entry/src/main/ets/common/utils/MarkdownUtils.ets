@@ -1,7 +1,7 @@
 import type { EditorInsertResult } from './EditorMarkdownInsert'
 
 export type MarkdownInlineType =
-  'text' | 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link' | 'math_inline'
+  'text' | 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link' | 'image' | 'math_inline'
 
 export interface MarkdownInline {
   type: MarkdownInlineType
@@ -37,7 +37,7 @@ export interface LinkSummaryParts {
 }
 
 interface MarkdownToken {
-  type: 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link' | 'math_inline'
+  type: 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link' | 'image' | 'math_inline'
   index: number
   marker: string
 }
@@ -768,6 +768,26 @@ export class MarkdownUtils {
         cursor = closingIndex + markerLength
         continue
       }
+      if (nextToken.type === 'image') {
+        const labelEnd = content.indexOf('](', nextToken.index)
+        const hrefEnd = labelEnd === -1 ? -1 : content.indexOf(')', labelEnd + 2)
+        if (labelEnd === -1 || hrefEnd === -1) {
+          MarkdownUtils.pushInline(inlines, {
+            type: 'text',
+            content: content.slice(nextToken.index, nextToken.index + 1),
+            href: ''
+          })
+          cursor = nextToken.index + 1
+          continue
+        }
+        MarkdownUtils.pushInline(inlines, {
+          type: 'image',
+          content: content.slice(nextToken.index + 2, labelEnd),
+          href: content.slice(labelEnd + 2, hrefEnd).trim()
+        })
+        cursor = hrefEnd + 1
+        continue
+      }
       if (nextToken.type === 'link') {
         const labelEnd = content.indexOf('](', nextToken.index)
         const hrefEnd = labelEnd === -1 ? -1 : content.indexOf(')', labelEnd + 2)
@@ -822,7 +842,7 @@ export class MarkdownUtils {
   private static findNextToken(content: string, from: number): MarkdownToken | null {
     let nextToken: MarkdownToken | null = null
 
-    const updateCandidate = (type: 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link' | 'math_inline',
+    const updateCandidate = (type: 'bold' | 'italic' | 'strikethrough' | 'inline_code' | 'link' | 'image' | 'math_inline',
       index: number, marker: string): void => {
       if (index === -1) {
         return
@@ -839,6 +859,7 @@ export class MarkdownUtils {
     if (dollarIndex !== -1) {
       updateCandidate('math_inline', dollarIndex, '$')
     }
+    updateCandidate('image', content.indexOf('![', from), '![')
     updateCandidate('link', content.indexOf('[', from), '[')
     updateCandidate('bold', content.indexOf('**', from), '**')
     updateCandidate('bold', content.indexOf('__', from), '__')
@@ -927,7 +948,7 @@ export class MarkdownUtils {
   }
 
   private static containsInlineMarkers(content: string): boolean {
-    return content.includes('`') || content.includes('```') || content.includes('[') || content.includes('*') || content.includes('_')
+    return content.includes('`') || content.includes('```') || content.includes('![') || content.includes('[') || content.includes('*') || content.includes('_')
       || content.includes('~') || content.includes('$') || content.includes('\\(')
   }
 

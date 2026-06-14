@@ -1,12 +1,13 @@
 {
   "name": "entry",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "description": "Please describe the basic information.",
   "main": "",
   "author": "",
   "license": "",
   "dependencies": {
-    "@cashier_alipay/cashiersdk": "^15.8.43"
+    "@cashier_alipay/cashiersdk": "^15.8.43",
+    "pako": "2.1.0"
   },
   "devDependencies": {},
   "dynamicDependencies": {}

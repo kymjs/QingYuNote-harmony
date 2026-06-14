@@ -353,6 +353,8 @@ export struct NoteEditMarkdownBlocksView {
         .onClick(() => {
           this.onLinkToast(inline.href)
         })
+    } else if (inline.type === 'image') {
+      this.buildInlineImage(inline)
     } else {
       Span(inline.content)
         .fontColor(defaultColor)
@@ -367,12 +369,64 @@ export struct NoteEditMarkdownBlocksView {
   }
 
   @Builder
-  private buildTableCell(inlines: MarkdownInline[], isHeader: boolean, wrapLongText: boolean = false) {
-    Column() {
+  private buildInlineImage(inline: MarkdownInline) {
+    if (inline.href.length === 0) {
+      Blank()
+    } else if (ImageCacheService.isNetworkImageUrl(inline.href)) {
+      CachedNetworkImage({
+        url: inline.href,
+        imageWidth: '100%',
+        objectFit: ImageFit.Contain,
+        imageBorderRadius: 8,
+        alt: inline.content
+      })
+    } else {
+      Image(this.resolveImageSrc(inline.href))
+        .width('100%')
+        .objectFit(ImageFit.Contain)
+        .borderRadius(8)
+        .alt(inline.content)
+    }
+  }
+
+  private tableCellHasImage(inlines: MarkdownInline[]): boolean {
+    return inlines.some((inline: MarkdownInline) => inline.type === 'image')
+  }
+
+  @Builder
+  private buildTableCellContent(inlines: MarkdownInline[], isHeader: boolean, wrapLongText: boolean = false) {
+    if (this.tableCellHasImage(inlines)) {
+      Column({ space: 4 }) {
+        ForEach(inlines, (inline: MarkdownInline, index: number) => {
+          if (inline.type === 'image') {
+            this.buildInlineImage(inline)
+          } else if (inline.content.length > 0) {
+            Text() {
+              this.buildInlineSpan(inline, this.primaryTextColor(), wrapLongText)
+            }
+            .fontSize(isHeader ? 15 : $r('app.float.body_font_size'))
+            .fontColor(this.primaryTextColor())
+            .lineHeight(this.contentLineHeight(22))
+            .fontWeight(isHeader ? FontWeight.Medium : FontWeight.Regular)
+            .width('100%')
+            .wordBreak(wrapLongText ? WordBreak.BREAK_ALL : WordBreak.NORMAL)
+          }
+        }, (inline: MarkdownInline, index: number) => this.inlineKey(inline, index))
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    } else {
       this.buildInlineText(inlines, this.inlineSource(inlines),
         isHeader ? 15 : $r('app.float.body_font_size'),
         this.primaryTextColor(), this.contentLineHeight(22),
         isHeader ? FontWeight.Medium : FontWeight.Regular, undefined, wrapLongText)
+    }
+  }
+
+  @Builder
+  private buildTableCell(inlines: MarkdownInline[], isHeader: boolean, wrapLongText: boolean = false) {
+    Column() {
+      this.buildTableCellContent(inlines, isHeader, wrapLongText)
     }
     .width('100%')
     .padding({ left: 10, right: 10, top: 8, bottom: 8 })

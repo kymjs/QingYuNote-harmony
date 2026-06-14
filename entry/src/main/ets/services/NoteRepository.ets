@@ -24,6 +24,7 @@ import { PreferencesService } from './PreferencesService'
 import { WebDAVClient } from './WebDAVClient'
 import { NoteContentEncryptionService } from './NoteContentEncryptionService'
 import { WereadImportService } from './WereadImportService'
+import { YinxiangImportService } from './YinxiangImportService'
 
 export class NoteRepository {
   private static instance: NoteRepository = new NoteRepository()
@@ -541,6 +542,8 @@ export class NoteRepository {
     // 若仍有正在跑的微信读书导入，先把它停掉再清空，避免它在我们删除笔记文件之后
     // 继续往本地写新笔记（旧账号的内容残留到下一个会话）。
     await WereadImportService.getInstance().cancelImport()
+    // 印象笔记导入同理。
+    await YinxiangImportService.getInstance().cancelImport()
     await this.init()
     this.beginBulkNotification()
     try {

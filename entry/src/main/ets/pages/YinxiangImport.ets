@@ -5,17 +5,17 @@ import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { PreferencesService } from '../services/PreferencesService'
 import {
-  WereadImportException,
-  WereadImportProgress,
-  WereadImportService
-} from '../services/WereadImportService'
+  YinxiangImportException,
+  YinxiangImportProgress,
+  YinxiangImportService
+} from '../services/YinxiangImportService'
 
-const WEREAD_API_KEY_URL = 'https://weread.qq.com/r/weread-skills'
-const WEREAD_API_KEY_PREFIX = 'wrk-'
+const YINXIANG_API_KEY_URL = 'https://app.yinxiang.com/api/DeveloperToken.action'
+const YINXIANG_API_KEY_PREFIX = 'S='
 
 @Entry
 @Component
-struct WereadImport {
+struct YinxiangImport {
   @State token: string = ''
   @State importing: boolean = false
   @State statusText: string = ''
@@ -72,28 +72,28 @@ struct WereadImport {
   }
 
   private syncImportUi(): void {
-    const service = WereadImportService.getInstance()
+    const service = YinxiangImportService.getInstance()
     this.importing = service.isImportRunning()
     this.statusText = this.statusTextFromProgress(service.getProgress(), this.importing)
   }
 
   private statusTextFromProgress(
-    progress: WereadImportProgress | null,
+    progress: YinxiangImportProgress | null,
     running: boolean
   ): string {
     if (!running) {
       return ''
     }
     if (progress === null) {
-      return '正在获取笔记本列表…'
+      return '正在获取笔记列表…'
     }
-    if (progress.currentBookTitle.length > 0) {
-      return `正在导入《${progress.currentBookTitle}》（${progress.processedBooks + 1}/${progress.totalBooks}）`
+    if (progress.currentNoteTitle.length > 0) {
+      return `正在导入《${progress.currentNoteTitle}》（${progress.processedNotes + 1}/${progress.totalNotes}）`
     }
-    if (progress.totalBooks > 0 && progress.processedBooks >= progress.totalBooks) {
+    if (progress.totalNotes > 0 && progress.processedNotes >= progress.totalNotes) {
       return '导入完成'
     }
-    return '正在获取笔记本列表…'
+    return '正在获取笔记列表…'
   }
 
   private async loadToken(): Promise<void> {
@@ -104,14 +104,14 @@ struct WereadImport {
     if (!this.lifecycle.isActive()) {
       return
     }
-    this.token = PreferencesService.getInstance().getWereadApiKey()
+    this.token = PreferencesService.getInstance().getYinxiangApiKey()
     this.loadingToken = false
   }
 
   private handleToolbarBack(): void {
     this.closeGuard.runBack(() => {
       this.getUIContext().getRouter().back()
-    }, 'WereadImport')
+    }, 'YinxiangImport')
   }
 
   private isPcDevice(): boolean {
@@ -126,10 +126,10 @@ struct WereadImport {
     const want: Want = {
       action: 'ohos.want.action.viewData',
       entities: ['entity.system.browsable'],
-      uri: WEREAD_API_KEY_URL
+      uri: YINXIANG_API_KEY_URL
     }
     context.startAbility(want).catch((err: Error) => {
-      console.error(`openWereadApiKeyPage: ${JSON.stringify(err)}`)
+      console.error(`openYinxiangApiKeyPage: ${JSON.stringify(err)}`)
     })
   }
 
@@ -139,13 +139,13 @@ struct WereadImport {
         url: 'pages/H5WebContainer',
         params: {
           title: '获取 API Key',
-          url: WEREAD_API_KEY_URL
+          url: YINXIANG_API_KEY_URL
         }
       }).catch((err: Error) => {
-        console.error(`openWereadApiKeyPageInApp: ${JSON.stringify(err)}`)
+        console.error(`openYinxiangApiKeyPageInApp: ${JSON.stringify(err)}`)
       })
     } catch (error) {
-      console.error(`openWereadApiKeyPageInApp: ${JSON.stringify(error)}`)
+      console.error(`openYinxiangApiKeyPageInApp: ${JSON.stringify(error)}`)
     }
   }
 
@@ -169,70 +169,67 @@ struct WereadImport {
   }
 
   private onConfirm(): void {
-    if (WereadImportService.getInstance().isImportRunning()) {
+    if (YinxiangImportService.getInstance().isImportRunning()) {
       return
     }
     const trimmed = this.token.trim()
     if (trimmed.length === 0) {
-      this.showToast('请输入微信读书 API Key')
+      this.showToast('请输入印象笔记 Developer Token')
       return
     }
     this.lastImportedKey = trimmed
 
-    void WereadImportService.getInstance().importAllNotes(trimmed).catch((error: Object) => {
-      if (error instanceof WereadImportException) {
+    void YinxiangImportService.getInstance().importAllNotes(trimmed).catch((error: Object) => {
+      if (error instanceof YinxiangImportException) {
         return
       }
     })
     this.syncImportUi()
   }
 
-  /** WebView 关闭后被调用:优先取 H5WebContainer 通过 AppStorage 传过来的 wrk- key;读不到再读系统剪贴板兜底。 */
+  /** WebView 关闭后被调用:优先取 H5WebContainer 通过 AppStorage 传过来的 Token;读不到再读系统剪贴板兜底。 */
   private async tryImportFromClipboard(): Promise<void> {
     if (!this.lifecycle.isActive()) {
       return
     }
-    if (WereadImportService.getInstance().isImportRunning()) {
+    if (YinxiangImportService.getInstance().isImportRunning()) {
       return
     }
 
-    // 1. 优先:取 H5WebContainer 通过 AppStorage 传过来的 wrk- key
-    // (Harmony WebView 内的 navigator.clipboard 与系统剪贴板隔离,
-    //  靠 JS 从页面 DOM 抓取后存到 AppStorage 是最可靠的来源)
-    let trimmed: string = ''
+    // 1. 优先:取 H5WebContainer 通过 AppStorage 传过来的 Developer Token
     try {
-      const stored: string | undefined = AppStorage.get<string>('pendingWereadApiKey')
+      const stored: string | undefined = AppStorage.get<string>('pendingYinxiangApiKey')
       if (stored && stored.length > 0) {
-        AppStorage.delete('pendingWereadApiKey')
-        trimmed = stored.trim()
-        if (trimmed.length > 0 && trimmed.startsWith(WEREAD_API_KEY_PREFIX)) {
+        AppStorage.delete('pendingYinxiangApiKey')
+        const trimmed = stored.trim()
+        if (trimmed.length > 0 && trimmed.startsWith(YINXIANG_API_KEY_PREFIX)) {
           this.startImportWithKey(trimmed)
           return
         }
-        trimmed = ''
       }
     } catch (e) {
-      console.error(`WereadImport readAppStorage: ${JSON.stringify(e)}`)
+      console.error(`YinxiangImport readAppStorage: ${JSON.stringify(e)}`)
     }
 
     // 2. 兜底:轮询读系统剪贴板(用户手动复制、桌面端系统浏览器、PC Harmony 等场景)
     let text: string = ''
+    let trimmed: string = ''
     for (let attempt = 0; attempt < 5; attempt++) {
       try {
         const systemPasteboard = pasteboard.getSystemPasteboard()
         const data = await systemPasteboard.getData()
         text = data.getPrimaryText()
       } catch (error) {
-        console.error(`WereadImport readClipboard: ${JSON.stringify(error)}`)
+        console.error(`YinxiangImport readClipboard: ${JSON.stringify(error)}`)
         return
       }
       trimmed = (text ?? '').trim()
-      if (trimmed.length > 0 && trimmed.startsWith(WEREAD_API_KEY_PREFIX)) {
+      if (trimmed.length > 0 && trimmed.startsWith(YINXIANG_API_KEY_PREFIX)) {
         break
       }
       await new Promise<void>((resolve) => setTimeout(resolve, 120))
     }
-    if (trimmed.length === 0 || !trimmed.startsWith(WEREAD_API_KEY_PREFIX)) {
+    if (trimmed.length === 0 || !trimmed.startsWith(YINXIANG_API_KEY_PREFIX)) {
       return
     }
     this.startImportWithKey(trimmed)
@@ -274,7 +271,7 @@ struct WereadImport {
         })
 
         Row() {
-          Text($r('app.string.weread_import_title'))
+          Text($r('app.string.yinxiang_import_title'))
             .fontSize($r('app.float.title_font_size'))
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.primary_text'))
@@ -291,98 +288,98 @@ struct WereadImport {
 
       Column() {
         Column({ space: 12 }) {
-            Text($r('app.string.weread_import_hint'))
-              .fontSize(14)
-              .fontColor($r('app.color.secondary_text'))
-              .lineHeight(22)
+          Text($r('app.string.yinxiang_import_hint'))
+            .fontSize(14)
+            .fontColor($r('app.color.secondary_text'))
+            .lineHeight(22)
 
-            Button($r('app.string.weread_import_get_api_key'))
-              .type(ButtonType.Capsule)
-              .enabled(!this.importing)
-              .backgroundColor($r('app.color.editor_background'))
-              .fontColor($r('app.color.accent'))
-              .border({ width: 1, color: $r('app.color.accent') })
-              .width('100%')
-              .onClick(() => {
-                if (!this.importing) {
-                  this.openApiKeyPage()
-                }
-              })
-
-            Row({ space: 10 }) {
-              // 与首页顶部搜索框 `Index.buildHomeHeader` 对齐：
-              // 边框/背景/圆角放在外层 Row 上，TextInput 透明无边框，
-              // 清空按钮作为子项嵌入「输入框」内部右侧。
-              Row() {
-                TextInput({ text: this.token, placeholder: 'wrk-xxxxxxxx' })
-                  .layoutWeight(1)
-                  .enabled(!this.importing && !this.loadingToken)
-                  .fontSize($r('app.float.body_font_size'))
-                  .fontColor($r('app.color.primary_text'))
-                  .placeholderColor($r('app.color.tertiary_text'))
-                  .backgroundColor(Color.Transparent)
-                  .border({ width: 0 })
-                  .padding({ left: 14, right: 4, top: 0, bottom: 0 })
-                  .onChange((value: string) => {
-                    this.token = value
-                  })
-
-                if (this.token.length > 0 && !this.importing && !this.loadingToken) {
-                  Row() {
-                    SymbolGlyph($r('sys.symbol.xmark'))
-                      .fontSize(16)
-                      .fontColor([$r('app.color.secondary_text')])
-                  }
-                  .padding({ left: 6, right: 10, top: 10, bottom: 10 })
-                  .onClick(() => {
-                    this.token = ''
-                  })
-                }
+          Button($r('app.string.yinxiang_import_get_api_key'))
+            .type(ButtonType.Capsule)
+            .enabled(!this.importing)
+            .backgroundColor($r('app.color.editor_background'))
+            .fontColor($r('app.color.accent'))
+            .border({ width: 1, color: $r('app.color.accent') })
+            .width('100%')
+            .onClick(() => {
+              if (!this.importing) {
+                this.openApiKeyPage()
               }
-              .layoutWeight(1)
-              .height(44)
-              .alignItems(VerticalAlign.Center)
-              .backgroundColor($r('app.color.editor_background'))
-              .borderRadius(12)
-              .border({ width: 1, color: $r('app.color.card_border') })
+            })
 
-              Button('导入')
-                .type(ButtonType.Capsule)
+          Row({ space: 10 }) {
+            // 与首页顶部搜索框 `Index.buildHomeHeader` 对齐：
+            // 边框/背景/圆角放在外层 Row 上，TextInput 透明无边框，
+            // 清空按钮作为子项嵌入「输入框」内部右侧。
+            Row() {
+              TextInput({ text: this.token, placeholder: 'xxxxxxxx' })
+                .layoutWeight(1)
                 .enabled(!this.importing && !this.loadingToken)
-                .backgroundColor($r('app.color.accent'))
-                .fontColor(Color.White)
-                .padding({ left: 18, right: 18 })
-                .onClick(() => {
-                  this.onConfirm()
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor($r('app.color.primary_text'))
+                .placeholderColor($r('app.color.tertiary_text'))
+                .backgroundColor(Color.Transparent)
+                .border({ width: 0 })
+                .padding({ left: 14, right: 4, top: 0, bottom: 0 })
+                .onChange((value: string) => {
+                  this.token = value
                 })
+
+              if (this.token.length > 0 && !this.importing && !this.loadingToken) {
+                Row() {
+                  SymbolGlyph($r('sys.symbol.xmark'))
+                    .fontSize(16)
+                    .fontColor([$r('app.color.secondary_text')])
+                }
+                .padding({ left: 6, right: 10, top: 10, bottom: 10 })
+                .onClick(() => {
+                  this.token = ''
+                })
+              }
+            }
+            .layoutWeight(1)
+            .height(44)
+            .alignItems(VerticalAlign.Center)
+            .backgroundColor($r('app.color.editor_background'))
+            .borderRadius(12)
+            .border({ width: 1, color: $r('app.color.card_border') })
+
+            Button('导入')
+              .type(ButtonType.Capsule)
+              .enabled(!this.importing && !this.loadingToken)
+              .backgroundColor($r('app.color.accent'))
+              .fontColor(Color.White)
+              .padding({ left: 18, right: 18 })
+              .onClick(() => {
+                this.onConfirm()
+              })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Top)
+
+          if (this.importing && this.statusText.length > 0) {
+            Row({ space: 8 }) {
+              LoadingProgress()
+                .width(16)
+                .height(16)
+                .color($r('app.color.accent'))
+              Text(this.statusText)
+                .fontSize(13)
+                .fontColor($r('app.color.secondary_text'))
+                .layoutWeight(1)
             }
             .width('100%')
-            .alignItems(VerticalAlign.Top)
-
-            if (this.importing && this.statusText.length > 0) {
-              Row({ space: 8 }) {
-                LoadingProgress()
-                  .width(16)
-                  .height(16)
-                  .color($r('app.color.accent'))
-                Text(this.statusText)
-                  .fontSize(13)
-                  .fontColor($r('app.color.secondary_text'))
-                  .layoutWeight(1)
-              }
-              .width('100%')
-            }
           }
-          .padding(20)
-          .backgroundColor($r('app.color.card_background'))
-          .borderRadius($r('app.float.card_radius'))
-          .border({ width: 1, color: $r('app.color.card_border') })
-          .shadow({
-            radius: 20,
-            color: $r('app.color.shadow_color'),
-            offsetX: 0,
-            offsetY: 4
-          })
+        }
+        .padding(20)
+        .backgroundColor($r('app.color.card_background'))
+        .borderRadius($r('app.float.card_radius'))
+        .border({ width: 1, color: $r('app.color.card_border') })
+        .shadow({
+          radius: 20,
+          color: $r('app.color.shadow_color'),
+          offsetX: 0,
+          offsetY: 4
+        })
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)

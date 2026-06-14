@@ -50,6 +50,12 @@ const LOGIN_RETURN_TARGET_KEY = 'login_return_target'
 const APP_BIOMETRIC_LOCK_ENABLED_KEY = 'app_biometric_lock_enabled'
 /** 与 Flutter `AppConst.prefWereadApiKeyKey` 一致：微信读书 Skills API Key */
 const WEREAD_API_KEY = 'weread_api_key'
+/** 与 Flutter `AppConst.prefYoudaoApiKeyKey` 一致：有道云笔记 Skills API Key */
+const YOUDAO_API_KEY = 'youdao_api_key'
+/** 与 Flutter `AppConst.prefYinxiangApiKeyKey` 一致：印象笔记 Developer Token */
+const YINXIANG_API_KEY = 'yinxiang_api_key'
+/** 与 Flutter `AppConst.prefYinxiangNoteStoreUrlKey` 一致：印象笔记 NoteStore URL */
+const YINXIANG_NOTE_STORE_URL = 'yinxiang_note_store_url'
 
 export interface LegacyNoteSettingsFlags {
   quick: boolean
@@ -756,6 +762,11 @@ export class PreferencesService {
       store.putSync(NOTE_API_CACHED_USER_PROFILE_KEY, '')
       // 微信读书导入 Key 与账号绑定，登出后必须清空，避免下一个账号沿用上一个用户的 token。
       store.putSync(WEREAD_API_KEY, '')
+      // 有道云笔记导入 Key 同理。
+      store.putSync(YOUDAO_API_KEY, '')
+      // 印象笔记导入 Key 同理。
+      store.putSync(YINXIANG_API_KEY, '')
+      store.putSync(YINXIANG_NOTE_STORE_URL, '')
       await store.flush()
       // 登出后清空 WebView 缓存与 Cookie，防止 H5 容器（飞书表单、微信读书 Skill 等）
       // 残留上一个账号的会话状态。
@@ -794,6 +805,66 @@ export class PreferencesService {
       await store.flush()
     } catch (error) {
       Logger.warn('PreferencesService', `setWereadApiKey failed: ${this.describeError(error as Object)}`)
+      throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  getYoudaoApiKey(): string {
+    try {
+      const store = this.ensureStore()
+      return (store.getSync(YOUDAO_API_KEY, '') as string) ?? ''
+    } catch (_) {
+      return ''
+    }
+  }
+
+  async setYoudaoApiKey(value: string): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(YOUDAO_API_KEY, value.trim())
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setYoudaoApiKey failed: ${this.describeError(error as Object)}`)
+      throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  getYinxiangApiKey(): string {
+    try {
+      const store = this.ensureStore()
+      return (store.getSync(YINXIANG_API_KEY, '') as string) ?? ''
+    } catch (_) {
+      return ''
+    }
+  }
+
+  async setYinxiangApiKey(value: string): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(YINXIANG_API_KEY, value.trim())
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setYinxiangApiKey failed: ${this.describeError(error as Object)}`)
+      throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  getYinxiangNoteStoreUrl(): string {
+    try {
+      const store = this.ensureStore()
+      return (store.getSync(YINXIANG_NOTE_STORE_URL, '') as string) ?? ''
+    } catch (_) {
+      return ''
+    }
+  }
+
+  async setYinxiangNoteStoreUrl(value: string): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(YINXIANG_NOTE_STORE_URL, value.trim())
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setYinxiangNoteStoreUrl failed: ${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)
     }
   }

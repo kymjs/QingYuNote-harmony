@@ -20,7 +20,7 @@ import {
   type HomeSidebarFilterMode
 } from '../common/utils/NoteFolderTree'
 import { TagSortUtils } from '../common/utils/TagSortUtils'
-import { SyncConstants, WereadImportToastPayload } from '../common/constants/SyncConstants'
+import { SyncConstants, WereadImportToastPayload, YinxiangImportToastPayload } from '../common/constants/SyncConstants'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { CloudSyncNotifyThrottle } from '../common/utils/CloudSyncNotifyThrottle'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
@@ -107,6 +107,12 @@ struct Index {
       this.showUserMessage(message.trim())
     }
   }
+  private yinxiangImportToastHandler = (payload: YinxiangImportToastPayload): void => {
+    const message = payload?.message ?? ''
+    if (message.trim().length > 0) {
+      this.showUserMessage(message.trim())
+    }
+  }
   private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
@@ -119,6 +125,8 @@ struct Index {
         this.noteSettingsChangedHandler)
       AppContextHolder.getContext().eventHub.on(SyncConstants.wereadImportToastEvent,
         this.wereadImportToastHandler)
+      AppContextHolder.getContext().eventHub.on(SyncConstants.yinxiangImportToastEvent,
+        this.yinxiangImportToastHandler)
     } catch (_) {
       console.error('Index: eventHub.on qingyu_sync_blocked failed')
     }
@@ -135,6 +143,8 @@ struct Index {
         this.noteSettingsChangedHandler)
       AppContextHolder.getContext().eventHub.off(SyncConstants.wereadImportToastEvent,
         this.wereadImportToastHandler)
+      AppContextHolder.getContext().eventHub.off(SyncConstants.yinxiangImportToastEvent,
+        this.yinxiangImportToastHandler)
     } catch (_) {
       console.error('Index: eventHub.off qingyu_sync_blocked failed')
     }
@@ -365,26 +375,11 @@ struct Index {
     }
   }
 
+  /** 与 Flutter `_refreshCloudSyncConfigured` 对齐：仅按轻羽云订阅状态显隐右上角齿轮入口。
+   *  未开通/已过期/配置缺失等场景都视为未配置，需展示齿轮入口。
+   *  自建 WebDAV 同步路径不影响此入口（齿轮点开仍可在云同步页配置自建 WebDAV）。 */
   private async refreshCloudSyncConfiguredState(): Promise<void> {
     try {
-      const context = AppContextHolder.tryGetContext()
-      if (context) {
-        await PreferencesService.getInstance().init(context)
-      }
-      const snap = await PreferencesService.getInstance().getSavedCustomWebDAVConfigSnapshot()
-      const customReady = snap !== null && snap.enabled
-      if (customReady) {
-        if (this.lifecycle.isActive()) {
-          this.cloudSyncConfigured = true
-        }
-        return
-      }
-      if (await PreferencesService.getInstance().getQingyuCloudSyncIntent() === 'qingyu') {
-        if (this.lifecycle.isActive()) {
-          this.cloudSyncConfigured = true
-        }
-        return
-      }
       const status =
         await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus(previewQingyuForHomeSubscription)
       if (!this.lifecycle.isActive()) {
@@ -394,8 +389,28 @@ struct Index {
       this.cloudSyncConfigured = purchased
     } catch (_) {
       if (this.lifecycle.isActive()) {
-        this.cloudSyncConfigured = true
+        this.cloudSyncConfigured = false
       }
+    }
+  }
+
+  /** 仅在手动下拉刷新时使用：是否完全没配置任何云存储（既无轻羽云订阅、也未配置自建 WebDAV）。
+   *  拉取失败视为「未配置」，与齿轮入口的容错策略保持一致。 */
+  private async hasAnyCloudStorageForPullRefresh(): Promise<boolean> {
+    const context = AppContextHolder.tryGetContext()
+    if (context) {
+      await PreferencesService.getInstance().init(context)
+    }
+    const snap = await PreferencesService.getInstance().getSavedCustomWebDAVConfigSnapshot()
+    if (snap !== null && snap.enabled) {
+      return true
+    }
+    try {
+      const status =
+        await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus(previewQingyuForHomeSubscription)
+      return status.kind === 'lifetime' || status.kind === 'active'
+    } catch (_) {
+      return false
     }
   }
 
@@ -447,6 +462,10 @@ struct Index {
     }
     try {
       await this.loadNotes(false)
+      if (!(await this.hasAnyCloudStorageForPullRefresh())) {
+        this.showUserMessage('未配置云存储，无法同步笔记')
+        return
+      }
       await this.handleSyncNow()
     } finally {
       this.refreshing = false

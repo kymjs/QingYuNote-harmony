@@ -30,10 +30,32 @@ export class SyncConstants {
   static readonly noteSettingsChangedEvent: string = 'note_settings_changed'
   /** 微信读书笔记后台导入完成或失败时 Toast 提示。 */
   static readonly wereadImportToastEvent: string = 'weread_import_toast'
+  /** 有道云笔记后台导入完成或失败时 Toast 提示。 */
+  static readonly youdaoImportToastEvent: string = 'youdao_import_toast'
+  /** 印象笔记后台导入完成或失败时 Toast 提示。 */
+  static readonly yinxiangImportToastEvent: string = 'yinxiang_import_toast'
 }
 
 /** EventHub 载荷：微信读书导入结果提示文案。 */
 export class WereadImportToastPayload {
+  message: string
+
+  constructor(message: string) {
+    this.message = message
+  }
+}
+
+/** EventHub 载荷：有道云笔记导入结果提示文案。 */
+export class YoudaoImportToastPayload {
+  message: string
+
+  constructor(message: string) {
+    this.message = message
+  }
+}
+
+/** EventHub 载荷：印象笔记导入结果提示文案。 */
+export class YinxiangImportToastPayload {
   message: string
 
   constructor(message: string) {

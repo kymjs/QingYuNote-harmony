@@ -8,10 +8,19 @@ import { util } from '@kit.ArkTS'
 import { deviceInfo } from '@kit.BasicServicesKit'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { WereadQrSaveBridge } from '../common/utils/WereadQrSaveBridge'
+import { YoudaoApiKeyBridge } from '../common/utils/YoudaoApiKeyBridge'
+import { YinxiangApiKeyBridge } from '../common/utils/YinxiangApiKeyBridge'
+import { PreferencesService } from '../services/PreferencesService'
 import { WebViewSessionCleaner } from '../common/utils/WebViewSessionCleaner'
 
 /** 微信读书 Skill / API Key 页（导入笔记「获取 API Key」入口，与 Flutter `kWereadSkillsUrl` 对齐）。 */
 const WEREAD_SKILLS_URL = 'https://weread.qq.com/r/weread-skills'
+
+/** 有道云笔记 mopen 申请 API Key 页（与 Flutter `kYoudaoSkillsUrl` 对齐）。 */
+const YOUDAO_API_KEY_URL = 'https://mopen.163.com'
+
+/** 印象笔记 Developer Token 申请页（与 Flutter `kYinxiangSkillsUrl` 对齐）。 */
+const YINXIANG_API_KEY_URL = 'https://app.yinxiang.com/api/DeveloperToken.action'
 
 /** 设置页「用户反馈」飞书表单地址（与 Flutter `kFeedbackFormUrl` 对齐）。 */
 const FEEDBACK_FORM_URL =
@@ -306,6 +315,22 @@ function isWereadSkillsUrl(url: string): boolean {
   return trimmed === WEREAD_SKILLS_URL || trimmed.includes('/r/weread-skills')
 }
 
+function isYoudaoApiKeyUrl(url: string): boolean {
+  const trimmed = url.trim()
+  if (trimmed.length === 0) {
+    return false
+  }
+  return trimmed.startsWith(YOUDAO_API_KEY_URL) || trimmed.includes('mopen.163.com')
+}
+
+function isYinxiangApiKeyUrl(url: string): boolean {
+  const trimmed = url.trim()
+  if (trimmed.length === 0) {
+    return false
+  }
+  return trimmed.startsWith(YINXIANG_API_KEY_URL) || trimmed.includes('/api/DeveloperToken.action')
+}
+
 /** 监听微信读书 Skill 页「复制 API Key」按钮的点击（与 Flutter `_kWatchWereadApiKeyCopyJs` 对齐）。 */
 const WATCH_WEREAD_API_KEY_COPY_JS: string = `(function () {
   if (window.__qingyuWatchWereadApiKeyCopyInstalled) {
@@ -441,6 +466,461 @@ const WATCH_WEREAD_API_KEY_COPY_JS: string = `(function () {
   }
 })();`
 
+/** 有道云 mopen 申请 API Key 流程（与 Flutter `_kYoudaoApiKeyPageJs` 对齐）：
+ *  1) 进入"创建 API Key"弹窗时，把名称自动填成"轻羽云笔记"并自动点创建按钮；
+ *  2) "API Key 已生成"弹窗在移动端全屏宽；
+ *  3) 点击"复制"按钮时通过 `QingyuYoudaoApiKeyBridge` 通知原生层读取系统剪贴板并关掉 WebView。 */
+const YOUDAO_API_KEY_PAGE_JS: string = `(function () {
+  if (window.__qingyuYoudaoApiKeyPageInstalled) {
+    return;
+  }
+  window.__qingyuYoudaoApiKeyPageInstalled = true;
+
+  var DEFAULT_NAME = '轻羽云笔记';
+  var NAME_FILL_ATTR = 'data-qingyu-youdao-name-filled';
+  var CREATE_CLICK_ATTR = 'data-qingyu-youdao-create-clicked';
+  var COPY_BOUND_ATTR = 'data-qingyu-youdao-copy-bound';
+  var DIALOG_PATCHED_ATTR = 'data-qingyu-youdao-dialog-patched';
+
+  function isMobileViewport() {
+    return (
+      window.matchMedia('(max-width: 640px)').matches ||
+      /Android|iPhone|iPod|Mobile|HarmonyOS/i.test(navigator.userAgent)
+    );
+  }
+
+  function notifyApiKeyCopied() {
+    try {
+      if (window.QingyuYoudaoApiKeyBridge &&
+          typeof window.QingyuYoudaoApiKeyBridge.onApiKeyCopied === 'function') {
+        setTimeout(function () {
+          try { window.QingyuYoudaoApiKeyBridge.onApiKeyCopied(''); } catch (_) {}
+        }, 60);
+      }
+    } catch (_) {}
+  }
+
+  function isNameInput(el) {
+    if (!el || el.nodeType !== 1) {
+      return false;
+    }
+    var tag = (el.tagName || '').toUpperCase();
+    if (tag !== 'INPUT' && tag !== 'TEXTAREA') {
+      return false;
+    }
+    var type = (el.getAttribute('type') || 'text').toLowerCase();
+    if (type === 'hidden' || type === 'file' || type === 'checkbox' || type === 'radio') {
+      return false;
+    }
+    var placeholder = el.getAttribute('placeholder') || '';
+    var ariaLabel = el.getAttribute('aria-label') || '';
+    var name = el.getAttribute('name') || el.getAttribute('id') || '';
+    var combined = (placeholder + ' ' + ariaLabel + ' ' + name).toLowerCase();
+    if (combined.indexOf('name') >= 0 || combined.indexOf('名称') >= 0 ||
+        combined.indexOf('应用') >= 0 || combined.indexOf('app') >= 0) {
+      return true;
+    }
+    return false;
+  }
+
+  function isCreateButton(el) {
+    if (!el || el.nodeType !== 1) {
+      return false;
+    }
+    var tag = (el.tagName || '').toUpperCase();
+    if (tag !== 'BUTTON' && tag !== 'A' && tag !== 'DIV' && tag !== 'SPAN') {
+      return false;
+    }
+    var role = (el.getAttribute('role') || '').toLowerCase();
+    if (tag === 'BUTTON' || role === 'button') {
+      // OK
+    } else if (tag !== 'A') {
+      return false;
+    }
+    var text = (el.textContent || '').replace(/\\s+/g, '').toLowerCase();
+    if (!text) {
+      return false;
+    }
+    if (text.indexOf('创建') >= 0 || text.indexOf('生成') >= 0 ||
+        text.indexOf('create') >= 0 || text.indexOf('submit') >= 0 ||
+        text.indexOf('确定') >= 0 || text.indexOf('confirm') >= 0) {
+      if (text === '取消' || text === 'cancel') {
+        return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  function setInputValue(el, value) {
+    if (!el) {
+      return;
+    }
+    try {
+      var proto = el.tagName === 'TEXTAREA'
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+      var setter = Object.getOwnPropertyDescriptor(proto, 'value');
+      if (setter && setter.set) {
+        setter.set.call(el, value);
+      } else {
+        el.value = value;
+      }
+    } catch (_) {
+      try { el.value = value; } catch (__) {}
+    }
+    try {
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new Event('blur', { bubbles: true }));
+    } catch (_) {}
+  }
+
+  function tryAutoFillAndCreate() {
+    try {
+      var dialogs = document.querySelectorAll(
+        '.ant-modal, .el-dialog, .ant-drawer, [role="dialog"], [class*="modal"], [class*="dialog"], [class*="Modal"], [class*="Dialog"]'
+      );
+      var scopes = dialogs.length > 0 ? Array.from(dialogs) : [document.body];
+      for (var s = 0; s < scopes.length; s++) {
+        var scope = scopes[s];
+        var inputs = scope.querySelectorAll('input, textarea');
+        for (var i = 0; i < inputs.length; i++) {
+          var input = inputs[i];
+          if (input.getAttribute(NAME_FILL_ATTR) === '1') {
+            continue;
+          }
+          if (!isNameInput(input)) {
+            continue;
+          }
+          input.setAttribute(NAME_FILL_ATTR, '1');
+          setInputValue(input, DEFAULT_NAME);
+        }
+        var buttons = scope.querySelectorAll(
+          'button, [role="button"], a, .ant-btn, .el-button, div[class*="button"]'
+        );
+        for (var b = 0; b < buttons.length; b++) {
+          var btn = buttons[b];
+          if (btn.getAttribute(CREATE_CLICK_ATTR) === '1') {
+            continue;
+          }
+          if (!isCreateButton(btn)) {
+            continue;
+          }
+          if (scopes.length > 1 && scope.contains(btn)) {
+            btn.setAttribute(CREATE_CLICK_ATTR, '1');
+            setTimeout(function () {
+              try { btn.click(); } catch (_) {}
+            }, 200);
+          } else if (scopes.length === 1) {
+            btn.setAttribute(CREATE_CLICK_ATTR, '1');
+            setTimeout(function () {
+              try { btn.click(); } catch (_) {}
+            }, 200);
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  function findSuccessDialog() {
+    var candidates = document.querySelectorAll(
+      '.ant-modal, .el-dialog, [role="dialog"], [class*="modal"], [class*="dialog"], [class*="Modal"], [class*="Dialog"]'
+    );
+    for (var i = 0; i < candidates.length; i++) {
+      var d = candidates[i];
+      var text = (d.textContent || '');
+      if (text.indexOf('API Key') >= 0 || text.indexOf('已生成') >= 0 ||
+          text.indexOf('生成成功') >= 0 || text.indexOf('已创建') >= 0) {
+        return d;
+      }
+    }
+    return null;
+  }
+
+  function patchSuccessDialogWidth() {
+    if (!isMobileViewport()) {
+      return;
+    }
+    try {
+      var dialog = findSuccessDialog();
+      if (!dialog) {
+        return;
+      }
+      if (dialog.getAttribute(DIALOG_PATCHED_ATTR) === '1') {
+        return;
+      }
+      dialog.setAttribute(DIALOG_PATCHED_ATTR, '1');
+      dialog.style.setProperty('width', '100vw', 'important');
+      dialog.style.setProperty('max-width', '100vw', 'important');
+      dialog.style.setProperty('min-width', '0', 'important');
+      dialog.style.setProperty('left', '0', 'important');
+      dialog.style.setProperty('right', '0', 'important');
+      dialog.style.setProperty('margin', '0', 'important');
+      dialog.style.setProperty('transform', 'none', 'important');
+      try {
+        var inner = dialog.querySelectorAll(
+          '.el-dialog__body, .ant-modal-body, .ant-modal-content, .el-dialog, [class*="body"], [class*="content"]'
+        );
+        for (var i = 0; i < inner.length; i++) {
+          var el = inner[i];
+          el.style.setProperty('width', '100%', 'important');
+          el.style.setProperty('max-width', '100%', 'important');
+        }
+      } catch (_) {}
+    } catch (_) {}
+  }
+
+  function isCopyButton(el) {
+    if (!el || el.nodeType !== 1) {
+      return false;
+    }
+    var tag = (el.tagName || '').toUpperCase();
+    if (tag !== 'BUTTON' && tag !== 'A' && tag !== 'DIV' && tag !== 'SPAN' &&
+        tag !== 'I' && tag !== 'SVG') {
+      return false;
+    }
+    var role = (el.getAttribute('role') || '').toLowerCase();
+    if (tag === 'BUTTON' || role === 'button') {
+      // OK
+    } else if (tag !== 'A') {
+      var cls = (el.getAttribute('class') || '').toLowerCase();
+      if (cls.indexOf('copy') < 0 && cls.indexOf('clipboard') < 0) {
+        return false;
+      }
+    }
+    var text = (el.textContent || '').replace(/\\s+/g, '').toLowerCase();
+    if (text.indexOf('复制') >= 0 || text.indexOf('copy') >= 0) {
+      return true;
+    }
+    var ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+    if (ariaLabel.indexOf('复制') >= 0 || ariaLabel.indexOf('copy') >= 0) {
+      return true;
+    }
+    return false;
+  }
+
+  function bindCopyButton() {
+    try {
+      var dialog = findSuccessDialog();
+      var scope = dialog || document.body;
+      var candidates = scope.querySelectorAll(
+        'button, [role="button"], a, .ant-btn, .el-button, div, span, i, svg'
+      );
+      for (var i = 0; i < candidates.length; i++) {
+        var el = candidates[i];
+        if (el.getAttribute(COPY_BOUND_ATTR) === '1') {
+          continue;
+        }
+        if (!isCopyButton(el)) {
+          continue;
+        }
+        el.setAttribute(COPY_BOUND_ATTR, '1');
+        el.addEventListener('click', function () {
+          notifyApiKeyCopied();
+        }, true);
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function hookClipboard() {
+    if (window.__qingyuYoudaoClipboardHooked) {
+      return;
+    }
+    window.__qingyuYoudaoClipboardHooked = true;
+    try {
+      var cb = navigator.clipboard;
+      if (!cb || typeof cb.writeText !== 'function') {
+        return;
+      }
+      var original = cb.writeText.bind(cb);
+      cb.writeText = function (text) {
+        try {
+          if (typeof text === 'string' && text.length > 8) {
+            notifyApiKeyCopied();
+          }
+        } catch (_) {}
+        return original(text);
+      };
+    } catch (_) {}
+  }
+
+  function run() {
+    hookClipboard();
+    tryAutoFillAndCreate();
+    patchSuccessDialogWidth();
+    bindCopyButton();
+  }
+
+  run();
+  new MutationObserver(run).observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+  for (var i = 1; i <= 20; i++) {
+    setTimeout(run, i * 500);
+  }
+})();`
+
+/** 印象笔记 Developer Token 页（与 Flutter `_kYinxiangApiKeyPageJs` 对齐）：
+ *  1) 无 Token 时自动点击「Create a developer token」；
+ *  2) 检测到 Developer Token 与 NoteStore URL 后通知原生层保存并关闭 WebView。 */
+const YINXIANG_API_KEY_PAGE_JS: string = `(function () {
+  if (window.__qingyuYinxiangApiKeyPageInstalled) {
+    return;
+  }
+  window.__qingyuYinxiangApiKeyPageInstalled = true;
+
+  var CREATE_CLICKED_ATTR = 'data-qingyu-yinxiang-create-clicked';
+  var NOTIFIED_ATTR = 'data-qingyu-yinxiang-notified';
+  var DELAY_MS = 80;
+
+  function isDeveloperToken(text) {
+    if (!text) {
+      return false;
+    }
+    var t = String(text).trim();
+    return t.indexOf('S=') === 0 && t.length > 10;
+  }
+
+  function isNoteStoreUrl(text) {
+    if (!text) {
+      return false;
+    }
+    var t = String(text).trim();
+    return /^https?:\\/\\/.+\\/notestore/i.test(t);
+  }
+
+  function collectFieldValues() {
+    var values = [];
+    try {
+      var nodes = document.querySelectorAll('input, textarea, pre, code, a, span, p, li, td');
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i];
+        var val = '';
+        if (el.value !== undefined && el.value !== null && String(el.value).trim()) {
+          val = String(el.value).trim();
+        } else {
+          val = String(el.textContent || '').trim();
+        }
+        if (val) {
+          values.push(val);
+        }
+      }
+    } catch (_) {}
+    return values;
+  }
+
+  function extractCredentials() {
+    var token = '';
+    var noteStoreUrl = '';
+    var values = collectFieldValues();
+    for (var i = 0; i < values.length; i++) {
+      var v = values[i];
+      if (!token && isDeveloperToken(v)) {
+        token = v;
+      }
+      if (!noteStoreUrl && isNoteStoreUrl(v)) {
+        noteStoreUrl = v;
+      }
+    }
+    if (!token || !noteStoreUrl) {
+      try {
+        var bodyText = document.body ? (document.body.innerText || '') : '';
+        if (!token) {
+          var tokenMatch = bodyText.match(/S=[^\\s"'<>]+/);
+          if (tokenMatch && tokenMatch[0]) {
+            token = tokenMatch[0].trim();
+          }
+        }
+        if (!noteStoreUrl) {
+          var urlMatch = bodyText.match(/https?:\\/\\/[^\\s"'<>]+notestore[^\\s"'<>]*/i);
+          if (urlMatch && urlMatch[0]) {
+            noteStoreUrl = urlMatch[0].trim();
+          }
+        }
+      } catch (_) {}
+    }
+    return { token: token, noteStoreUrl: noteStoreUrl };
+  }
+
+  function notifyTokenReady(token, noteStoreUrl) {
+    try {
+      if (window.QingyuYinxiangApiKeyBridge &&
+          typeof window.QingyuYinxiangApiKeyBridge.onTokenReady === 'function') {
+        setTimeout(function () {
+          try { window.QingyuYinxiangApiKeyBridge.onTokenReady(token || '', noteStoreUrl || ''); } catch (_) {}
+        }, DELAY_MS);
+      }
+    } catch (_) {}
+    try {
+      var cb = navigator.clipboard;
+      if (cb && typeof cb.writeText === 'function' && token) {
+        cb.writeText(token);
+      }
+    } catch (_) {}
+  }
+
+  function isCreateDevTokenButton(el) {
+    if (!el || el.nodeType !== 1) {
+      return false;
+    }
+    var text = (el.textContent || el.value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+    if (!text) {
+      return false;
+    }
+    return text.indexOf('create a developer token') >= 0 ||
+      text.indexOf('create developer token') >= 0;
+  }
+
+  function tryClickCreateButton() {
+    try {
+      var candidates = document.querySelectorAll(
+        'button, input[type="submit"], input[type="button"], a, [role="button"]'
+      );
+      for (var i = 0; i < candidates.length; i++) {
+        var el = candidates[i];
+        if (el.getAttribute(CREATE_CLICKED_ATTR) === '1') {
+          continue;
+        }
+        if (!isCreateDevTokenButton(el)) {
+          continue;
+        }
+        el.setAttribute(CREATE_CLICKED_ATTR, '1');
+        setTimeout(function () {
+          try { el.click(); } catch (_) {}
+        }, 300);
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  function run() {
+    var creds = extractCredentials();
+    if (creds.token) {
+      if (document.documentElement.getAttribute(NOTIFIED_ATTR) === '1') {
+        return;
+      }
+      document.documentElement.setAttribute(NOTIFIED_ATTR, '1');
+      notifyTokenReady(creds.token, creds.noteStoreUrl);
+      return;
+    }
+    tryClickCreateButton();
+  }
+
+  run();
+  new MutationObserver(run).observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+  for (var i = 1; i <= 30; i++) {
+    setTimeout(run, i * 500);
+  }
+})();`
+
 interface H5WebContainerParams {
   title?: string
   url?: string
@@ -460,9 +940,15 @@ struct H5WebContainer {
   private webController: webview.WebviewController = new webview.WebviewController()
   private closeGuard = new PageCloseGuard()
   private qrSaveBridge: WereadQrSaveBridge = new WereadQrSaveBridge()
+  private youdaoBridge: YoudaoApiKeyBridge = new YoudaoApiKeyBridge()
+  private yinxiangBridge: YinxiangApiKeyBridge = new YinxiangApiKeyBridge()
   private readonly base64: util.Base64Helper = new util.Base64Helper()
   // 「复制 API Key」流程已被处理,防止用户连点/动画期间再次 Router.back() 把上一页(导入笔记页面)也弹掉
   private apiKeyHandled: boolean = false
+  // 有道云「复制 API Key」流程的独立守卫,避免和微信读书互相干扰
+  private youdaoApiKeyHandled: boolean = false
+  // 印象笔记 Developer Token 流程的独立守卫
+  private yinxiangApiKeyHandled: boolean = false
 
   private shouldShowLoadingOverlay(): boolean {
     return this.isLoading &&
@@ -476,6 +962,12 @@ struct H5WebContainer {
     })
     this.qrSaveBridge.bindKeyCopied((key: string) => {
       this.handleApiKeyCopiedFromJs(key)
+    })
+    this.youdaoBridge.bindKeyCopied((key: string) => {
+      this.handleYoudaoApiKeyCopiedFromJs(key)
+    })
+    this.yinxiangBridge.bindTokenReady((token: string, noteStoreUrl: string) => {
+      void this.handleYinxiangTokenFromJs(token, noteStoreUrl)
     })
     // 登出时统一清理缓存（与 Flutter `WebViewSessionCleaner.register` 对齐）。
     WebViewSessionCleaner.registerController(this.webController)
@@ -604,6 +1096,110 @@ struct H5WebContainer {
     }
   }
 
+  private shouldEnableYoudaoApiKeyBridge(): boolean {
+    return isYoudaoApiKeyUrl(this.webUrl) && this.isMobileContainer()
+  }
+
+  private shouldEnableYinxiangApiKeyBridge(): boolean {
+    return isYinxiangApiKeyUrl(this.webUrl) && this.isMobileContainer()
+  }
+
+  /** 印象笔记 Developer Token 页检测到 Token 后：持久化 Token / NoteStore URL，写入 AppStorage 并关闭 WebView。 */
+  private async handleYinxiangTokenFromJs(token: string, noteStoreUrl: string): Promise<void> {
+    if (!this.shouldEnableYinxiangApiKeyBridge()) {
+      return
+    }
+    if (this.yinxiangApiKeyHandled) {
+      return
+    }
+    const trimmed = (token ?? '').trim()
+    if (trimmed.length === 0 || trimmed.indexOf('S=') !== 0) {
+      return
+    }
+    this.yinxiangApiKeyHandled = true
+    const noteStore = (noteStoreUrl ?? '').trim()
+    try {
+      await PreferencesService.getInstance().setYinxiangApiKey(trimmed)
+      if (noteStore.length > 0) {
+        await PreferencesService.getInstance().setYinxiangNoteStoreUrl(noteStore)
+      }
+    } catch (e) {
+      console.error(`H5WebContainer handleYinxiangTokenFromJs savePrefs: ${JSON.stringify(e)}`)
+    }
+    try {
+      AppStorage.setOrCreate<string>('pendingYinxiangApiKey', trimmed)
+    } catch (e) {
+      console.error(`H5WebContainer handleYinxiangTokenFromJs setAppStorage: ${JSON.stringify(e)}`)
+    }
+    try {
+      this.getUIContext().getRouter().back()
+    } catch (e) {
+      console.error(`H5WebContainer handleYinxiangTokenFromJs back: ${JSON.stringify(e)}`)
+    }
+  }
+
+  /** 有道云 mopen 申请 API Key 流程的「复制」回调：
+   * 主动申请 READ_PASTEBOARD 权限,读取系统剪贴板内容,写入 AppStorage 后关闭 WebView。 */
+  private async handleYoudaoApiKeyCopiedFromJs(key: string): Promise<void> {
+    if (!this.shouldEnableYoudaoApiKeyBridge()) {
+      return
+    }
+    if (this.youdaoApiKeyHandled) {
+      return
+    }
+    this.youdaoApiKeyHandled = true
+    // 与微信读书流程保持一致：申请系统剪贴板读权限。
+    let trimmed: string = ''
+    try {
+      const granted = await this.requestReadPasteboardPermission()
+      if (!granted) {
+        console.error('H5WebContainer handleYoudaoApiKeyCopiedFromJs: READ_PASTEBOARD denied')
+        this.showToast('读取剪贴板权限被拒绝,无法自动导入 API Key')
+        try {
+          this.getUIContext().getRouter().back()
+        } catch (e) {
+          console.error(`H5WebContainer handleYoudaoApiKeyCopiedFromJs back: ${JSON.stringify(e)}`)
+        }
+        return
+      }
+      const systemPasteboard = pasteboard.getSystemPasteboard()
+      const data = await systemPasteboard.getData()
+      const text = data.getPrimaryText()
+      trimmed = (text ?? '').trim()
+    } catch (e) {
+      console.error(`H5WebContainer handleYoudaoApiKeyCopiedFromJs readClipboard: ${JSON.stringify(e)}`)
+      try {
+        this.getUIContext().getRouter().back()
+      } catch (err) {
+        console.error(`H5WebContainer handleYoudaoApiKeyCopiedFromJs back: ${JSON.stringify(err)}`)
+      }
+      return
+    }
+    // 兜底:如果系统剪贴板为空(用户授权后又手动清空),用 JS 传回的 key 兜底。
+    if (trimmed.length === 0 && typeof key === 'string') {
+      const fromJs = key.trim()
+      if (fromJs.length > 0) {
+        trimmed = fromJs
+      }
+    }
+    if (trimmed.length > 0) {
+      try {
+        AppStorage.setOrCreate<string>('pendingYoudaoApiKey', trimmed)
+      } catch (e) {
+        console.error(`H5WebContainer handleYoudaoApiKeyCopiedFromJs setAppStorage: ${JSON.stringify(e)}`)
+      }
+    } else {
+      console.error('H5WebContainer handleYoudaoApiKeyCopiedFromJs: empty clipboard content')
+      this.showToast('剪贴板内容为空,无法自动导入 API Key')
+    }
+    // 只关 WebView;启动导入由导入笔记页面 onPageShow 统一处理。
+    try {
+      this.getUIContext().getRouter().back()
+    } catch (e) {
+      console.error(`H5WebContainer handleYoudaoApiKeyCopiedFromJs: ${JSON.stringify(e)}`)
+    }
+  }
+
   private showToast(message: string): void {
     if (message.trim().length === 0) {
       return
@@ -708,6 +1304,8 @@ struct H5WebContainer {
     this.hideFeishuVoiceInputIfNeeded()
     this.hideWereadSkillsExtraIfNeeded()
     this.watchWereadApiKeyCopyIfNeeded()
+    this.patchYoudaoApiKeyPageIfNeeded()
+    this.patchYinxiangApiKeyPageIfNeeded()
   }
 
   private hideFeishuVoiceInputIfNeeded(): void {
@@ -740,6 +1338,28 @@ struct H5WebContainer {
       this.webController.runJavaScript(WATCH_WEREAD_API_KEY_COPY_JS)
     } catch (e) {
       console.error(`H5WebContainer watchWereadApiKeyCopy: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private patchYoudaoApiKeyPageIfNeeded(): void {
+    if (!isYoudaoApiKeyUrl(this.webUrl) || !this.isMobileContainer()) {
+      return
+    }
+    try {
+      this.webController.runJavaScript(YOUDAO_API_KEY_PAGE_JS)
+    } catch (e) {
+      console.error(`H5WebContainer patchYoudaoApiKeyPage: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private patchYinxiangApiKeyPageIfNeeded(): void {
+    if (!isYinxiangApiKeyUrl(this.webUrl) || !this.isMobileContainer()) {
+      return
+    }
+    try {
+      this.webController.runJavaScript(YINXIANG_API_KEY_PAGE_JS)
+    } catch (e) {
+      console.error(`H5WebContainer patchYinxiangApiKeyPage: ${JSON.stringify(e)}`)
     }
   }
 
@@ -792,6 +1412,18 @@ struct H5WebContainer {
             object: this.qrSaveBridge,
             name: 'QingyuWereadBridge',
             methodList: ['saveQrImage', 'onApiKeyCopied'],
+            controller: this.webController
+          })
+          .javaScriptProxy({
+            object: this.youdaoBridge,
+            name: 'QingyuYoudaoApiKeyBridge',
+            methodList: ['onApiKeyCopied'],
+            controller: this.webController
+          })
+          .javaScriptProxy({
+            object: this.yinxiangBridge,
+            name: 'QingyuYinxiangApiKeyBridge',
+            methodList: ['onTokenReady'],
             controller: this.webController
           })
           .onPageBegin(() => {
