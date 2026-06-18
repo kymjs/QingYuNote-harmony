@@ -9,6 +9,7 @@ import { SyncService } from '../services/SyncService'
 import { AppScheduler } from '../services/AppScheduler'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
+import { LocaleService, APP_LOCALE_REVISION_KEY } from '../services/LocaleService'
 
 const DOMAIN = 0x0000
 const DEFERRED_SERVICES_DELAY_MS = 1500
@@ -23,6 +24,8 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, 'noteTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err))
     }
     AppContextHolder.setContext(this.context)
+    AppStorage.setOrCreate(APP_LOCALE_REVISION_KEY, 0)
+    void LocaleService.getInstance().load(this.context)
     void this.prepareCriticalServices().then(() => {
       this.scheduleDeferredServices()
     }).catch((error: Error) => {
@@ -46,6 +49,7 @@ export default class EntryAbility extends UIAbility {
   private async bootstrapWindow(windowStage: window.WindowStage): Promise<void> {
     try {
       await PreferencesService.getInstance().init(this.context)
+      await LocaleService.getInstance().load(this.context)
       await PreferencesService.getInstance().repairAbnormalLoginSessionIfNeeded()
       const loggedIn = await PreferencesService.getInstance().isUserLoggedIn()
       const guest = await PreferencesService.getInstance().isGuestMode()

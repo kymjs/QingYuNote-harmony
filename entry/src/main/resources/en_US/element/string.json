@@ -1,0 +1,744 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Qingyu Cloud Notes main module"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "Qingyu Cloud Notes entry ability"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "Qingyu Cloud Notes"
+    },
+    {
+      "name": "settings",
+      "value": "Settings"
+    },
+    {
+      "name": "settings_user_info",
+      "value": "Profile"
+    },
+    {
+      "name": "settings_cloud_sync",
+      "value": "Cloud Sync"
+    },
+    {
+      "name": "settings_language",
+      "value": "Language"
+    },
+    {
+      "name": "language_settings_title",
+      "value": "Language"
+    },
+    {
+      "name": "language_zh",
+      "value": "简体中文"
+    },
+    {
+      "name": "language_en",
+      "value": "English"
+    },
+    {
+      "name": "settings_not_logged_in",
+      "value": "Not signed in"
+    },
+    {
+      "name": "settings_weread_import",
+      "value": "Import WeRead notes"
+    },
+    {
+      "name": "import_notes_title",
+      "value": "Import notes"
+    },
+    {
+      "name": "import_notes_weread",
+      "value": "Import WeRead notes"
+    },
+    {
+      "name": "import_notes_youdao",
+      "value": "Import Youdao notes"
+    },
+    {
+      "name": "import_notes_yinxiang",
+      "value": "Import Evernote notes"
+    },
+    {
+      "name": "import_notes_files",
+      "value": "Import md/doc/txt files"
+    },
+    {
+      "name": "weread_import_title",
+      "value": "Import notes"
+    },
+    {
+      "name": "weread_import_hint",
+      "value": "Tap the button below to get an API Key. Import starts automatically after you copy it.\nYou can go back during import; the task continues in the background."
+    },
+    {
+      "name": "weread_import_get_api_key",
+      "value": "Get API Key"
+    },
+    {
+      "name": "youdao_import_title",
+      "value": "Import notes"
+    },
+    {
+      "name": "youdao_import_hint",
+      "value": "Tap the button below to get an API Key. Import starts automatically after you copy it.\nYou can go back during import; the task continues in the background."
+    },
+    {
+      "name": "youdao_import_get_api_key",
+      "value": "Get API Key"
+    },
+    {
+      "name": "yinxiang_import_title",
+      "value": "Import notes"
+    },
+    {
+      "name": "yinxiang_import_hint",
+      "value": "Tap the button below to get an API Key. Import starts automatically after you copy it.\nYou can go back during import; the task continues in the background."
+    },
+    {
+      "name": "yinxiang_import_get_api_key",
+      "value": "Get API Key"
+    },
+    {
+      "name": "logout",
+      "value": "Sign out"
+    },
+    {
+      "name": "logout_in_progress",
+      "value": "Signing out…"
+    },
+    {
+      "name": "login_guest_mode",
+      "value": "Guest mode"
+    },
+    {
+      "name": "new_note",
+      "value": "New note"
+    },
+    {
+      "name": "empty_notes",
+      "value": "No notes yet. Start capturing your first idea."
+    },
+    {
+      "name": "editor_title_placeholder",
+      "value": "Enter title"
+    },
+    {
+      "name": "editor_content_placeholder",
+      "value": "Start writing — Markdown supported"
+    },
+    {
+      "name": "settings_sync_provider_title",
+      "value": "Cloud provider"
+    },
+    {
+      "name": "settings_sync_provider_webdav",
+      "value": "WebDAV"
+    },
+    {
+      "name": "settings_qingyu_title",
+      "value": "Qingyu Cloud"
+    },
+    {
+      "name": "qingyu_recharge_tagline",
+      "value": "Enable cloud sync across all your devices"
+    },
+    {
+      "name": "qingyu_privilege_section_title",
+      "value": "Membership benefits"
+    },
+    {
+      "name": "qingyu_recharge_footer_note",
+      "value": "Note: Membership is non-refundable after purchase. By purchasing you agree to the terms of service."
+    },
+    {
+      "name": "qingyu_recharge_agreement_link",
+      "value": "Qingyu Cloud Service Agreement"
+    },
+    {
+      "name": "qingyu_privilege_sync_title",
+      "value": "Cloud sync"
+    },
+    {
+      "name": "qingyu_privilege_sync_desc",
+      "value": "Notes sync to Qingyu Cloud in real time — never lose your work when switching devices."
+    },
+    {
+      "name": "qingyu_privilege_multi_title",
+      "value": "Multi-device"
+    },
+    {
+      "name": "qingyu_privilege_multi_desc",
+      "value": "Phone, tablet — view and edit on any device."
+    },
+    {
+      "name": "qingyu_privilege_media_title",
+      "value": "AI assist"
+    },
+    {
+      "name": "qingyu_privilege_media_desc",
+      "value": "AI-assisted writing; turn slides/PPT into notes in one tap."
+    },
+    {
+      "name": "qingyu_privilege_safe_title",
+      "value": "Ad-free forever"
+    },
+    {
+      "name": "qingyu_privilege_safe_desc",
+      "value": "No splash or feed ads — focus on writing."
+    },
+    {
+      "name": "qingyu_renew_toast_placeholder",
+      "value": "Renewal coming soon"
+    },
+    {
+      "name": "settings_webdav_title",
+      "value": "WebDAV"
+    },
+    {
+      "name": "settings_sync_title",
+      "value": "Sync options"
+    },
+    {
+      "name": "about_title",
+      "value": "About"
+    },
+    {
+      "name": "about_tagline",
+      "value": "Recording is meaning itself."
+    },
+    {
+      "name": "about_intro",
+      "value": "Qingyu Cloud Notes works across Android, iOS, HarmonyOS, macOS, Windows, and Linux — your notes on every device."
+    },
+    {
+      "name": "about_light_title",
+      "value": "Light and effortless"
+    },
+    {
+      "name": "about_light_body",
+      "value": "Great tools help you focus on expression, not the tool itself. Qingyu is lightweight — small install, fast, clean UI, no nagging popups."
+    },
+    {
+      "name": "about_official_site_prefix",
+      "value": "Website:"
+    },
+    {
+      "name": "profile_title",
+      "value": "Profile"
+    },
+    {
+      "name": "profile_real_name",
+      "value": "Name"
+    },
+    {
+      "name": "profile_change_password",
+      "value": "Change password"
+    },
+    {
+      "name": "profile_redeem_code",
+      "value": "Redeem code"
+    },
+    {
+      "name": "profile_tap_redeem",
+      "value": "Tap to redeem"
+    },
+    {
+      "name": "profile_registered_at",
+      "value": "Registered"
+    },
+    {
+      "name": "profile_user_sequence",
+      "value": "User #"
+    },
+    {
+      "name": "profile_delete_account",
+      "value": "Delete account"
+    },
+    {
+      "name": "profile_bind_phone",
+      "value": "Bind phone number"
+    },
+    {
+      "name": "profile_change_phone",
+      "value": "Change phone number"
+    },
+    {
+      "name": "profile_linked",
+      "value": "Linked"
+    },
+    {
+      "name": "profile_not_linked",
+      "value": "Not linked"
+    },
+    {
+      "name": "profile_not_activated",
+      "value": "Not active"
+    },
+    {
+      "name": "profile_active",
+      "value": "Active"
+    },
+    {
+      "name": "profile_vip_premium",
+      "value": "Premium member"
+    },
+    {
+      "name": "profile_vip_member",
+      "value": "Member"
+    },
+    {
+      "name": "profile_vip_lifetime",
+      "value": "Lifetime VIP"
+    },
+    {
+      "name": "qingyu_recharge_subscribe",
+      "value": "Subscribe"
+    },
+    {
+      "name": "qingyu_recharge_renew",
+      "value": "Renew"
+    },
+    {
+      "name": "processing",
+      "value": "Processing…"
+    },
+    {
+      "name": "privacy_policy",
+      "value": "Privacy Policy"
+    },
+    {
+      "name": "terms_of_service",
+      "value": "Terms of Service"
+    },
+    {
+      "name": "note_settings_title",
+      "value": "Note settings"
+    },
+    {
+      "name": "note_settings_hub",
+      "value": "Note settings"
+    },
+    {
+      "name": "note_quick_action_bar",
+      "value": "Quick action bar"
+    },
+    {
+      "name": "note_folder_mode_enabled",
+      "value": "Folder mode"
+    },
+    {
+      "name": "app_lock_enabled",
+      "value": "App lock"
+    },
+    {
+      "name": "app_lock_forgot_password",
+      "value": "Forgot password"
+    },
+    {
+      "name": "app_lock_syncing",
+      "value": "Syncing, please wait…"
+    },
+    {
+      "name": "biometric_tap_face",
+      "value": "Tap for Face ID"
+    },
+    {
+      "name": "biometric_tap_fingerprint",
+      "value": "Tap for fingerprint"
+    },
+    {
+      "name": "feedback_title",
+      "value": "Feedback"
+    },
+    {
+      "name": "contact_us",
+      "value": "Contact us"
+    },
+    {
+      "name": "check_update",
+      "value": "Check for updates"
+    },
+    {
+      "name": "feedback_hint_pc",
+      "value": "Scan the QR code to contact the developer"
+    },
+    {
+      "name": "feedback_hint_mobile",
+      "value": "Long-press to save the QR code and contact the developer"
+    },
+    {
+      "name": "tag_manage",
+      "value": "Manage tags"
+    },
+    {
+      "name": "folder_manage",
+      "value": "Manage folders"
+    },
+    {
+      "name": "flowchart_title",
+      "value": "Edit title"
+    },
+    {
+      "name": "save",
+      "value": "Save"
+    },
+    {
+      "name": "recycle_bin_title",
+      "value": "Recycle bin"
+    },
+    {
+      "name": "recycle_bin_empty",
+      "value": "Recycle bin is empty"
+    },
+    {
+      "name": "recycle_bin_loading",
+      "value": "Loading…"
+    },
+    {
+      "name": "recycle_bin_clear_all_title",
+      "value": "Empty recycle bin"
+    },
+    {
+      "name": "recycle_bin_clear_all_message",
+      "value": "Delete all notes in the recycle bin?"
+    },
+    {
+      "name": "recycle_bin_clear_all_cancel",
+      "value": "Cancel"
+    },
+    {
+      "name": "recycle_bin_clear_all_restore",
+      "value": "Restore all"
+    },
+    {
+      "name": "recycle_bin_clear_all_delete",
+      "value": "Delete all"
+    },
+    {
+      "name": "permission_internet_reason",
+      "value": "Connect to your WebDAV server for note sync"
+    },
+    {
+      "name": "permission_network_info_reason",
+      "value": "Check network status and Wi-Fi-only sync policy"
+    },
+    {
+      "name": "permission_vibrate_reason",
+      "value": "Haptic feedback when dragging flowchart nodes"
+    },
+    {
+      "name": "permission_biometric_reason",
+      "value": "Unlock the app with fingerprint or face"
+    },
+    {
+      "name": "permission_read_pasteboard_reason",
+      "value": "Read clipboard after copying a WeRead API Key on the H5 page to start import; only used in foreground during import"
+    },
+    {
+      "name": "login_title",
+      "value": "Sign in"
+    },
+    {
+      "name": "login_options_hint",
+      "value": "Sign in with Huawei account or phone number"
+    },
+    {
+      "name": "login_account_placeholder",
+      "value": "Phone number"
+    },
+    {
+      "name": "login_password_placeholder",
+      "value": "Password"
+    },
+    {
+      "name": "login_other_methods",
+      "value": "Other sign-in methods"
+    },
+    {
+      "name": "login_register",
+      "value": "Create account"
+    },
+    {
+      "name": "login_forgot_password",
+      "value": "Forgot password"
+    },
+    {
+      "name": "login_with_huawei",
+      "value": "Huawei account"
+    },
+    {
+      "name": "login_with_phone",
+      "value": "Phone number"
+    },
+    {
+      "name": "phone_password_login_title",
+      "value": "Phone sign-in"
+    },
+    {
+      "name": "phone_password_field_phone",
+      "value": "Phone"
+    },
+    {
+      "name": "phone_password_field_password",
+      "value": "Password"
+    },
+    {
+      "name": "phone_password_submit",
+      "value": "Sign in"
+    },
+    {
+      "name": "phone_password_logging_in",
+      "value": "Signing in…"
+    },
+    {
+      "name": "change_password_title",
+      "value": "Reset password"
+    },
+    {
+      "name": "change_password_code_placeholder",
+      "value": "Verification code"
+    },
+    {
+      "name": "change_password_send_code",
+      "value": "Send code"
+    },
+    {
+      "name": "change_password_new_password_placeholder",
+      "value": "New password"
+    },
+    {
+      "name": "change_password_submit",
+      "value": "Reset password"
+    },
+    {
+      "name": "register_title",
+      "value": "Create account"
+    },
+    {
+      "name": "register_code_placeholder",
+      "value": "Verification code"
+    },
+    {
+      "name": "register_password_placeholder",
+      "value": "Set password"
+    },
+    {
+      "name": "register_submit",
+      "value": "Register"
+    },
+    {
+      "name": "cancel",
+      "value": "Cancel"
+    },
+    {
+      "name": "confirm",
+      "value": "OK"
+    },
+    {
+      "name": "cloud_sync_qingyu",
+      "value": "Qingyu Cloud"
+    },
+    {
+      "name": "cloud_sync_auto",
+      "value": "Auto sync"
+    },
+    {
+      "name": "cloud_sync_wifi_only",
+      "value": "Wi-Fi only"
+    },
+    {
+      "name": "cloud_sync_interval",
+      "value": "Sync interval (minutes)"
+    },
+    {
+      "name": "cloud_sync_interval_hint",
+      "value": "e.g. 60"
+    },
+    {
+      "name": "cloud_sync_account",
+      "value": "Account"
+    },
+    {
+      "name": "cloud_sync_password",
+      "value": "Password"
+    },
+    {
+      "name": "cloud_sync_test",
+      "value": "Test connection"
+    },
+    {
+      "name": "cloud_sync_testing",
+      "value": "Testing…"
+    },
+    {
+      "name": "cloud_sync_save",
+      "value": "Save"
+    },
+    {
+      "name": "cloud_sync_login",
+      "value": "Sign in"
+    },
+    {
+      "name": "cloud_sync_loading",
+      "value": "Loading…"
+    },
+    {
+      "name": "cloud_sync_renew",
+      "value": "Renew now"
+    },
+    {
+      "name": "cloud_sync_subscribe",
+      "value": "Subscribe"
+    },
+    {
+      "name": "cloud_sync_status_unavailable",
+      "value": "Unable to fetch cloud status"
+    },
+    {
+      "name": "cloud_sync_status_login_required",
+      "value": "Sign in to use Qingyu Cloud and payments"
+    },
+    {
+      "name": "cloud_sync_status_vip",
+      "value": "VIP members get lifetime cloud access"
+    },
+    {
+      "name": "cloud_sync_status_expired",
+      "value": "Cloud subscription expired"
+    },
+    {
+      "name": "cloud_sync_status_not_subscribed",
+      "value": "Qingyu Cloud not activated"
+    },
+    {
+      "name": "cloud_sync_save_login_first",
+      "value": "Sign in before saving Qingyu Cloud sync"
+    },
+    {
+      "name": "cloud_sync_disabled",
+      "value": "Qingyu Cloud sync disabled"
+    },
+    {
+      "name": "cloud_sync_save_failed",
+      "value": "Save failed, please try again"
+    },
+    {
+      "name": "cloud_sync_saved_qingyu",
+      "value": "Qingyu Cloud set as sync provider"
+    },
+    {
+      "name": "cloud_sync_test_success",
+      "value": "Connection test succeeded"
+    },
+    {
+      "name": "cloud_sync_test_failed",
+      "value": "Connection test failed"
+    },
+    {
+      "name": "cloud_sync_test_incomplete",
+      "value": "Enter complete WebDAV details before testing"
+    },
+    {
+      "name": "cloud_sync_qingyu_unavailable",
+      "value": "Qingyu Cloud sync is off or unavailable; try again later"
+    },
+    {
+      "name": "cloud_sync_password_invalid",
+      "value": "Stored WebDAV password is invalid; re-enter and try again"
+    },
+    {
+      "name": "biometric_face_lock",
+      "value": "Face lock"
+    },
+    {
+      "name": "biometric_fingerprint_lock",
+      "value": "Fingerprint lock"
+    },
+    {
+      "name": "sidebar_tag_mode",
+      "value": "Tag mode"
+    },
+    {
+      "name": "sidebar_folder_mode",
+      "value": "Folder mode"
+    },
+    {
+      "name": "profile_not_set",
+      "value": "Not set"
+    },
+    {
+      "name": "folder_root",
+      "value": "Root"
+    },
+    {
+      "name": "all_notes",
+      "value": "All notes"
+    },
+    {
+      "name": "filter_tags",
+      "value": "Filter by tag"
+    },
+    {
+      "name": "cloud_sync_confirm",
+      "value": "OK"
+    },
+    {
+      "name": "sync_batch_more",
+      "value": "Batch synced. Pull down again to sync remaining notes."
+    },
+    {
+      "name": "home_tab_more",
+      "value": "More"
+    },
+    {
+      "name": "home_tab_todo",
+      "value": "Todo"
+    },
+    {
+      "name": "home_tab_note",
+      "value": "Notes"
+    },
+    {
+      "name": "home_more_options_title",
+      "value": "More options"
+    },
+    {
+      "name": "home_paste_extract_title",
+      "value": "Extract from pasted content"
+    },
+    {
+      "name": "home_paste_extract_subtitle",
+      "value": "WeChat articles not supported yet; coming soon…"
+    },
+    {
+      "name": "home_image_note_title",
+      "value": "Create note from image"
+    },
+    {
+      "name": "home_image_note_subtitle",
+      "value": "Whiteboard, class notes, check-ins — notes in seconds"
+    },
+    {
+      "name": "home_knowledge_graph_title",
+      "value": "Mind map"
+    },
+    {
+      "name": "home_knowledge_graph_subtitle",
+      "value": "Mind maps and flowcharts supported"
+    },
+    {
+      "name": "home_search",
+      "value": "Search"
+    },
+    {
+      "name": "sync_complete",
+      "value": "Sync complete"
+    }
+  ]
+}

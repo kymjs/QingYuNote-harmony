@@ -27,6 +27,8 @@ import {
   buildProfileTextEditDialogContent,
   type ProfileTextEditDialogParams
 } from '../dialogs/ProfileTextEditDialog'
+import { APP_LOCALE_REVISION_KEY, LocaleService } from '../services/LocaleService'
+import { EditorUiStrings } from '../common/utils/EditorUiStrings'
 import {
   AVATAR_CROP_RESULT_EVENT,
   AvatarCropEmitCancel,
@@ -68,6 +70,7 @@ struct ProfileMenuCard {
 @Entry
 @Component
 struct Profile {
+  @StorageProp(APP_LOCALE_REVISION_KEY) localeRevision: number = 0
   @State loading: boolean = true
   @State loadError: string = ''
   @State avatarUploading: boolean = false
@@ -158,16 +161,16 @@ struct Profile {
 
   private membershipTitle(p: ProfileBody): string {
     if (p.membership_is_lifetime === true) {
-      return '轻羽云尊贵会员'
+      return LocaleService.loc('轻羽云尊贵会员', 'Premium member', 'プレミアム会員')
     }
     const st = (p.membership_level ?? '').trim()
     if (st === 'active' || st === 'lifetime') {
-      return '轻羽云会员'
+      return LocaleService.loc('轻羽云会员', 'Member', '会員')
     }
     if (st === 'expired') {
-      return '会员（已过期）'
+      return LocaleService.loc('会员（已过期）', 'Membership (expired)', '会員（期限切れ）')
     }
-    return '轻羽云服务'
+    return LocaleService.loc('轻羽云服务', 'Qingyu Cloud', 'Qingyu Cloud')
   }
 
   private isLifetimeVip(p: ProfileBody): boolean {
@@ -179,22 +182,24 @@ struct Profile {
 
   private membershipRight(p: ProfileBody): string {
     if (this.isLifetimeVip(p)) {
-      return '终身VIP'
+      return LocaleService.loc('终身VIP', 'Lifetime VIP', '生涯VIP')
     }
     const st = (p.membership_level ?? '').trim()
     if (st === 'active') {
       const exp = (p.membership_expires_at ?? '').trim()
-      return exp.length > 0 ? exp : '生效中'
+      return exp.length > 0 ? exp : LocaleService.loc('生效中', 'Active', '有効中')
     }
     if (st === 'expired') {
       const exp = (p.membership_expires_at ?? '').trim()
       return exp.length > 0 ? exp : '—'
     }
-    return '未开通'
+    return LocaleService.loc('未开通', 'Not active', '未契約')
   }
 
   private bindLabel(on: boolean | undefined): string {
-    return on === true ? '已绑定' : '未绑定'
+    return on === true
+      ? LocaleService.loc('已绑定', 'Linked', '連携済み')
+      : LocaleService.loc('未绑定', 'Not linked', '未連携')
   }
 
   private obtainUiAbilityContext(): common.UIAbilityContext | undefined {
@@ -331,19 +336,15 @@ struct Profile {
   }
 
   private userSequenceLine(): string {
-    const id = this.noteApiUserId.trim()
-    if (id.length === 0) {
-      return '—'
-    }
-    return `第${id}名用户`
+    return EditorUiStrings.userSequenceLabel(this.noteApiUserId)
   }
 
   private displayNickname(): string {
     if (this.profile === null) {
-      return '未设置'
+      return LocaleService.loc('未设置', 'Not set', '未設定')
     }
     const u = (this.profile.username ?? '').trim()
-    return u.length > 0 ? u : '未设置'
+    return u.length > 0 ? u : LocaleService.loc('未设置', 'Not set', '未設定')
   }
 
   private async pickAndUploadAvatar(): Promise<void> {
@@ -400,7 +401,7 @@ struct Profile {
         this.showToast(this.mapErr(err))
         return
       }
-      this.showToast('头像已更新')
+      this.showToast(EditorUiStrings.loc('头像已更新', 'Avatar updated', 'アバターを更新しました'))
       await this.reload()
     } finally {
       this.avatarUploading = false
@@ -530,10 +531,12 @@ struct Profile {
   private phoneKvLabel(): string {
     const p = this.profile
     if (p === null) {
-      return '手机号'
+      return LocaleService.loc('手机号', 'Phone number', '電話番号')
     }
     const t = (p.phone ?? '').trim()
-    return t.length > 0 ? '修改手机号' : '绑定手机号'
+    return t.length > 0
+      ? LocaleService.loc('修改手机号', 'Change phone number', '電話番号を変更')
+      : LocaleService.loc('绑定手机号', 'Bind phone number', '電話番号を紐付け')
   }
 
   /** 列表右侧：已绑定时展示中间四位脱敏（例 138****5678）。 */
@@ -630,7 +633,7 @@ struct Profile {
   private async reloadAfterPhoneSaved(): Promise<void> {
     await this.reload()
     if (this.lifecycle.isActive()) {
-      this.showToast('已保存')
+      this.showToast(EditorUiStrings.loc('已保存', 'Saved', '保存済み'))
     }
   }
 
@@ -745,7 +748,7 @@ struct Profile {
       this.showToast(this.mapErr(err))
       return
     }
-    this.showToast('已保存')
+    this.showToast(EditorUiStrings.loc('已保存', 'Saved', '保存済み'))
     await this.reload()
   }
 
@@ -834,7 +837,7 @@ struct Profile {
   @Builder
   dangerNavRow(onRowClick: () => void) {
     Row() {
-      Text('注销账号')
+      Text(LocaleService.loc('注销账号', 'Delete account', 'アカウント削除'))
         .fontSize($r('app.float.body_font_size'))
         .fontColor($r('app.color.danger'))
         .layoutWeight(1)
@@ -926,7 +929,7 @@ struct Profile {
         })
 
         Row() {
-          Text('个人信息')
+          Text($r('app.string.profile_title'))
             .fontSize($r('app.float.title_font_size'))
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.primary_text'))
@@ -976,7 +979,9 @@ struct Profile {
                     .objectFit(ImageFit.Cover)
                 }
                 Blank().layoutWeight(1)
-                Text(this.avatarUploading ? '上传中…' : '更换头像')
+                Text(this.avatarUploading
+                  ? EditorUiStrings.loc('上传中…', 'Uploading…', 'アップロード中…')
+                  : EditorUiStrings.loc('更换头像', 'Change avatar', 'アバターを変更'))
                   .fontSize($r('app.float.body_font_size'))
                   .fontColor($r('app.color.accent'))
                 Blank()
@@ -1019,12 +1024,15 @@ struct Profile {
 
             ProfileMenuCard() {
               this.kvRow(
-                '姓名',
+                LocaleService.loc('姓名', 'Name', '名前'),
                 this.displayNickname(),
                 true,
                 false,
                 (): void => {
-                  this.openTextEdit('姓名', 'username', (this.profile!.username ?? '').trim())
+                  this.openTextEdit(
+                    LocaleService.loc('姓名', 'Name', '名前'),
+                    'username',
+                    (this.profile!.username ?? '').trim())
                 }
               )
               this.rowDivider()
@@ -1039,7 +1047,7 @@ struct Profile {
               )
               this.rowDivider()
               this.kvRow(
-                '修改密码',
+                LocaleService.loc('修改密码', 'Change password', 'パスワード変更'),
                 '',
                 true,
                 false,
@@ -1049,7 +1057,7 @@ struct Profile {
               )
               this.rowDivider()
               this.kvRow(
-                '华为账号',
+                LocaleService.loc('华为账号', 'Huawei account', 'Huaweiアカウント'),
                 this.bindLabel(this.profile!.huawei_linked),
                 this.thirdPartyRowInteractive(PROFILE_ACCOUNT_BIND_SUPPORTED_HUAWEI, this.profile!.huawei_linked),
                 false,
@@ -1062,8 +1070,8 @@ struct Profile {
 
             ProfileMenuCard() {
               this.kvRow(
-                '兑换码',
-                '点击兑换',
+                LocaleService.loc('兑换码', 'Redeem code', '引き換えコード'),
+                LocaleService.loc('点击兑换', 'Tap to redeem', 'タップして引き換え'),
                 true,
                 false,
                 (): void => {
@@ -1073,7 +1081,7 @@ struct Profile {
               )
               this.rowDivider()
               this.kvRow(
-                '注册时间',
+                LocaleService.loc('注册时间', 'Registered', '登録日時'),
                 this.regLine(),
                 false,
                 false,
@@ -1081,7 +1089,7 @@ struct Profile {
               )
               this.rowDivider()
               this.kvRow(
-                '用户序列',
+                LocaleService.loc('用户序列', 'User #', 'ユーザー番号'),
                 this.userSequenceLine(),
                 false,
                 false,

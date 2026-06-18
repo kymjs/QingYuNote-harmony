@@ -1,3 +1,5 @@
+import { EditorUiStrings } from '../common/utils/EditorUiStrings'
+
 export interface EditorLinkInsertDialogParams {
   onCancel: () => void
   onConfirm: (label: string, url: string) => void
@@ -14,25 +16,25 @@ export struct EditorLinkInsertDialog {
 
   build() {
     Column({ space: 16 }) {
-      Text('插入链接')
+      Text(EditorUiStrings.loc('插入链接', 'Insert link', 'リンクを挿入'))
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.primary_text'))
         .width('100%')
-      TextInput({ text: this.labelDraft, placeholder: '文案' })
+      TextInput({ text: this.labelDraft, placeholder: EditorUiStrings.loc('文案', 'Label', '表示テキスト') })
         .fontSize($r('app.float.body_font_size'))
         .width('100%')
         .onChange((v: string) => {
           this.labelDraft = v
         })
-      TextInput({ text: this.urlDraft, placeholder: '链接' })
+      TextInput({ text: this.urlDraft, placeholder: EditorUiStrings.loc('链接', 'Link', 'リンク') })
         .fontSize($r('app.float.body_font_size'))
         .width('100%')
         .onChange((v: string) => {
           this.urlDraft = v
         })
       Row({ space: 12 }) {
-        Button('取消')
+        Button(EditorUiStrings.loc('取消', 'Cancel', 'キャンセル'))
           .layoutWeight(1)
           .fontSize($r('app.float.body_font_size'))
           .fontColor($r('app.color.secondary_text'))
@@ -42,7 +44,7 @@ export struct EditorLinkInsertDialog {
           .onClick(() => {
             this.params.onCancel()
           })
-        Button('确定')
+        Button(EditorUiStrings.loc('确定', 'OK', 'OK'))
           .layoutWeight(1)
           .fontSize($r('app.float.body_font_size'))
           .fontWeight(FontWeight.Medium)

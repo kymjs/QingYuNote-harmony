@@ -13,6 +13,8 @@ import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { FlowchartLayoutEngine } from '../common/utils/FlowchartLayoutEngine'
 import { FlowchartEdgeRouting } from '../common/utils/FlowchartEdgeRouting'
 import { Logger } from '../common/utils/Logger'
+import { EditorUiStrings } from '../common/utils/EditorUiStrings'
+import { APP_LOCALE_REVISION_KEY } from '../services/LocaleService'
 import type {
   FlowchartAnchor,
   FlowchartAnchorHit,
@@ -50,6 +52,7 @@ const FLOWCHART_LOG_TAG = 'FlowchartPage'
 @Entry
 @Component
 struct FlowchartPage {
+  @StorageProp(APP_LOCALE_REVISION_KEY) localeRevision: number = 0
   @State graph: FlowchartGraphModel = createEmptyFlowchartGraph()
   @State noteTitle: string = FLOWCHART_DEFAULT_TITLE
   @State noteId: string = ''
@@ -236,14 +239,14 @@ struct FlowchartPage {
 
   private async persist(showToast: boolean = false): Promise<void> {
     if (this.noteId.length === 0) {
-      this.showUserMessage('未关联笔记，无法保存')
+      this.showUserMessage(EditorUiStrings.loc('未关联笔记，无法保存', 'No linked note; cannot save', 'ノートが関連付けられていないため保存できません'))
       return
     }
     if (!this.shouldPersistFlowchart()) {
       this.dirty = false
       await this.abandonNewEmptyFlowchartIfNeeded()
       if (showToast) {
-        this.showUserMessage('无需保存')
+        this.showUserMessage(EditorUiStrings.loc('无需保存', 'Nothing to save', '保存不要'))
       }
       return
     }
@@ -256,11 +259,11 @@ struct FlowchartPage {
       this.dirty = false
       Logger.info(FLOWCHART_LOG_TAG, `persist ok noteId=${this.noteId} edges=${this.graph.edges.length}`)
       if (showToast) {
-        this.showUserMessage('已保存')
+        this.showUserMessage(EditorUiStrings.loc('已保存', 'Saved', '保存済み'))
       }
     } catch (error) {
       console.error(`persist failed: ${JSON.stringify(error)}`)
-      this.showUserMessage('保存失败，请稍后重试')
+      this.showUserMessage(EditorUiStrings.loc('保存失败，请稍后重试', 'Save failed; try again', '保存に失敗しました。後でもう一度お試しください'))
     }
   }
 
@@ -287,7 +290,7 @@ struct FlowchartPage {
     this.graphRevision++
     this.markDirty()
     this.scheduleCanvasRedraw()
-    this.showUserMessage('已对齐布局')
+    this.showUserMessage(EditorUiStrings.loc('已对齐布局', 'Layout aligned', 'レイアウトを整列しました'))
   }
 
   private markNodeEdited(nodeId: string): void {
@@ -375,7 +378,7 @@ struct FlowchartPage {
       }
       const context = this.obtainUiAbilityContext()
       if (context === undefined) {
-        this.showUserMessage('导出失败，请稍后重试')
+        this.showUserMessage(EditorUiStrings.loc('导出失败，请稍后重试', 'Export failed; try again', 'エクスポートに失敗しました。後でもう一度お試しください'))
         return
       }
       const cachePath = `${context.cacheDir}/flowchart_export_${Date.now()}.png`
@@ -400,7 +403,7 @@ struct FlowchartPage {
         await fileIo.copyFile(src.fd, dest.fd)
         fileIo.closeSync(src)
         fileIo.closeSync(dest)
-        this.showUserMessage('图片已保存到相册')
+        this.showUserMessage(EditorUiStrings.loc('图片已保存到相册', 'Saved to album', 'アルバムに保存しました'))
       }
     } catch (error) {
       console.error(`exportImage failed: ${JSON.stringify(error)}`)
@@ -1713,7 +1716,7 @@ struct FlowchartPage {
         endY >= display.position.y && endY <= display.position.y + display.height) {
         const targetAnchor = this.bestAnchorToward(other, this.connectDraftFromX, this.connectDraftFromY)
         this.createEdge(fromId, other.id, sourceAnchor, targetAnchor)
-        this.showUserMessage('已创建连线')
+        this.showUserMessage(EditorUiStrings.loc('已创建连线', 'Connection created', '接続を作成しました'))
         Logger.info(FLOWCHART_LOG_TAG, `finishConnect ok ${fromId.slice(0, 8)} -> ${other.id.slice(0, 8)}`)
         return
       }
@@ -2510,13 +2513,13 @@ struct FlowchartPage {
             .textAlign(TextAlign.Start)
             .onClick(() => this.openNoteTitleDialog())
 
-          Button('布局', { buttonStyle: ButtonStyleMode.TEXTUAL })
+          Button(EditorUiStrings.loc('布局', 'Layout', 'レイアウト'), { buttonStyle: ButtonStyleMode.TEXTUAL })
             .fontSize(14)
             .fontColor($r('app.color.accent'))
             .height(36)
             .onClick(() => this.applyAlignedLayout())
 
-          Button('导出', { buttonStyle: ButtonStyleMode.TEXTUAL })
+          Button(EditorUiStrings.loc('导出', 'Export', 'エクスポート'), { buttonStyle: ButtonStyleMode.TEXTUAL })
             .fontSize(14)
             .fontColor($r('app.color.accent'))
             .height(36)
@@ -2680,22 +2683,22 @@ struct FlowchartPage {
       if (this.showNoteTitleDialog) {
         Column() {
           Column({ space: 12 }) {
-            Text('编辑标题')
+            Text(EditorUiStrings.loc('编辑标题', 'Edit title', 'タイトルを編集'))
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
-            TextInput({ text: this.editNoteTitleInput, placeholder: '标题' })
+            TextInput({ text: this.editNoteTitleInput, placeholder: EditorUiStrings.loc('标题', 'Title', 'タイトル') })
               .onChange((v: string) => {
                 this.editNoteTitleInput = v
               })
             Row({ space: 12 }) {
-              Button('取消')
+              Button(EditorUiStrings.loc('取消', 'Cancel', 'キャンセル'))
                 .layoutWeight(1)
                 .backgroundColor($r('app.color.surface_muted'))
                 .fontColor($r('app.color.primary_text'))
                 .onClick(() => {
                   this.showNoteTitleDialog = false
                 })
-              Button('保存')
+              Button(EditorUiStrings.loc('保存', 'Save', '保存'))
                 .layoutWeight(1)
                 .onClick(() => this.saveNoteTitleDialog())
             }
@@ -2715,26 +2718,26 @@ struct FlowchartPage {
       if (this.showEditDialog) {
         Column() {
           Column({ space: 12 }) {
-            Text('编辑节点')
+            Text(EditorUiStrings.loc('编辑节点', 'Edit node', 'ノードを編集'))
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
-            TextInput({ text: this.editTitle, placeholder: '标题' })
+            TextInput({ text: this.editTitle, placeholder: EditorUiStrings.loc('标题', 'Title', 'タイトル') })
               .onChange((v: string) => {
                 this.editTitle = v
               })
-            TextInput({ text: this.editDescription, placeholder: '描述' })
+            TextInput({ text: this.editDescription, placeholder: EditorUiStrings.loc('描述', 'Description', '説明') })
               .onChange((v: string) => {
                 this.editDescription = v
               })
             Row({ space: 12 }) {
-              Button('取消')
+              Button(EditorUiStrings.loc('取消', 'Cancel', 'キャンセル'))
                 .layoutWeight(1)
                 .backgroundColor($r('app.color.surface_muted'))
                 .fontColor($r('app.color.primary_text'))
                 .onClick(() => {
                   this.showEditDialog = false
                 })
-              Button('保存')
+              Button(EditorUiStrings.loc('保存', 'Save', '保存'))
                 .layoutWeight(1)
                 .onClick(() => this.saveEditDialog())
             }
@@ -2754,22 +2757,22 @@ struct FlowchartPage {
       if (this.showEdgeEditDialog) {
         Column() {
           Column({ space: 12 }) {
-            Text('编辑连线')
+            Text(EditorUiStrings.loc('编辑连线', 'Edit edge', '接続を編集'))
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
-            TextInput({ text: this.editEdgeLabel, placeholder: '标签文字' })
+            TextInput({ text: this.editEdgeLabel, placeholder: EditorUiStrings.loc('标签文字', 'Edge label', 'ラベル') })
               .onChange((v: string) => {
                 this.editEdgeLabel = v
               })
             Row({ space: 12 }) {
-              Button('取消')
+              Button(EditorUiStrings.loc('取消', 'Cancel', 'キャンセル'))
                 .layoutWeight(1)
                 .backgroundColor($r('app.color.surface_muted'))
                 .fontColor($r('app.color.primary_text'))
                 .onClick(() => {
                   this.showEdgeEditDialog = false
                 })
-              Button('保存')
+              Button(EditorUiStrings.loc('保存', 'Save', '保存'))
                 .layoutWeight(1)
                 .onClick(() => this.saveEdgeEditDialog())
             }

@@ -1,3 +1,5 @@
+import { EditorUiStrings } from '../common/utils/EditorUiStrings'
+
 export interface EditorAiLinkExtractDialogParams {
   onCancel: () => void
   onConfirm: (url: string) => void
@@ -17,19 +19,19 @@ export struct EditorAiLinkExtractDialog {
 
   build() {
     Column({ space: 16 }) {
-      Text('AI提取链接')
+      Text(EditorUiStrings.loc('AI提取链接', 'AI extract link', 'AIでリンク抽出'))
         .fontSize(18)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.primary_text'))
         .width('100%')
-      TextInput({ text: this.urlDraft, placeholder: '链接' })
+      TextInput({ text: this.urlDraft, placeholder: EditorUiStrings.loc('链接', 'Link', 'リンク') })
         .fontSize($r('app.float.body_font_size'))
         .width('100%')
         .onChange((v: string) => {
           this.urlDraft = v
         })
       Row({ space: 12 }) {
-        Button('取消')
+        Button(EditorUiStrings.loc('取消', 'Cancel', 'キャンセル'))
           .layoutWeight(1)
           .fontSize($r('app.float.body_font_size'))
           .fontColor($r('app.color.secondary_text'))
@@ -39,7 +41,7 @@ export struct EditorAiLinkExtractDialog {
           .onClick(() => {
             this.params.onCancel()
           })
-        Button('确定')
+        Button(EditorUiStrings.loc('确定', 'OK', 'OK'))
           .layoutWeight(1)
           .fontSize($r('app.float.body_font_size'))
           .fontWeight(FontWeight.Medium)

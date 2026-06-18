@@ -25,6 +25,8 @@ import { NoteImagesChangedEventPayload, SyncConstants } from '../common/constant
 import { FileService } from '../services/FileService'
 import { TimeUtils } from '../common/utils/TimeUtils'
 import { Logger } from '../common/utils/Logger'
+import { EditorUiStrings } from '../common/utils/EditorUiStrings'
+import { APP_LOCALE_REVISION_KEY } from '../services/LocaleService'
 import componentSnapshot from '@ohos.arkui.componentSnapshot'
 import { image } from '@kit.ImageKit'
 import { fileIo, fileUri } from '@kit.CoreFileKit'
@@ -78,6 +80,7 @@ function hasEditorTitleOrBody(title: string, content: string): boolean {
 @Entry
 @Component
 struct NoteEdit {
+  @StorageProp(APP_LOCALE_REVISION_KEY) localeRevision: number = 0
   @State noteId: string = ''
   @State title: string = ''
   @State content: string = ''
@@ -416,7 +419,7 @@ struct NoteEdit {
     this.aiUndoAvailable = false
     this.aiMenuVisible = false
     this.handleContentChange()
-    this.showPreviewMessage('已撤回 AI 修改')
+    this.showPreviewMessage(EditorUiStrings.loc('已撤回 AI 修改', 'AI edit undone', 'AI編集を元に戻しました'))
   }
 
   private saveStatusBarClickable(): boolean {
@@ -803,7 +806,11 @@ struct NoteEdit {
         await this.refreshTagPool()
       }
       await this.onTagChecked(resolved, true)
-      this.showPreviewMessage(isNew ? `已创建并应用标签：${resolved}` : `已应用标签：${resolved}`)
+      this.showPreviewMessage(EditorUiStrings.loc(
+        isNew ? `已创建并应用标签：${resolved}` : `已应用标签：${resolved}`,
+        isNew ? `Created and applied tag: ${resolved}` : `Applied tag: ${resolved}`,
+        isNew ? `タグを作成して適用：${resolved}` : `タグを適用：${resolved}`
+      ))
     } catch (e) {
       const detail = e instanceof Error
         ? e.message
@@ -811,7 +818,7 @@ struct NoteEdit {
       this.showPreviewMessage(
         UserFacingMessage.forAi(
           e instanceof Error ? e.message : undefined,
-          'AI 创建标签失败，请稍后重试'
+          EditorUiStrings.loc('AI 创建标签失败，请稍后重试', 'AI tag creation failed; try again', 'AIタグ作成に失敗しました。後でもう一度お試しください')
         )
       )
       Logger.error('NoteEdit', `onAiCreateTag failed: ${detail}`)
@@ -890,7 +897,7 @@ struct NoteEdit {
       })
     } catch (error) {
       console.error(JSON.stringify(error))
-      this.showPreviewMessage('打开标签管理失败')
+      this.showPreviewMessage(EditorUiStrings.loc('打开标签管理失败', 'Could not open tag manager', 'タグ管理を開けませんでした'))
     }
   }
 
@@ -1338,7 +1345,7 @@ struct NoteEdit {
   @Builder
   private buildFolderMovePanel() {
     Column({ space: 0 }) {
-      Text('将当前文件移动到')
+      Text(EditorUiStrings.loc('将当前文件移动到', 'Move file to', 'ファイルの移動先'))
         .fontSize($r('app.float.move_panel_hint_font_size'))
         .fontColor($r('app.color.secondary_text'))
         .textAlign(TextAlign.Center)
@@ -1372,11 +1379,11 @@ struct NoteEdit {
   private buildParentPathCaption() {
     Scroll(this.pathCaptionScroller) {
       Row({ space: 0 }) {
-        Text('当前位置：/')
+        Text(EditorUiStrings.loc('当前位置：/', 'Location: /', '現在地：/'))
           .fontSize(13)
           .fontColor($r('app.color.secondary_text'))
           .flexShrink(0)
-        Text('根目录')
+        Text(EditorUiStrings.loc('根目录', 'Root', 'ルート'))
           .fontSize(13)
           .fontColor($r('app.color.secondary_text'))
           .flexShrink(0)
@@ -1422,8 +1429,7 @@ struct NoteEdit {
 
   /** 顶部保存状态 + 预览/编辑模式（与 Flutter `_saveStatusDisplay` 对齐）；中间为「空格减号空格」。 */
   private saveStatusDisplay(): string {
-    const modeLabel = this.previewMode === 'preview' ? '预览模式' : '编辑模式'
-    return `${this.saveStatus} - ${modeLabel}`
+    return EditorUiStrings.saveStatusDisplay(this.saveStatus, this.previewMode)
   }
 
   private switchMode(mode: string): void {
@@ -1594,7 +1600,7 @@ struct NoteEdit {
       }
     } catch (error) {
       Logger.error('NoteEdit', `insertImage failed: ${JSON.stringify(error)}`)
-      this.showPreviewMessage('插入图片失败')
+      this.showPreviewMessage(EditorUiStrings.loc('插入图片失败', 'Failed to insert image', '画像の挿入に失敗しました'))
     }
   }
 
@@ -2435,7 +2441,7 @@ struct NoteEdit {
 
   private shareDisplayName(): string {
     const name = (this.shareProfile?.username ?? '').trim()
-    return name.length > 0 ? name : '轻羽云笔记用户'
+    return name.length > 0 ? name : EditorUiStrings.loc('轻羽云笔记用户', 'Qingyu Cloud Notes user', 'QingYuユーザー')
   }
 
   private shareAvatarUrlTrim(): string {
@@ -2471,7 +2477,7 @@ struct NoteEdit {
       return
     }
     this.sharePreviewPreparing = true
-    this.showPreviewMessage('正在生成长图…')
+    this.showPreviewMessage(EditorUiStrings.loc('正在生成长图…', 'Generating long image…', '長画像を生成中…'))
     try {
       this.shareAvatarNetworkFailed = false
       this.shareProfile = await NoteApiClient.getInstance().fetchProfile()
@@ -2488,7 +2494,7 @@ struct NoteEdit {
       this.shareShowAppIcon = false
       const path = await this.exportShareImageToCache(savedTheme, savedTone)
       if (!path || path.length === 0) {
-        this.showPreviewMessage('生成长图失败')
+        this.showPreviewMessage(EditorUiStrings.loc('生成长图失败', 'Failed to generate long image', '長画像の生成に失敗しました'))
         return
       }
       this.sharePreviewPath = path
@@ -2533,7 +2539,7 @@ struct NoteEdit {
         `regenerateSharePreview done path=${path} theme=${theme} tone=${tone} revision=${this.shareSheetRevision}`)
     } else {
       Logger.warn('NoteEdit', 'regenerateSharePreview failed')
-      this.showPreviewMessage('切换主题失败')
+      this.showPreviewMessage(EditorUiStrings.loc('切换主题失败', 'Failed to switch theme', 'テーマの切り替えに失敗しました'))
     }
   }
 
@@ -2549,7 +2555,7 @@ struct NoteEdit {
       return
     }
     const ok = await this.saveCachePngToGallery(this.sharePreviewPath)
-    this.showPreviewMessage(ok ? '已保存到相册' : '保存到相册失败')
+    this.showPreviewMessage(ok ? EditorUiStrings.loc('已保存到相册', 'Saved to album', 'アルバムに保存しました') : EditorUiStrings.loc('保存到相册失败', 'Failed to save to album', 'アルバムへの保存に失敗しました'))
     if (ok) {
       this.closeSharePreview()
     }
@@ -2561,7 +2567,7 @@ struct NoteEdit {
     }
     const context = this.obtainUiAbilityContext()
     if (context === undefined) {
-      this.showPreviewMessage('分享失败')
+      this.showPreviewMessage(EditorUiStrings.loc('分享失败', 'Share failed', '共有に失敗しました'))
       return
     }
     const cachePath = this.sharePreviewPath
@@ -2579,7 +2585,7 @@ struct NoteEdit {
       })
     } catch (error) {
       Logger.error('NoteEdit', `onSharePreviewShareOthers failed: ${JSON.stringify(error)}`)
-      this.showPreviewMessage('分享失败')
+      this.showPreviewMessage(EditorUiStrings.loc('分享失败', 'Share failed', '共有に失敗しました'))
     }
   }
 
@@ -2724,7 +2730,7 @@ struct NoteEdit {
   @Builder
   private buildTagDropdownTagList() {
     if (this.tagPool.length === 0) {
-      Text('暂无可用标签')
+      Text(EditorUiStrings.loc('暂无可用标签', 'No tags available', '利用可能なタグがありません'))
         .fontSize($r('app.float.caption_font_size'))
         .fontColor($r('app.color.tertiary_text'))
         .padding({ left: 16, right: 16, top: 10, bottom: 10 })
@@ -2766,7 +2772,9 @@ struct NoteEdit {
             .fontSize(16)
             .fontColor([$r('app.color.accent')])
         }
-        Text(this.aiTagCreating ? 'AI 生成中…' : 'AI创建标签')
+        Text(this.aiTagCreating
+          ? EditorUiStrings.loc('AI 生成中…', 'AI generating…', 'AI生成中…')
+          : EditorUiStrings.loc('AI创建标签', 'AI create tag', 'AIでタグ作成'))
           .fontSize($r('app.float.body_font_size'))
           .fontColor($r('app.color.accent'))
           .margin({ left: 8 })
@@ -2782,7 +2790,7 @@ struct NoteEdit {
         SymbolGlyph($r('sys.symbol.plus'))
           .fontSize(16)
           .fontColor([$r('app.color.accent')])
-        Text('添加标签')
+        Text(EditorUiStrings.loc('添加标签', 'Add tag', 'タグを追加'))
           .fontSize($r('app.float.body_font_size'))
           .fontColor($r('app.color.accent'))
           .margin({ left: 8 })
@@ -2820,7 +2828,9 @@ struct NoteEdit {
             .fontSize(16)
             .fontColor([$r('app.color.accent')])
         }
-        Text(this.aiNoteWorking ? 'AI 处理中…' : 'AI优化语句')
+        Text(this.aiNoteWorking
+          ? EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
+          : EditorUiStrings.loc('AI优化语句', 'AI polish', 'AIで文章を整える'))
           .fontSize($r('app.float.body_font_size'))
           .fontColor($r('app.color.accent'))
           .margin({ left: 8 })
@@ -2839,7 +2849,7 @@ struct NoteEdit {
         SymbolGlyph($r('sys.symbol.link'))
           .fontSize(16)
           .fontColor([$r('app.color.accent')])
-        Text('AI提取链接')
+        Text(EditorUiStrings.loc('AI提取链接', 'AI extract link', 'AIでリンク抽出'))
           .fontSize($r('app.float.body_font_size'))
           .fontColor($r('app.color.accent'))
           .margin({ left: 8 })
@@ -2860,7 +2870,7 @@ struct NoteEdit {
           SymbolGlyph($r('sys.symbol.undo'))
             .fontSize(16)
             .fontColor([$r('app.color.accent')])
-          Text('撤回AI修改')
+          Text(EditorUiStrings.loc('撤回AI修改', 'Undo AI edit', 'AI編集を元に戻す'))
             .fontSize($r('app.float.body_font_size'))
             .fontColor($r('app.color.accent'))
             .margin({ left: 8 })
@@ -2897,15 +2907,18 @@ struct NoteEdit {
     const hasImageRefs = NoteStateCodec.extractImageRefs(this.content).length > 0
     const noteHasText = NoteStateCodec.hasSubstantiveNoteText(this.content)
     if (!noteHasText && !hasImageRefs) {
-      this.showPreviewMessage('笔记正文为空，无法优化')
+      this.showPreviewMessage(EditorUiStrings.loc('笔记正文为空，无法优化', 'Note is empty; cannot optimize', '本文が空のため最適化できません'))
       return
     }
     if (noteHasText && !hasImageRefs && Array.from(trimmed).length < AiNotePrompt.OPTIMIZE_MIN_RUNES) {
-      this.showPreviewMessage('内容过少，无需AI优化')
+      this.showPreviewMessage(EditorUiStrings.loc('内容过少，无需AI优化', 'Too little content to optimize', '内容が少なすぎるため最適化不要です'))
       return
     }
-    this.aiWorkingOverlayMessage =
-      !noteHasText && hasImageRefs ? 'AI 生成笔记中…' : 'AI 处理中…'
+    this.aiWorkingOverlayMessage = EditorUiStrings.loc(
+      !noteHasText && hasImageRefs ? 'AI 生成笔记中…' : 'AI 处理中…',
+      !noteHasText && hasImageRefs ? 'AI writing note…' : 'AI working…',
+      !noteHasText && hasImageRefs ? 'AIがノートを生成中…' : 'AI処理中…'
+    )
     this.aiNoteWorking = true
     this.aiMenuVisible = false
     const before = this.content
@@ -2923,11 +2936,11 @@ struct NoteEdit {
         this.content = optimized
       }
       this.handleContentChange()
-      this.showPreviewMessage(noteHasText ? 'AI 已优化笔记正文' : 'AI 已根据图片生成笔记')
+      this.showPreviewMessage(EditorUiStrings.loc(noteHasText ? 'AI 已优化笔记正文' : 'AI 已根据图片生成笔记', noteHasText ? 'AI polished the note' : 'AI generated note from image', noteHasText ? 'AIが本文を最適化しました' : 'AIが画像からノートを生成しました'))
     } catch (e) {
       const msg = UserFacingMessage.forAi(
         e instanceof Error ? e.message : undefined,
-        'AI 优化失败，请稍后重试'
+        EditorUiStrings.loc('AI 优化失败，请稍后重试', 'AI optimization failed; try again', 'AI最適化に失敗しました。後でもう一度お試しください')
       )
       this.showPreviewMessage(msg)
       Logger.error('NoteEdit', `onAiOptimizeContent failed: ${e instanceof Error ? e.message : JSON.stringify(e)}`)
@@ -2993,11 +3006,11 @@ struct NoteEdit {
         this.title = result.title.trim()
       }
       this.handleContentChange()
-      this.showPreviewMessage('AI 已生成链接摘要并写入正文')
+      this.showPreviewMessage(EditorUiStrings.loc('AI 已生成链接摘要并写入正文', 'AI added link summary to note', 'AIがリンク要約を本文に追加しました'))
     } catch (e) {
       const msg = UserFacingMessage.forAi(
         e instanceof Error ? e.message : undefined,
-        'AI 提取链接失败，请稍后重试'
+        EditorUiStrings.loc('AI 提取链接失败，请稍后重试', 'AI link extract failed; try again', 'AIリンク抽出に失敗しました。後でもう一度お試しください')
       )
       this.showPreviewMessage(msg)
       Logger.error('NoteEdit', `onAiExtractLink failed: ${e instanceof Error ? e.message : JSON.stringify(e)}`)
@@ -3158,7 +3171,7 @@ struct NoteEdit {
             .fontColor($r('app.color.secondary_text'))
             .fontWeight(FontWeight.Medium)
           if (noteTags.length === 0) {
-            Text('标签')
+            Text(EditorUiStrings.loc('标签', 'Tags', 'タグ'))
               .fontSize(12)
               .fontColor($r('app.color.secondary_text'))
           } else {
@@ -3210,7 +3223,7 @@ struct NoteEdit {
                 .fontColor($r('app.color.secondary_text'))
                 .fontWeight(FontWeight.Medium)
               if (this.noteTagsSafe().length === 0) {
-                Text('标签')
+                Text(EditorUiStrings.loc('标签', 'Tags', 'タグ'))
                   .fontSize(12)
                   .fontColor($r('app.color.secondary_text'))
               } else {
@@ -3338,14 +3351,14 @@ struct NoteEdit {
           Column({ space: 4 }) {
             if (this.saveStatusBarClickable()) {
               Text() {
-                Span(`${this.saveStatus} - `)
+                Span(`${EditorUiStrings.saveStatus(this.saveStatus)} - `)
                   .fontSize($r('app.float.caption_font_size'))
                   .fontWeight(FontWeight.Medium)
                   .fontColor(
                     this.saveStatus === '已保存' ? $r('app.color.success') :
                       (this.saveStatus === '保存失败' ? $r('app.color.danger') : $r('app.color.secondary_text'))
                   )
-                Span('预览模式')
+                Span(EditorUiStrings.previewModeLabel('preview'))
                   .fontSize($r('app.float.caption_font_size'))
                   .fontWeight(FontWeight.Medium)
                   .fontColor(
@@ -3412,7 +3425,7 @@ struct NoteEdit {
 
           if (this.isSplitMode() && !this.quickActionBarEnabled) {
             Row() {
-              Text('图')
+              Text(EditorUiStrings.loc('图', 'Image', '画像'))
                 .fontSize(16)
                 .fontColor(Color.White)
                 .width(30)
@@ -3428,7 +3441,7 @@ struct NoteEdit {
           if (!this.isSplitMode()) {
             Row({ space: 6 }) {
               if (this.previewMode === 'preview') {
-                Button('编辑')
+                Button(EditorUiStrings.loc('编辑', 'Edit', '編集'))
                   .fontSize($r('app.float.caption_font_size'))
                   .fontWeight(FontWeight.Medium)
                   .height(30)
@@ -3441,7 +3454,7 @@ struct NoteEdit {
                     this.switchMode('edit')
                   })
               } else {
-                Button('预览')
+                Button(EditorUiStrings.loc('预览', 'Preview', 'プレビュー'))
                   .fontSize($r('app.float.caption_font_size'))
                   .fontWeight(FontWeight.Medium)
                   .height(30)

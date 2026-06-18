@@ -37,6 +37,8 @@ import {
 } from '../dialogs/HomeMoreOptionsSheet'
 import { AppLockPinPanel } from '../components/AppLockPinPanel'
 import { AppLockService } from '../services/AppLockService'
+import { APP_LOCALE_REVISION_KEY, LocaleService } from '../services/LocaleService'
+import { EditorUiStrings } from '../common/utils/EditorUiStrings'
 
 /** 与 HomeDrawerLayer 内 DRAWER_SPAN 一致，用于全屏横向拖动手势计算行程。 */
 const DRAWER_OFFSCREEN_PAD = 20
@@ -52,6 +54,7 @@ const ALL_NOTES_TAG = '__ALL_NOTES__'
 @Entry
 @Component
 struct Index {
+  @StorageProp(APP_LOCALE_REVISION_KEY) @Watch('onLocaleChanged') localeRevision: number = 0
   @State notes: Note[] = []
   @State allNotes: Note[] = []
   @State tags: string[] = []
@@ -949,40 +952,67 @@ struct Index {
     }
     const normalizedMessage = rawMessage.toLowerCase()
     if (normalizedMessage.includes('authentication')) {
-      return `${actionLabel}失败：账号或密码可能已失效，请检查同步设置`
+      return LocaleService.loc(
+        `${actionLabel}失败：账号或密码可能已失效，请检查同步设置`,
+        `${actionLabel} failed: credentials may be invalid; check sync settings`,
+        `${actionLabel}失敗：認証情報が無効の可能性があります。同期設定を確認してください`)
     }
     if (normalizedMessage.includes('qingyu webdav credentials unavailable')) {
-      return `${actionLabel}失败：暂时无法连接轻羽云存储，请稍后重试或检查网络`
+      return LocaleService.loc(
+        `${actionLabel}失败：暂时无法连接轻羽云存储，请稍后重试或检查网络`,
+        `${actionLabel} failed: cannot reach Qingyu Cloud; check network`,
+        `${actionLabel}失敗：Qingyu Cloudに接続できません。ネットワークを確認してください`)
     }
     if (normalizedMessage.includes('not configured')) {
-      return `${actionLabel}失败：请先完成 WebDAV 配置`
+      return LocaleService.loc(
+        `${actionLabel}失败：请先完成 WebDAV 配置`,
+        `${actionLabel} failed: complete WebDAV setup first`,
+        `${actionLabel}失敗：先にWebDAV設定を完了してください`)
     }
     if (normalizedMessage.includes('timeout')) {
-      return `${actionLabel}失败：请求超时，请稍后重试`
+      return LocaleService.loc(
+        `${actionLabel}失败：请求超时，请稍后重试`,
+        `${actionLabel} failed: timed out, please try again`,
+        `${actionLabel}失敗：タイムアウトしました。後でもう一度お試しください`)
     }
     if (normalizedMessage.includes('100002') || normalizedMessage.includes('uri error')
       || normalizedMessage.includes('does not exist') || normalizedMessage.includes('not exist')) {
-      return `${actionLabel}失败：目标页面不可用`
+      return LocaleService.loc(
+        `${actionLabel}失败：目标页面不可用`,
+        `${actionLabel} failed: target unavailable`,
+        `${actionLabel}失敗：ページが利用できません`)
     }
-    return `${actionLabel}失败，请稍后重试`
+    return LocaleService.loc(
+      `${actionLabel}失败，请稍后重试`,
+      `${actionLabel} failed, please try again`,
+      `${actionLabel}に失敗しました。後でもう一度お試しください`)
   }
 
   private summarizeSyncResult(results: SyncResult[]): string | null {
     const more = SyncService.getInstance().getLastFullSyncHadMoreNotes()
     if (results.length === 0) {
-      return more ? '已同步本批笔记，请再次下拉以继续同步剩余条目' : '同步完成'
+      return more
+        ? LocaleService.loc('已同步本批笔记，请再次下拉以继续同步剩余条目',
+          'Batch synced. Pull down again to sync remaining notes.',
+          'このバッチの同期が完了しました。残りを同期するには再度プルダウンしてください')
+        : LocaleService.loc('同步完成', 'Sync complete', '同期完了')
     }
     const failedResults = results.filter((result: SyncResult) => !result.success)
     if (failedResults.length === 0) {
       if (more) {
-        return '已同步本批笔记，请再次下拉以继续同步剩余条目'
+        return LocaleService.loc('已同步本批笔记，请再次下拉以继续同步剩余条目',
+          'Batch synced. Pull down again to sync remaining notes.',
+          'このバッチの同期が完了しました。残りを同期するには再度プルダウンしてください')
       }
-      return '同步完成'
+      return LocaleService.loc('同步完成', 'Sync complete', '同期完了')
     }
     if (failedResults.length === 1 && failedResults[0].message.trim().length > 0) {
       return UserFacingMessage.forSyncNoteFailure(failedResults[0].message)
     }
-    return `同步完成，但有 ${failedResults.length} 条笔记同步失败`
+    return LocaleService.loc(
+      `同步完成，但有 ${failedResults.length} 条笔记同步失败`,
+      `Sync complete, but ${failedResults.length} note(s) failed to sync`,
+      `同期完了しましたが、${failedResults.length}件のノートの同期に失敗しました`)
   }
 
   private async refreshNotesIfChanged(previousVersion: number): Promise<void> {
@@ -1183,7 +1213,7 @@ struct Index {
             .fontColor([$r('app.color.tertiary_text')])
             .padding({ left: 10, right: 6 })
             .focusable(false)
-          TextInput({ text: $$this.searchQuery, placeholder: '搜索标题或摘要' })
+          TextInput({ text: $$this.searchQuery, placeholder: EditorUiStrings.searchNotesHint() })
             .layoutWeight(1)
             .fontSize($r('app.float.body_font_size'))
             .fontColor($r('app.color.primary_text'))
@@ -1217,7 +1247,7 @@ struct Index {
         .border({ width: 1, color: $r('app.color.card_border') })
       } else {
         Row({ space: 0 }) {
-          Text('轻羽云笔记')
+          Text($r('app.string.app_name'))
             .fontSize($r('app.float.title_font_size'))
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.primary_text'))
@@ -1232,7 +1262,7 @@ struct Index {
             SymbolGlyph($r('sys.symbol.magnifyingglass'))
               .fontSize(18)
               .fontColor([$r('app.color.tertiary_text')])
-            Text('搜索')
+            Text(LocaleService.loc('搜索', 'Search'))
               .fontSize(14)
               .fontColor($r('app.color.tertiary_text'))
           }
@@ -1385,6 +1415,10 @@ struct Index {
     }
     .width('100%')
     .layoutWeight(1)
+  }
+
+  onLocaleChanged(): void {
+    // @Watch：语言切换后重建首页以刷新 $r 与 LocaleService.loc 文案。
   }
 
   build() {

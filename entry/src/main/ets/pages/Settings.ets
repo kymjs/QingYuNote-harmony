@@ -5,6 +5,7 @@ import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { SyncConstants } from '../common/constants/SyncConstants'
 import { BiometricLockService } from '../services/BiometricLockService'
+import { APP_LOCALE_REVISION_KEY, LocaleService } from '../services/LocaleService'
 
 /** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展，用于退出登录后避免返回敏感页。 */
 interface RouterWithOptionalClear {
@@ -14,6 +15,7 @@ interface RouterWithOptionalClear {
 @Entry
 @Component
 struct Settings {
+  @StorageProp(APP_LOCALE_REVISION_KEY) @Watch('onLocaleChanged') localeRevision: number = 0
   /** 有 Note API 用户 id 时展示「个人信息」；游客且无 id 时展示「未登录」跳转登录页 */
   @State accountSubId: string = ''
   /** 与 Flutter `SettingsHubPage` 对齐：游客模式下不展示退出登录 */
@@ -26,7 +28,7 @@ struct Settings {
   @State appLockEnabled: boolean = false
   @State biometricAvailable: boolean = false
   @State biometricLockEnabled: boolean = false
-  @State biometricLockLabel: string = '指纹锁'
+  @State biometricLockLabel: string = ''
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
   private noteSettingsChangedHandler = (): void => {
@@ -203,11 +205,14 @@ struct Settings {
     }
     if (enabled) {
       if (!this.appLockEnabled) {
-        this.showToast('请先开启应用锁')
+        this.showToast(LocaleService.loc('请先开启应用锁', 'Enable app lock first', '先にアプリロックを有効にしてください'))
         return
       }
-      const outcome = await BiometricLockService.getInstance().authenticate(
-        `验证${this.biometricLockLabel.replace('锁', '')}以开启`)
+      const kind = await BiometricLockService.getInstance().getAvailableKind()
+      const reason = kind === 'face'
+        ? LocaleService.loc('验证面容以开启', 'Verify face to enable', 'Face IDで有効化')
+        : LocaleService.loc('验证指纹以开启', 'Verify fingerprint to enable', '指紋で有効化')
+      const outcome = await BiometricLockService.getInstance().authenticate(reason)
       if (outcome !== 'success') {
         return
       }
@@ -264,7 +269,7 @@ struct Settings {
       this.loggingOut = false
       try {
         this.getUIContext().getPromptAction().showToast({
-          message: '退出登录失败，请稍后重试',
+          message: LocaleService.loc('退出登录失败，请稍后重试', 'Sign out failed, please try again', 'ログアウトに失敗しました。後でもう一度お試しください'),
           duration: 2000
         })
       } catch (_) {
@@ -282,6 +287,10 @@ struct Settings {
   onBackPress(): boolean {
     this.handleToolbarBack()
     return true
+  }
+
+  onLocaleChanged(): void {
+    void this.loadBiometricSettings()
   }
 
   build() {
@@ -355,7 +364,7 @@ struct Settings {
                 .strokeWidth(1)
             } else if (this.guestMode) {
               Row() {
-                Text('未登录')
+                Text($r('app.string.settings_not_logged_in'))
                   .fontSize($r('app.float.body_font_size'))
                   .fontColor($r('app.color.primary_text'))
                   .layoutWeight(1)
@@ -568,6 +577,34 @@ struct Settings {
               .strokeWidth(1)
 
             Row() {
+              Text($r('app.string.settings_language'))
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor($r('app.color.primary_text'))
+                .layoutWeight(1)
+              Text('›')
+                .fontSize(22)
+                .fontColor($r('app.color.tertiary_text'))
+            }
+            .width('100%')
+            .padding({
+              left: 20,
+              right: 16,
+              top: 14,
+              bottom: 14
+            })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              this.getUIContext().getRouter().pushUrl({ url: 'pages/LanguageSettings' }).catch((err: Error) => {
+                console.error(`openLanguageSettings: ${JSON.stringify(err)}`)
+              })
+            })
+
+            Divider()
+              .color($r('app.color.divider'))
+              .strokeWidth(1)
+
+            Row() {
               Text($r('app.string.feedback_title'))
                 .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.primary_text'))
@@ -589,7 +626,7 @@ struct Settings {
               this.getUIContext().getRouter().pushUrl({
                 url: 'pages/H5WebContainer',
                 params: {
-                  title: '用户反馈',
+                  title: LocaleService.loc('用户反馈', 'Feedback', 'フィードバック'),
                   url: 'https://vcnedpub4ekz.feishu.cn/share/base/form/shrcnexjZUlhIkZ4eD9BjcDfdkb'
                 }
               }).catch((err: Error) => {

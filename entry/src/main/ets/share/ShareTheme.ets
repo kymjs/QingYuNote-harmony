@@ -1,4 +1,4 @@
-/** 分享卡片主题。 */
+import { EditorUiStrings } from '../common/utils/EditorUiStrings'
 export enum ShareCardTheme {
   CLASSIC = 'classic',
   QINGYU = 'qingyu',
@@ -79,20 +79,22 @@ export class ShareThemeColors {
   static label(theme: ShareCardTheme): string {
     switch (theme) {
       case ShareCardTheme.CLASSIC:
-        return '经典'
+        return EditorUiStrings.loc('经典', 'Classic', 'クラシック')
       case ShareCardTheme.QINGYU:
-        return '轻羽'
+        return EditorUiStrings.loc('轻羽', 'Qingyu', 'QingYu')
       case ShareCardTheme.CALENDAR:
-        return '日历'
+        return EditorUiStrings.loc('日历', 'Calendar', 'カレンダー')
       case ShareCardTheme.JINSHU:
-        return '锦书'
+        return EditorUiStrings.loc('锦书', 'Jinshu', '錦書')
       default:
-        return '经典'
+        return EditorUiStrings.loc('经典', 'Classic', 'クラシック')
     }
   }
 
   static toneLabel(tone: ShareCardTone): string {
-    return tone === ShareCardTone.DARK ? '深色' : '浅色'
+    return tone === ShareCardTone.DARK
+      ? EditorUiStrings.loc('深色', 'Dark', 'ダーク')
+      : EditorUiStrings.loc('浅色', 'Light', 'ライト')
   }
 
   static resolve(theme: ShareCardTheme, tone: ShareCardTone): ShareThemePalette {
@@ -211,8 +213,11 @@ export class ShareThemeColors {
     ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
 
   static weekdayChinese(date: Date): string {
-    const names = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
-    return names[date.getDay()]
+    const zhNames = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+    const enNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+    const jaNames = ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日']
+    const idx = date.getDay()
+    return EditorUiStrings.loc(zhNames[idx], enNames[idx], jaNames[idx])
   }
 
   static stripMarkdown(md: string): string {

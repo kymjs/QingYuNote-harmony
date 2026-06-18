@@ -1,6 +1,7 @@
 import { CachedNetworkImage } from '../components/CachedNetworkImage'
 import { DrawerModel } from '../common/model/DrawerModel'
 import type { FolderSidebarRow, HomeSidebarFilterMode } from '../common/utils/NoteFolderTree'
+import { LocaleService } from '../services/LocaleService'
 
 const DRAWER_WIDTH = 248 * 1.2 // 297.6，侧栏宽度 +20%
 /** 收起时多向左移若干 vp，避免子像素/舍入导致面板右缘残留在可视区内。 */
@@ -100,7 +101,7 @@ export struct HomeDrawerLayer {
   }
 
   @Builder
-  private buildModeSegment(label: string, mode: HomeSidebarFilterMode) {
+  private buildModeSegment(label: ResourceStr, mode: HomeSidebarFilterMode) {
     Text(label)
       .fontSize(13)
       .fontWeight(this.filterMode === mode ? FontWeight.Medium : FontWeight.Regular)
@@ -120,8 +121,8 @@ export struct HomeDrawerLayer {
   @Builder
   private buildFilterModeSwitcher() {
     Row({ space: 4 }) {
-      this.buildModeSegment('标签模式', 'tag')
-      this.buildModeSegment('文件夹模式', 'folder')
+      this.buildModeSegment($r('app.string.sidebar_tag_mode'), 'tag')
+      this.buildModeSegment($r('app.string.sidebar_folder_mode'), 'folder')
     }
     .width('100%')
     .padding(4)
@@ -232,19 +233,19 @@ export struct HomeDrawerLayer {
 
   private drawerDisplayName(): string {
     if (this.drawerGuestMode || !this.drawerLoggedIn) {
-      return '未登录'
+      return LocaleService.loc('未登录', 'Not signed in')
     }
     const name = this.drawerUsername.trim()
-    return name.length > 0 ? name : '未设置'
+    return name.length > 0 ? name : LocaleService.loc('未设置', 'Not set')
   }
 
   @Builder
   private buildDrawerFilterList() {
     Column({ space: 6 }) {
       if (this.folderModeEnabled && this.filterMode === 'folder') {
-        this.buildDrawerFilterItem('根目录', this.allNotesTag, true)
+        this.buildDrawerFilterItem(LocaleService.loc('根目录', 'Root'), this.allNotesTag, true)
       } else {
-        this.buildDrawerFilterItem('全部笔记', this.allNotesTag)
+        this.buildDrawerFilterItem(LocaleService.loc('全部笔记', 'All notes'), this.allNotesTag)
       }
 
       if (!this.folderModeEnabled || this.filterMode === 'tag') {
@@ -273,7 +274,7 @@ export struct HomeDrawerLayer {
       if (this.folderModeEnabled) {
         this.buildFilterModeSwitcher()
       } else {
-        Text('筛选标签')
+        Text($r('app.string.filter_tags'))
           .fontSize(13)
           .fontColor($r('app.color.tertiary_text'))
           .margin({ top: 8, bottom: 8, left: 6 })

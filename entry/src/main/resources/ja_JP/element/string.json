@@ -1,0 +1,748 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "Qingyu Cloud Notes main module"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "Qingyu Cloud Notes entry ability"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "軽羽クラウドノート"
+    },
+    {
+      "name": "settings",
+      "value": "設定"
+    },
+    {
+      "name": "settings_user_info",
+      "value": "プロフィール"
+    },
+    {
+      "name": "settings_cloud_sync",
+      "value": "クラウド同期"
+    },
+    {
+      "name": "settings_language",
+      "value": "言語"
+    },
+    {
+      "name": "language_settings_title",
+      "value": "言語設定"
+    },
+    {
+      "name": "language_zh",
+      "value": "简体中文"
+    },
+    {
+      "name": "language_en",
+      "value": "English"
+    },
+    {
+      "name": "settings_not_logged_in",
+      "value": "未ログイン"
+    },
+    {
+      "name": "settings_weread_import",
+      "value": "WeReadノートをインポート"
+    },
+    {
+      "name": "import_notes_title",
+      "value": "ノートをインポート"
+    },
+    {
+      "name": "import_notes_weread",
+      "value": "WeReadノートをインポート"
+    },
+    {
+      "name": "import_notes_youdao",
+      "value": "Youdaoノートをインポート"
+    },
+    {
+      "name": "import_notes_yinxiang",
+      "value": "Evernoteノートをインポート"
+    },
+    {
+      "name": "import_notes_files",
+      "value": "md/doc/txt等をインポート"
+    },
+    {
+      "name": "weread_import_title",
+      "value": "ノートをインポート"
+    },
+    {
+      "name": "weread_import_hint",
+      "value": "Tap the button below to get an API Key. Import starts automatically after you copy it.\nYou can go back during import; the task continues in the background."
+    },
+    {
+      "name": "weread_import_get_api_key",
+      "value": "API Keyを取得"
+    },
+    {
+      "name": "youdao_import_title",
+      "value": "ノートをインポート"
+    },
+    {
+      "name": "youdao_import_hint",
+      "value": "Tap the button below to get an API Key. Import starts automatically after you copy it.\nYou can go back during import; the task continues in the background."
+    },
+    {
+      "name": "youdao_import_get_api_key",
+      "value": "API Keyを取得"
+    },
+    {
+      "name": "yinxiang_import_title",
+      "value": "ノートをインポート"
+    },
+    {
+      "name": "yinxiang_import_hint",
+      "value": "Tap the button below to get an API Key. Import starts automatically after you copy it.\nYou can go back during import; the task continues in the background."
+    },
+    {
+      "name": "yinxiang_import_get_api_key",
+      "value": "API Keyを取得"
+    },
+    {
+      "name": "logout",
+      "value": "ログアウト"
+    },
+    {
+      "name": "logout_in_progress",
+      "value": "ログアウト中…"
+    },
+    {
+      "name": "login_guest_mode",
+      "value": "ゲストモード"
+    },
+    {
+      "name": "new_note",
+      "value": "新規ノート"
+    },
+    {
+      "name": "empty_notes",
+      "value": "ノートがありません。最初のアイデアを記録しましょう。"
+    },
+    {
+      "name": "editor_title_placeholder",
+      "value": "タイトルを入力"
+    },
+    {
+      "name": "editor_content_placeholder",
+      "value": "執筆を開始 — Markdown対応"
+    },
+    {
+      "name": "settings_sync_provider_title",
+      "value": "クラウドプロバイダー"
+    },
+    {
+      "name": "settings_sync_provider_webdav",
+      "value": "WebDAV"
+    },
+    {
+      "name": "settings_qingyu_title",
+      "value": "Qingyu Cloud"
+    },
+    {
+      "name": "qingyu_recharge_tagline",
+      "value": "クラウド同期で全デバイスでノートを安心管理"
+    },
+    {
+      "name": "qingyu_privilege_section_title",
+      "value": "会員特典"
+    },
+    {
+      "name": "qingyu_recharge_footer_note",
+      "value": "会員サービスは購入後の返金不可。購入により規約に同意したものとみなされます。"
+    },
+    {
+      "name": "qingyu_recharge_agreement_link",
+      "value": "Qingyu Cloudサービス規約"
+    },
+    {
+      "name": "qingyu_privilege_sync_title",
+      "value": "クラウド同期"
+    },
+    {
+      "name": "qingyu_privilege_sync_desc",
+      "value": "ノートはQingyu Cloudにリアルタイム同期。"
+    },
+    {
+      "name": "qingyu_privilege_multi_title",
+      "value": "マルチデバイス"
+    },
+    {
+      "name": "qingyu_privilege_multi_desc",
+      "value": "スマホ・タブレットなどでいつでも閲覧・編集。"
+    },
+    {
+      "name": "qingyu_privilege_media_title",
+      "value": "AIアシスト"
+    },
+    {
+      "name": "qingyu_privilege_media_desc",
+      "value": "AI執筆支援。板書/PPTをワンタップでノートに。"
+    },
+    {
+      "name": "qingyu_privilege_safe_title",
+      "value": "広告なし"
+    },
+    {
+      "name": "qingyu_privilege_safe_desc",
+      "value": "広告なし — 執筆とノートに集中。"
+    },
+    {
+      "name": "qingyu_renew_toast_placeholder",
+      "value": "更新機能は開発中"
+    },
+    {
+      "name": "settings_webdav_title",
+      "value": "WebDAV"
+    },
+    {
+      "name": "settings_sync_title",
+      "value": "同期オプション"
+    },
+    {
+      "name": "about_title",
+      "value": "アプリについて"
+    },
+    {
+      "name": "about_tagline",
+      "value": "記録そのものが、意味である。"
+    },
+    {
+      "name": "about_intro",
+      "value": "QingYuはAndroid、iOS、HarmonyOS、macOS、Windows、Linuxに対応。どのデバイスでもノートが手元に。"
+    },
+    {
+      "name": "about_light_title",
+      "value": "軽やかで、負担なし"
+    },
+    {
+      "name": "about_light_body",
+      "value": "良いツールは表現に集中させ、ツール自体に縛られないもの。QingYuは軽量 — 小さなインストール、高速、すっきりしたUI、余計なポップアップなし。"
+    },
+    {
+      "name": "about_official_site_prefix",
+      "value": "公式サイト："
+    },
+    {
+      "name": "profile_title",
+      "value": "プロフィール"
+    },
+    {
+      "name": "profile_real_name",
+      "value": "名前"
+    },
+    {
+      "name": "profile_change_password",
+      "value": "パスワード変更"
+    },
+    {
+      "name": "profile_redeem_code",
+      "value": "引き換えコード"
+    },
+    {
+      "name": "profile_tap_redeem",
+      "value": "タップして引き換え"
+    },
+    {
+      "name": "profile_registered_at",
+      "value": "登録日時"
+    },
+    {
+      "name": "profile_user_sequence",
+      "value": "ユーザー番号"
+    },
+    {
+      "name": "profile_delete_account",
+      "value": "アカウント削除"
+    },
+    {
+      "name": "profile_bind_phone",
+      "value": "電話番号を紐付け"
+    },
+    {
+      "name": "profile_change_phone",
+      "value": "電話番号を変更"
+    },
+    {
+      "name": "profile_linked",
+      "value": "連携済み"
+    },
+    {
+      "name": "profile_not_linked",
+      "value": "未連携"
+    },
+    {
+      "name": "profile_not_activated",
+      "value": "未契約"
+    },
+    {
+      "name": "profile_active",
+      "value": "有効中"
+    },
+    {
+      "name": "profile_vip_premium",
+      "value": "プレミアム会員"
+    },
+    {
+      "name": "profile_vip_member",
+      "value": "会員"
+    },
+    {
+      "name": "profile_vip_lifetime",
+      "value": "生涯VIP"
+    },
+    {
+      "name": "qingyu_recharge_subscribe",
+      "value": "購読する"
+    },
+    {
+      "name": "qingyu_recharge_renew",
+      "value": "更新"
+    },
+    {
+      "name": "processing",
+      "value": "処理中…"
+    },
+    {
+      "name": "privacy_policy",
+      "value": "プライバシーポリシー"
+    },
+    {
+      "name": "terms_of_service",
+      "value": "利用規約"
+    },
+    {
+      "name": "note_settings_title",
+      "value": "Note settings"
+    },
+    {
+      "name": "note_settings_hub",
+      "value": "Note settings"
+    },
+    {
+      "name": "note_quick_action_bar",
+      "value": "クイック操作バー"
+    },
+    {
+      "name": "note_folder_mode_enabled",
+      "value": "フォルダモードを有効化"
+    },
+    {
+      "name": "app_lock_enabled",
+      "value": "アプリロック"
+    },
+    {
+      "name": "app_lock_forgot_password",
+      "value": "パスワードを忘れた"
+    },
+    {
+      "name": "app_lock_syncing",
+      "value": "同期中です。お待ちください…"
+    },
+    {
+      "name": "biometric_tap_face",
+      "value": "タップしてFace ID"
+    },
+    {
+      "name": "biometric_tap_fingerprint",
+      "value": "タップして指紋認証"
+    },
+    {
+      "name": "feedback_title",
+      "value": "フィードバック"
+    },
+    {
+      "name": "contact_us",
+      "value": "お問い合わせ"
+    },
+    {
+      "name": "check_update",
+      "value": "アップデートを確認"
+    },
+    {
+      "name": "feedback_hint_pc",
+      "value": "QRコードをスキャンして開発者に連絡"
+    },
+    {
+      "name": "feedback_hint_mobile",
+      "value": "長押しでQRコードを保存"
+    },
+    {
+      "name": "tag_manage",
+      "value": "タグ管理"
+    },
+    {
+      "name": "folder_manage",
+      "value": "フォルダ管理"
+    },
+    {
+      "name": "flowchart_title",
+      "value": "タイトルを編集"
+    },
+    {
+      "name": "save",
+      "value": "保存"
+    },
+    {
+      "name": "recycle_bin_title",
+      "value": "ゴミ箱"
+    },
+    {
+      "name": "recycle_bin_empty",
+      "value": "ゴミ箱は空です"
+    },
+    {
+      "name": "recycle_bin_loading",
+      "value": "読み込み中…"
+    },
+    {
+      "name": "recycle_bin_clear_all_title",
+      "value": "ゴミ箱を空にする"
+    },
+    {
+      "name": "recycle_bin_clear_all_message",
+      "value": "ゴミ箱内のすべてのノートを削除しますか？"
+    },
+    {
+      "name": "recycle_bin_clear_all_cancel",
+      "value": "キャンセル"
+    },
+    {
+      "name": "recycle_bin_clear_all_restore",
+      "value": "すべて復元"
+    },
+    {
+      "name": "recycle_bin_clear_all_delete",
+      "value": "すべて削除"
+    },
+    {
+      "name": "permission_internet_reason",
+      "value": "Connect to your WebDAV server for note sync"
+    },
+    {
+      "name": "permission_network_info_reason",
+      "value": "Check network status and Wi-Fi-only sync policy"
+    },
+    {
+      "name": "permission_vibrate_reason",
+      "value": "Haptic feedback when dragging flowchart nodes"
+    },
+    {
+      "name": "permission_biometric_reason",
+      "value": "Unlock the app with fingerprint or face"
+    },
+    {
+      "name": "permission_read_pasteboard_reason",
+      "value": "Read clipboard after copying a WeRead API Key on the H5 page to start import; only used in foreground during import"
+    },
+    {
+      "name": "login_title",
+      "value": "ログイン"
+    },
+    {
+      "name": "login_options_hint",
+      "value": "Huaweiアカウントまたは電話番号でログイン"
+    },
+    {
+      "name": "login_account_placeholder",
+      "value": "電話番号"
+    },
+    {
+      "name": "login_password_placeholder",
+      "value": "パスワード"
+    },
+    {
+      "name": "login_other_methods",
+      "value": "その他のログイン方法"
+    },
+    {
+      "name": "login_register",
+      "value": "アカウント登録"
+    },
+    {
+      "name": "login_forgot_password",
+      "value": "パスワードを忘れた"
+    },
+    {
+      "name": "login_with_huawei",
+      "value": "Huaweiアカウント"
+    },
+    {
+      "name": "login_with_phone",
+      "value": "電話番号でログイン"
+    },
+    {
+      "name": "phone_password_login_title",
+      "value": "電話番号でログイン"
+    },
+    {
+      "name": "phone_password_field_phone",
+      "value": "電話番号"
+    },
+    {
+      "name": "phone_password_field_password",
+      "value": "パスワード"
+    },
+    {
+      "name": "phone_password_submit",
+      "value": "ログイン"
+    },
+    {
+      "name": "phone_password_logging_in",
+      "value": "ログイン中…"
+    },
+    {
+      "name": "change_password_title",
+      "value": "パスワードリセット"
+    },
+    {
+      "name": "change_password_code_placeholder",
+      "value": "認証コード"
+    },
+    {
+      "name": "change_password_send_code",
+      "value": "認証コードを送信"
+    },
+    {
+      "name": "change_password_new_password_placeholder",
+      "value": "新しいパスワード"
+    },
+    {
+      "name": "change_password_submit",
+      "value": "パスワードリセット"
+    },
+    {
+      "name": "register_title",
+      "value": "アカウント登録"
+    },
+    {
+      "name": "register_code_placeholder",
+      "value": "認証コード"
+    },
+    {
+      "name": "register_password_placeholder",
+      "value": "ログインパスワードを設定"
+    },
+    {
+      "name": "register_submit",
+      "value": "登録"
+    },
+    {
+      "name": "cancel",
+      "value": "Cancel"
+    },
+    {
+      "name": "confirm",
+      "value": "OK"
+    },
+    {
+      "name": "cloud_sync_qingyu",
+      "value": "Qingyu Cloud"
+    },
+    {
+      "name": "cloud_sync_auto",
+      "value": "自動同期"
+    },
+    {
+      "name": "cloud_sync_wifi_only",
+      "value": "Wi-Fiのみ同期"
+    },
+    {
+      "name": "cloud_sync_interval",
+      "value": "同期間隔（分）"
+    },
+    {
+      "name": "cloud_sync_interval_hint",
+      "value": "例: 60"
+    },
+    {
+      "name": "cloud_sync_account",
+      "value": "アカウント"
+    },
+    {
+      "name": "cloud_sync_password",
+      "value": "パスワード"
+    },
+    {
+      "name": "cloud_sync_test",
+      "value": "接続テスト"
+    },
+    {
+      "name": "cloud_sync_testing",
+      "value": "テスト中…"
+    },
+    {
+      "name": "cloud_sync_save",
+      "value": "保存"
+    },
+    {
+      "name": "cloud_sync_login",
+      "value": "ログイン"
+    },
+    {
+      "name": "cloud_sync_loading",
+      "value": "読み込み中…"
+    },
+    {
+      "name": "cloud_sync_renew",
+      "value": "今すぐ更新"
+    },
+    {
+      "name": "cloud_sync_subscribe",
+      "value": "購読する"
+    },
+    {
+      "name": "cloud_sync_status_unavailable",
+      "value": "クラウドサービスの状態を取得できません"
+    },
+    {
+      "name": "cloud_sync_status_login_required",
+      "value": "ログインしてQingyu Cloudと決済をご利用ください"
+    },
+    {
+      "name": "cloud_sync_status_vip",
+      "value": "VIP会員はクラウドサービスを生涯利用可能"
+    },
+    {
+      "name": "cloud_sync_status_expired",
+      "value": "クラウドサービスの期限切れ"
+    },
+    {
+      "name": "cloud_sync_status_not_subscribed",
+      "value": "Qingyu Cloud未契約"
+    },
+    {
+      "name": "cloud_sync_save_login_first",
+      "value": "ログイン後にQingyu Cloud同期を保存してください"
+    },
+    {
+      "name": "cloud_sync_disabled",
+      "value": "Qingyu Cloud同期はオフです"
+    },
+    {
+      "name": "cloud_sync_save_failed",
+      "value": "保存に失敗しました。後でもう一度お試しください"
+    },
+    {
+      "name": "cloud_sync_saved_qingyu",
+      "value": "Qingyu Cloudを同期サービスに設定しました"
+    },
+    {
+      "name": "cloud_sync_test_success",
+      "value": "接続テスト成功"
+    },
+    {
+      "name": "cloud_sync_test_failed",
+      "value": "接続テスト失敗"
+    },
+    {
+      "name": "cloud_sync_test_incomplete",
+      "value": "WebDAV情報をすべて入力してから接続テストしてください"
+    },
+    {
+      "name": "cloud_sync_qingyu_unavailable",
+      "value": "Qingyu Cloud同期がオフ、または接続情報を取得できません。後でもう一度お試しください"
+    },
+    {
+      "name": "cloud_sync_password_invalid",
+      "value": "保存されたWebDAVパスワードが無効です。再入力してください"
+    },
+    {
+      "name": "biometric_face_lock",
+      "value": "Face IDロック"
+    },
+    {
+      "name": "biometric_fingerprint_lock",
+      "value": "指紋ロック"
+    },
+    {
+      "name": "sidebar_tag_mode",
+      "value": "タグモード"
+    },
+    {
+      "name": "sidebar_folder_mode",
+      "value": "フォルダモード"
+    },
+    {
+      "name": "profile_not_set",
+      "value": "未設定"
+    },
+    {
+      "name": "folder_root",
+      "value": "ルート"
+    },
+    {
+      "name": "all_notes",
+      "value": "すべてのノート"
+    },
+    {
+      "name": "filter_tags",
+      "value": "タグで絞り込み"
+    },
+    {
+      "name": "cloud_sync_confirm",
+      "value": "OK"
+    },
+    {
+      "name": "sync_batch_more",
+      "value": "このバッチの同期が完了しました。残りを同期するには再度プルダウンしてください"
+    },
+    {
+      "name": "home_tab_more",
+      "value": "その他"
+    },
+    {
+      "name": "home_tab_todo",
+      "value": "ToDo"
+    },
+    {
+      "name": "home_tab_note",
+      "value": "ノート"
+    },
+    {
+      "name": "home_more_options_title",
+      "value": "その他の方法"
+    },
+    {
+      "name": "home_paste_extract_title",
+      "value": "貼り付け内容から抽出"
+    },
+    {
+      "name": "home_paste_extract_subtitle",
+      "value": "WeChat記事は未対応です。今後のバージョンで改善予定…"
+    },
+    {
+      "name": "home_image_note_title",
+      "value": "画像からノート作成"
+    },
+    {
+      "name": "home_image_note_subtitle",
+      "value": "ホワイトボード・授業メモ・日課記録をすぐノートに"
+    },
+    {
+      "name": "home_knowledge_graph_title",
+      "value": "Mind map"
+    },
+    {
+      "name": "home_knowledge_graph_subtitle",
+      "value": "マインドマップ・フローチャートにも対応"
+    },
+    {
+      "name": "home_search",
+      "value": "検索"
+    },
+    {
+      "name": "sync_complete",
+      "value": "同期完了"
+    },
+    {
+      "name": "language_ja",
+      "value": "日本語"
+    }
+  ]
+}

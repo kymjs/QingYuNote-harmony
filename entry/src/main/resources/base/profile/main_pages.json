@@ -7,6 +7,7 @@
     "pages/Index",
     "pages/NoteEdit",
     "pages/Settings",
+    "pages/LanguageSettings",
     "pages/CloudSyncSettings",
     "pages/WereadImport",
     "pages/YoudaoImport",

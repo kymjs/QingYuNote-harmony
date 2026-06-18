@@ -4,10 +4,12 @@ import { getAppVersionName } from '../services/AppUpdateService'
 import { runAppUpdateCheckManually } from '../services/AppUpdateUi'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
+import { APP_LOCALE_REVISION_KEY } from '../services/LocaleService'
 
 @Entry
 @Component
 struct About {
+  @StorageProp(APP_LOCALE_REVISION_KEY) localeRevision: number = 0
   /** 异步拉取包 `versionName` 后追加，如 ` v1.0.1`；未就绪前不展示占位版本号。 */
   @State versionSuffix: string = ''
   private lifecycle = new PageLifecycle()
@@ -154,33 +156,33 @@ struct About {
                 .lineHeight(22)
                 .textAlign(TextAlign.Center)
                 .width('100%')
-              Text('记录本身，就是意义。')
+              Text($r('app.string.about_tagline'))
                 .fontSize($r('app.float.body_font_size'))
                 .fontWeight(FontWeight.Bold)
                 .fontColor($r('app.color.primary_text'))
                 .lineHeight(22)
                 .textAlign(TextAlign.Center)
                 .width('100%')
-              Text('轻羽云笔记是一款多平台云笔记应用，同时支持 Android、iOS、HarmonyOS、macOS、Windows、Linux，无论你正在使用哪台设备，笔记都在手边。')
+              Text($r('app.string.about_intro'))
                 .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.secondary_text'))
                 .lineHeight(22)
                 .textAlign(TextAlign.Center)
                 .width('100%')
-              Text('轻盈，无负担')
+              Text($r('app.string.about_light_title'))
                 .fontSize($r('app.float.body_font_size'))
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.primary_text'))
                 .textAlign(TextAlign.Center)
                 .width('100%')
-              Text('我们相信好的工具应该让人专注表达，而不是被工具本身所累。轻羽追求极致的轻量体验——安装包小、运行快、界面干净，没有多余的弹窗和引导，让你想写就写。')
+              Text($r('app.string.about_light_body'))
                 .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.secondary_text'))
                 .lineHeight(22)
                 .textAlign(TextAlign.Center)
                 .width('100%')
               Row() {
-                Text('官网：')
+                Text($r('app.string.about_official_site_prefix'))
                   .fontSize($r('app.float.body_font_size'))
                   .fontColor($r('app.color.secondary_text'))
                   .lineHeight(22)

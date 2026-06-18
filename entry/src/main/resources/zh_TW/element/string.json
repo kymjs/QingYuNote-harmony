@@ -1,0 +1,748 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "輕羽雲筆記主模塊"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "輕羽雲筆記入口能力"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "輕羽雲筆記"
+    },
+    {
+      "name": "settings",
+      "value": "設置"
+    },
+    {
+      "name": "settings_user_info",
+      "value": "個人信息"
+    },
+    {
+      "name": "settings_cloud_sync",
+      "value": "雲同步設置"
+    },
+    {
+      "name": "settings_weread_import",
+      "value": "導入微信讀書筆記"
+    },
+    {
+      "name": "import_notes_title",
+      "value": "導入筆記"
+    },
+    {
+      "name": "import_notes_weread",
+      "value": "導入微信讀書筆記"
+    },
+    {
+      "name": "import_notes_youdao",
+      "value": "導入有道雲筆記"
+    },
+    {
+      "name": "import_notes_yinxiang",
+      "value": "導入印象筆記"
+    },
+    {
+      "name": "import_notes_files",
+      "value": "導入md/doc/txt等文件"
+    },
+    {
+      "name": "weread_import_title",
+      "value": "導入筆記"
+    },
+    {
+      "name": "weread_import_hint",
+      "value": "請先點擊下方按鈕獲取 API Key，複製後會自動開始導入。\n導入過程中可返回，任務會在後臺繼續。"
+    },
+    {
+      "name": "weread_import_get_api_key",
+      "value": "獲取 API Key"
+    },
+    {
+      "name": "youdao_import_title",
+      "value": "導入筆記"
+    },
+    {
+      "name": "youdao_import_hint",
+      "value": "請先點擊下方按鈕獲取 API Key，複製後會自動開始導入。\n導入過程中可返回，任務會在後臺繼續。"
+    },
+    {
+      "name": "youdao_import_get_api_key",
+      "value": "獲取 API Key"
+    },
+    {
+      "name": "yinxiang_import_title",
+      "value": "導入筆記"
+    },
+    {
+      "name": "yinxiang_import_hint",
+      "value": "請先點擊下方按鈕獲取 API Key，複製後會自動開始導入。\n導入過程中可返回，任務會在後臺繼續。"
+    },
+    {
+      "name": "yinxiang_import_get_api_key",
+      "value": "獲取 API Key"
+    },
+    {
+      "name": "logout",
+      "value": "退出登錄"
+    },
+    {
+      "name": "logout_in_progress",
+      "value": "正在退出登錄…"
+    },
+    {
+      "name": "login_guest_mode",
+      "value": "遊客模式"
+    },
+    {
+      "name": "new_note",
+      "value": "新建筆記"
+    },
+    {
+      "name": "empty_notes",
+      "value": "還沒有筆記，開始記錄第一條靈感吧"
+    },
+    {
+      "name": "editor_title_placeholder",
+      "value": "輸入標題"
+    },
+    {
+      "name": "editor_content_placeholder",
+      "value": "開始寫作，支持 Markdown"
+    },
+    {
+      "name": "settings_sync_provider_title",
+      "value": "雲服務提供方"
+    },
+    {
+      "name": "settings_sync_provider_webdav",
+      "value": "WebDAV 配置"
+    },
+    {
+      "name": "settings_qingyu_title",
+      "value": "輕羽雲服務"
+    },
+    {
+      "name": "qingyu_recharge_tagline",
+      "value": "開通雲服務，多端筆記安心同步"
+    },
+    {
+      "name": "qingyu_privilege_section_title",
+      "value": "會員特權"
+    },
+    {
+      "name": "qingyu_recharge_footer_note",
+      "value": "注：會員服務開通後不支持退款。購買即表示您同意相關服務條款。"
+    },
+    {
+      "name": "qingyu_recharge_agreement_link",
+      "value": "《輕羽雲服務協議》"
+    },
+    {
+      "name": "qingyu_privilege_sync_title",
+      "value": "雲端同步"
+    },
+    {
+      "name": "qingyu_privilege_sync_desc",
+      "value": "筆記實時同步至輕羽雲，換機不丟稿。"
+    },
+    {
+      "name": "qingyu_privilege_multi_title",
+      "value": "多端訪問"
+    },
+    {
+      "name": "qingyu_privilege_multi_desc",
+      "value": "手機、平板，多設備隨時查看與編輯。"
+    },
+    {
+      "name": "qingyu_privilege_media_title",
+      "value": "AI 輔助"
+    },
+    {
+      "name": "qingyu_privilege_media_desc",
+      "value": "AI 輔助寫作，板書/PPT一鍵轉筆記。"
+    },
+    {
+      "name": "qingyu_privilege_safe_title",
+      "value": "永久無廣告"
+    },
+    {
+      "name": "qingyu_privilege_safe_desc",
+      "value": "無開屏與信息流推廣打擾，專注寫作與筆記。"
+    },
+    {
+      "name": "qingyu_renew_toast_placeholder",
+      "value": "續費功能開發中"
+    },
+    {
+      "name": "settings_webdav_title",
+      "value": "WebDAV 配置"
+    },
+    {
+      "name": "settings_sync_title",
+      "value": "同步選項"
+    },
+    {
+      "name": "about_title",
+      "value": "關於"
+    },
+    {
+      "name": "about_tagline",
+      "value": "記錄本身，就是意義。"
+    },
+    {
+      "name": "about_intro",
+      "value": "輕羽雲筆記是一款多平臺雲筆記應用，同時支持 Android、iOS、HarmonyOS、macOS、Windows、Linux，無論你正在使用哪臺設備，筆記都在手邊。"
+    },
+    {
+      "name": "about_light_title",
+      "value": "輕盈，無負擔"
+    },
+    {
+      "name": "about_light_body",
+      "value": "我們相信好的工具應該讓人專注表達，而不是被工具本身所累。輕羽追求極致的輕量體驗——安裝包小、運行快、界面乾淨，沒有多餘的彈窗和引導，讓你想寫就寫。"
+    },
+    {
+      "name": "about_official_site_prefix",
+      "value": "官網："
+    },
+    {
+      "name": "profile_title",
+      "value": "個人信息"
+    },
+    {
+      "name": "profile_real_name",
+      "value": "姓名"
+    },
+    {
+      "name": "profile_change_password",
+      "value": "修改密碼"
+    },
+    {
+      "name": "profile_redeem_code",
+      "value": "兌換碼"
+    },
+    {
+      "name": "profile_tap_redeem",
+      "value": "點擊兌換"
+    },
+    {
+      "name": "profile_registered_at",
+      "value": "註冊時間"
+    },
+    {
+      "name": "profile_user_sequence",
+      "value": "用戶序列"
+    },
+    {
+      "name": "profile_delete_account",
+      "value": "註銷賬號"
+    },
+    {
+      "name": "profile_bind_phone",
+      "value": "綁定手機號"
+    },
+    {
+      "name": "profile_change_phone",
+      "value": "修改手機號"
+    },
+    {
+      "name": "profile_linked",
+      "value": "已綁定"
+    },
+    {
+      "name": "profile_not_linked",
+      "value": "未綁定"
+    },
+    {
+      "name": "profile_not_activated",
+      "value": "未開通"
+    },
+    {
+      "name": "profile_active",
+      "value": "生效中"
+    },
+    {
+      "name": "profile_vip_premium",
+      "value": "輕羽雲尊貴會員"
+    },
+    {
+      "name": "profile_vip_member",
+      "value": "輕羽雲會員"
+    },
+    {
+      "name": "profile_vip_lifetime",
+      "value": "終身VIP"
+    },
+    {
+      "name": "qingyu_recharge_subscribe",
+      "value": "開通"
+    },
+    {
+      "name": "qingyu_recharge_renew",
+      "value": "續期"
+    },
+    {
+      "name": "processing",
+      "value": "處理中…"
+    },
+    {
+      "name": "privacy_policy",
+      "value": "隱私政策"
+    },
+    {
+      "name": "terms_of_service",
+      "value": "服務協議"
+    },
+    {
+      "name": "note_settings_title",
+      "value": "筆記設置"
+    },
+    {
+      "name": "note_settings_hub",
+      "value": "筆記設置"
+    },
+    {
+      "name": "note_quick_action_bar",
+      "value": "快捷操作欄"
+    },
+    {
+      "name": "note_folder_mode_enabled",
+      "value": "啓用文件夾模式"
+    },
+    {
+      "name": "app_lock_enabled",
+      "value": "應用鎖"
+    },
+    {
+      "name": "app_lock_forgot_password",
+      "value": "忘記密碼"
+    },
+    {
+      "name": "app_lock_syncing",
+      "value": "正在同步，請稍候…"
+    },
+    {
+      "name": "biometric_tap_face",
+      "value": "點擊進行面容識別"
+    },
+    {
+      "name": "biometric_tap_fingerprint",
+      "value": "點擊進行指紋識別"
+    },
+    {
+      "name": "feedback_title",
+      "value": "用戶反饋"
+    },
+    {
+      "name": "contact_us",
+      "value": "聯繫我們"
+    },
+    {
+      "name": "check_update",
+      "value": "檢查更新"
+    },
+    {
+      "name": "feedback_hint_pc",
+      "value": "掃描二維碼聯繫開發者"
+    },
+    {
+      "name": "feedback_hint_mobile",
+      "value": "長按保存二維碼聯繫開發者"
+    },
+    {
+      "name": "tag_manage",
+      "value": "標籤管理"
+    },
+    {
+      "name": "folder_manage",
+      "value": "文件管理"
+    },
+    {
+      "name": "flowchart_title",
+      "value": "編輯標題"
+    },
+    {
+      "name": "save",
+      "value": "保存"
+    },
+    {
+      "name": "recycle_bin_title",
+      "value": "回收站"
+    },
+    {
+      "name": "recycle_bin_empty",
+      "value": "回收站爲空"
+    },
+    {
+      "name": "recycle_bin_loading",
+      "value": "正在加載…"
+    },
+    {
+      "name": "recycle_bin_clear_all_title",
+      "value": "清空回收站"
+    },
+    {
+      "name": "recycle_bin_clear_all_message",
+      "value": "是否清理回收站中的所有筆記？"
+    },
+    {
+      "name": "recycle_bin_clear_all_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "recycle_bin_clear_all_restore",
+      "value": "全部還原"
+    },
+    {
+      "name": "recycle_bin_clear_all_delete",
+      "value": "全部刪除"
+    },
+    {
+      "name": "permission_internet_reason",
+      "value": "用於連接用戶配置的 WebDAV 服務進行筆記同步"
+    },
+    {
+      "name": "permission_network_info_reason",
+      "value": "用於判斷當前網絡狀態和僅 Wi-Fi 同步策略"
+    },
+    {
+      "name": "permission_vibrate_reason",
+      "value": "用於流程圖節點長按拖動時的觸覺反饋"
+    },
+    {
+      "name": "permission_biometric_reason",
+      "value": "用於指紋或面容驗證以解鎖應用"
+    },
+    {
+      "name": "permission_read_pasteboard_reason",
+      "value": "用於在 H5 頁面點擊複製微信讀書 API Key 後,讀取系統剪貼板內容以便自動開始導入筆記;僅在前臺導入流程中使用,不會在後臺讀取剪貼板"
+    },
+    {
+      "name": "login_title",
+      "value": "登錄"
+    },
+    {
+      "name": "login_options_hint",
+      "value": "使用華爲賬號或手機號登錄"
+    },
+    {
+      "name": "login_account_placeholder",
+      "value": "請輸入手機號"
+    },
+    {
+      "name": "login_password_placeholder",
+      "value": "請輸入密碼"
+    },
+    {
+      "name": "login_other_methods",
+      "value": "其它登錄方式"
+    },
+    {
+      "name": "login_register",
+      "value": "註冊賬號"
+    },
+    {
+      "name": "login_forgot_password",
+      "value": "忘記密碼"
+    },
+    {
+      "name": "login_with_huawei",
+      "value": "華爲賬號登錄"
+    },
+    {
+      "name": "login_with_phone",
+      "value": "手機號登錄"
+    },
+    {
+      "name": "phone_password_login_title",
+      "value": "手機號登錄"
+    },
+    {
+      "name": "phone_password_field_phone",
+      "value": "手機號"
+    },
+    {
+      "name": "phone_password_field_password",
+      "value": "密碼"
+    },
+    {
+      "name": "phone_password_submit",
+      "value": "登錄"
+    },
+    {
+      "name": "phone_password_logging_in",
+      "value": "登錄中…"
+    },
+    {
+      "name": "change_password_title",
+      "value": "重置密碼"
+    },
+    {
+      "name": "change_password_code_placeholder",
+      "value": "請輸入驗證碼"
+    },
+    {
+      "name": "change_password_send_code",
+      "value": "發送驗證碼"
+    },
+    {
+      "name": "change_password_new_password_placeholder",
+      "value": "請輸入新密碼"
+    },
+    {
+      "name": "change_password_submit",
+      "value": "重置密碼"
+    },
+    {
+      "name": "register_title",
+      "value": "註冊賬號"
+    },
+    {
+      "name": "register_code_placeholder",
+      "value": "請輸入驗證碼"
+    },
+    {
+      "name": "register_password_placeholder",
+      "value": "設置登錄密碼"
+    },
+    {
+      "name": "register_submit",
+      "value": "註冊"
+    },
+    {
+      "name": "settings_language",
+      "value": "多語言"
+    },
+    {
+      "name": "language_settings_title",
+      "value": "語言設置"
+    },
+    {
+      "name": "language_zh",
+      "value": "简体中文"
+    },
+    {
+      "name": "language_en",
+      "value": "English"
+    },
+    {
+      "name": "language_ja",
+      "value": "日本語"
+    },
+    {
+      "name": "settings_not_logged_in",
+      "value": "未登錄"
+    },
+    {
+      "name": "sidebar_tag_mode",
+      "value": "標籤模式"
+    },
+    {
+      "name": "sidebar_folder_mode",
+      "value": "文件夾模式"
+    },
+    {
+      "name": "profile_not_set",
+      "value": "未設置"
+    },
+    {
+      "name": "folder_root",
+      "value": "根目錄"
+    },
+    {
+      "name": "all_notes",
+      "value": "全部筆記"
+    },
+    {
+      "name": "filter_tags",
+      "value": "篩選標籤"
+    },
+    {
+      "name": "cloud_sync_qingyu",
+      "value": "輕羽雲"
+    },
+    {
+      "name": "cloud_sync_auto",
+      "value": "自動同步"
+    },
+    {
+      "name": "cloud_sync_wifi_only",
+      "value": "僅 Wi-Fi 同步"
+    },
+    {
+      "name": "cloud_sync_interval",
+      "value": "同步間隔（分鐘）"
+    },
+    {
+      "name": "cloud_sync_interval_hint",
+      "value": "例如 60"
+    },
+    {
+      "name": "cloud_sync_account",
+      "value": "賬號"
+    },
+    {
+      "name": "cloud_sync_password",
+      "value": "密碼"
+    },
+    {
+      "name": "cloud_sync_test",
+      "value": "測試連接"
+    },
+    {
+      "name": "cloud_sync_testing",
+      "value": "測試中…"
+    },
+    {
+      "name": "cloud_sync_save",
+      "value": "保存"
+    },
+    {
+      "name": "cloud_sync_login",
+      "value": "登錄"
+    },
+    {
+      "name": "cloud_sync_loading",
+      "value": "加載中…"
+    },
+    {
+      "name": "cloud_sync_renew",
+      "value": "立即續期"
+    },
+    {
+      "name": "cloud_sync_subscribe",
+      "value": "前往開通"
+    },
+    {
+      "name": "cloud_sync_confirm",
+      "value": "確定"
+    },
+    {
+      "name": "cloud_sync_status_unavailable",
+      "value": "暫時無法獲取雲服務狀態"
+    },
+    {
+      "name": "cloud_sync_status_login_required",
+      "value": "請先登錄賬號以使用輕羽雲服務與支付"
+    },
+    {
+      "name": "cloud_sync_status_vip",
+      "value": "VIP用戶可終身使用雲服務"
+    },
+    {
+      "name": "cloud_sync_status_expired",
+      "value": "雲服務已過期"
+    },
+    {
+      "name": "cloud_sync_status_not_subscribed",
+      "value": "暫未開通輕羽雲服務"
+    },
+    {
+      "name": "cloud_sync_status_active_prefix",
+      "value": "雲服務有效期至："
+    },
+    {
+      "name": "cloud_sync_save_login_first",
+      "value": "請先登錄後再保存輕羽雲同步"
+    },
+    {
+      "name": "cloud_sync_disabled",
+      "value": "輕羽雲同步已關閉"
+    },
+    {
+      "name": "cloud_sync_save_failed",
+      "value": "保存失敗，請稍後重試"
+    },
+    {
+      "name": "cloud_sync_saved_qingyu",
+      "value": "已使用輕羽雲作爲同步服務"
+    },
+    {
+      "name": "cloud_sync_test_success",
+      "value": "連接測試成功"
+    },
+    {
+      "name": "cloud_sync_test_failed",
+      "value": "連接測試失敗"
+    },
+    {
+      "name": "cloud_sync_test_incomplete",
+      "value": "請先輸入完整的 WebDAV 信息後再測試連接"
+    },
+    {
+      "name": "cloud_sync_qingyu_unavailable",
+      "value": "輕羽雲同步未開啓或暫時無法獲取連接信息，請稍後重試"
+    },
+    {
+      "name": "cloud_sync_password_invalid",
+      "value": "本地保存的 WebDAV 密碼無效，請重新輸入後重試"
+    },
+    {
+      "name": "biometric_face_lock",
+      "value": "面容鎖"
+    },
+    {
+      "name": "biometric_fingerprint_lock",
+      "value": "指紋鎖"
+    },
+    {
+      "name": "home_tab_more",
+      "value": "更多"
+    },
+    {
+      "name": "home_tab_todo",
+      "value": "待辦"
+    },
+    {
+      "name": "home_tab_note",
+      "value": "筆記"
+    },
+    {
+      "name": "home_more_options_title",
+      "value": "更多方式"
+    },
+    {
+      "name": "home_paste_extract_title",
+      "value": "粘貼內容提取"
+    },
+    {
+      "name": "home_paste_extract_subtitle",
+      "value": "暫不支持公衆號文章，後續版本將優化…"
+    },
+    {
+      "name": "home_image_note_title",
+      "value": "圖片生成筆記"
+    },
+    {
+      "name": "home_image_note_subtitle",
+      "value": "白板記錄/課堂筆記/日常打卡，秒變筆記"
+    },
+    {
+      "name": "home_knowledge_graph_title",
+      "value": "知識圖譜"
+    },
+    {
+      "name": "home_knowledge_graph_subtitle",
+      "value": "知識圖譜/思維導圖/流程圖，都能完成"
+    },
+    {
+      "name": "home_search",
+      "value": "搜索"
+    },
+    {
+      "name": "sync_complete",
+      "value": "同步完成"
+    },
+    {
+      "name": "sync_batch_more",
+      "value": "已同步本批筆記，請再次下拉以繼續同步剩餘條目"
+    },
+    {
+      "name": "language_zh_tw",
+      "value": "繁體中文"
+    }
+  ]
+}

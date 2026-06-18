@@ -1,5 +1,6 @@
 import { LengthMetrics } from '@kit.ArkUI'
 import { Logger } from '../common/utils/Logger'
+import { EditorUiStrings } from '../common/utils/EditorUiStrings'
 import { ShareCardTheme, ShareCardTone, ShareThemeColors } from './ShareTheme'
 
 const SHARE_PREVIEW_SHEET_LOG_TAG: string = 'NoteSharePreviewSheet'
@@ -119,7 +120,7 @@ export struct NoteSharePreviewSheet {
         .backgroundColor($r('app.color.surface_muted'))
         .borderRadius(16)
         .onClick((): void => {
-          this.logButtonTap('cancel', '取消')
+          this.logButtonTap('cancel', EditorUiStrings.loc('取消', 'Cancel', 'キャンセル'))
           this.params.onCancel()
         })
       }
@@ -134,7 +135,7 @@ export struct NoteSharePreviewSheet {
         .alignSelf(ItemAlign.Center)
 
       Row({ space: 10 }) {
-        Text('主题')
+        Text(EditorUiStrings.loc('主题', 'Theme', 'テーマ'))
           .fontSize(13)
           .fontColor($r('app.color.secondary_text'))
           .width(40)
@@ -163,7 +164,7 @@ export struct NoteSharePreviewSheet {
       .alignItems(VerticalAlign.Center)
 
       Row({ space: 10 }) {
-        Text('色调')
+        Text(EditorUiStrings.loc('色调', 'Tone', 'トーン'))
           .fontSize(13)
           .fontColor($r('app.color.secondary_text'))
           .width(40)
@@ -192,19 +193,25 @@ export struct NoteSharePreviewSheet {
       .alignItems(VerticalAlign.Center)
 
       Row({ space: 10 }) {
-        Text('操作')
+        Text(EditorUiStrings.loc('操作', 'Actions', '操作'))
           .fontSize(13)
           .fontColor($r('app.color.secondary_text'))
           .width(40)
         Row({ space: 24 }) {
-          this.buildAction($r('sys.symbol.arrow_down_to_line'), '保存到相册', (): void => {
-            this.logButtonTap('action', '保存到相册')
-            this.params.onSave()
-          })
-          this.buildAction($r('sys.symbol.share'), '分享', (): void => {
-            this.logButtonTap('action', '分享')
-            this.params.onShare()
-          })
+          this.buildAction(
+            $r('sys.symbol.arrow_down_to_line'),
+            EditorUiStrings.loc('保存到相册', 'Save to album', 'アルバムに保存'),
+            (): void => {
+              this.logButtonTap('action', EditorUiStrings.loc('保存到相册', 'Save to album', 'アルバムに保存'))
+              this.params.onSave()
+            })
+          this.buildAction(
+            $r('sys.symbol.share'),
+            EditorUiStrings.loc('分享', 'Share', '共有'),
+            (): void => {
+              this.logButtonTap('action', EditorUiStrings.loc('分享', 'Share', '共有'))
+              this.params.onShare()
+            })
           if (this.showAppIcon) {
             Column({ space: 4 }) {
               Row() {
@@ -219,13 +226,13 @@ export struct NoteSharePreviewSheet {
               .alignItems(VerticalAlign.Center)
               .backgroundColor($r('app.color.surface_muted'))
               .borderRadius(SHARE_ACTION_BUTTON_SIZE / 2)
-              Text('展示二维码')
+              Text(EditorUiStrings.loc('展示二维码', 'Show QR code', 'QRコードを表示'))
                 .fontSize(12)
                 .fontColor($r('app.color.secondary_text'))
             }
             .key('footer_image_qr')
             .onClick((): void => {
-              this.logButtonTap('action', '展示二维码')
+              this.logButtonTap('action', EditorUiStrings.loc('展示二维码', 'Show QR code', 'QRコードを表示'))
               this.params.onFooterImageToggle()
             })
           } else {
@@ -242,13 +249,13 @@ export struct NoteSharePreviewSheet {
               .alignItems(VerticalAlign.Center)
               .backgroundColor($r('app.color.surface_muted'))
               .borderRadius(SHARE_ACTION_BUTTON_SIZE / 2)
-              Text('展示图标')
+              Text(EditorUiStrings.loc('展示图标', 'Show app icon', 'アプリアイコンを表示'))
                 .fontSize(12)
                 .fontColor($r('app.color.secondary_text'))
             }
             .key('footer_image_app')
             .onClick((): void => {
-              this.logButtonTap('action', '展示图标')
+              this.logButtonTap('action', EditorUiStrings.loc('展示图标', 'Show app icon', 'アプリアイコンを表示'))
               this.params.onFooterImageToggle()
             })
           }

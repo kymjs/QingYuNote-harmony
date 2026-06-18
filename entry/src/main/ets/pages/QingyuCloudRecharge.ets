@@ -15,6 +15,7 @@ import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
+import { APP_LOCALE_REVISION_KEY, LocaleService } from '../services/LocaleService'
 
 /**
  * 轻羽云服务 — 会员档位。
@@ -23,10 +24,11 @@ import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 @Entry
 @Component
 struct QingyuCloudRecharge {
+  @StorageProp(APP_LOCALE_REVISION_KEY) localeRevision: number = 0
   @State selectedPlan: QingyuRechargePlanId = 'monthly'
   @State applying: boolean = false
   /** 与 Flutter 充值页一致：`active` / `lifetime` 为「续期」，否则「开通」。 */
-  @State payPrimaryCtaLabel: string = '开  通'
+  @State payPrimaryCtaLabel: string = LocaleService.loc('开通', 'Subscribe', '購読する')
   /** 本地缓存命中 `pay` + `pay_version` 时为 true，走支付宝 App 支付。 */
   @State useAlipayPay: boolean = false
   private lifecycle = new PageLifecycle()
@@ -74,7 +76,7 @@ struct QingyuCloudRecharge {
       if (!this.lifecycle.isActive()) {
         return
       }
-      this.payPrimaryCtaLabel = '开  通'
+      this.payPrimaryCtaLabel = LocaleService.loc('开通', 'Subscribe', '購読する')
       return
     }
     try {
@@ -92,13 +94,13 @@ struct QingyuCloudRecharge {
         return
       }
       if (status.kind === 'active' || status.kind === 'lifetime') {
-        this.payPrimaryCtaLabel = '续  期'
+        this.payPrimaryCtaLabel = LocaleService.loc('续期', 'Renew', '更新')
       } else {
-        this.payPrimaryCtaLabel = '开  通'
+        this.payPrimaryCtaLabel = LocaleService.loc('开通', 'Subscribe', '購読する')
       }
     } catch (_) {
       if (this.lifecycle.isActive()) {
-        this.payPrimaryCtaLabel = '开  通'
+        this.payPrimaryCtaLabel = LocaleService.loc('开通', 'Subscribe', '購読する')
       }
     }
   }
@@ -530,7 +532,7 @@ struct QingyuCloudRecharge {
           })
 
           Column({ space: 10 }) {
-            Button(this.applying ? '处理中…' : `${this.payPrimaryCtaLabel}`)
+            Button(this.applying ? LocaleService.loc('处理中…', 'Processing…', '処理中…') : `${this.payPrimaryCtaLabel}`)
               .width('100%')
               .height(48)
               .fontSize($r('app.float.body_font_size'))
@@ -543,7 +545,7 @@ struct QingyuCloudRecharge {
               .onClick(() => {
                 void this.onHuaweiPayTap()
               })
-            Button(this.applying ? '处理中…' : this.payPrimaryCtaLabel)
+            Button(this.applying ? LocaleService.loc('处理中…', 'Processing…', '処理中…') : this.payPrimaryCtaLabel)
               .width('100%')
               .height(48)
               .fontSize($r('app.float.body_font_size'))

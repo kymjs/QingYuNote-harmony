@@ -1,3 +1,5 @@
+import { APP_LOCALE_REVISION_KEY, LocaleService } from '../services/LocaleService'
+
 export interface HomeMoreOptionsSheetParams {
   onClose: () => void
   onPasteLink: () => void
@@ -7,6 +9,7 @@ export interface HomeMoreOptionsSheetParams {
 
 @Component
 export struct HomeMoreOptionsSheet {
+  @StorageProp(APP_LOCALE_REVISION_KEY) localeRevision: number = 0
   @Prop params: HomeMoreOptionsSheetParams = {
     onClose: (): void => {},
     onPasteLink: (): void => {},
@@ -62,7 +65,7 @@ export struct HomeMoreOptionsSheet {
   build() {
     Column({ space: 16 }) {
       Row() {
-        Text('更多方式')
+        Text(LocaleService.loc('更多方式', 'More options'))
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.primary_text'))
@@ -87,8 +90,8 @@ export struct HomeMoreOptionsSheet {
       Column() {
         this.buildOptionRow(
           $r('sys.symbol.link'),
-          '粘贴内容提取',
-          '暂不支持公众号文章，后续版本将优化…',
+          LocaleService.loc('粘贴内容提取', 'Extract from pasted content'),
+          LocaleService.loc('暂不支持公众号文章，后续版本将优化…', 'WeChat articles not supported yet; coming soon…'),
           (): void => {
             this.params.onClose()
             this.params.onPasteLink()
@@ -100,8 +103,8 @@ export struct HomeMoreOptionsSheet {
           .margin({ left: 68 })
         this.buildOptionRow(
           $r('sys.symbol.picture'),
-          '图片生成笔记',
-          '白板记录/课堂笔记/日常打卡，秒变笔记',
+          LocaleService.loc('图片生成笔记', 'Create note from image'),
+          LocaleService.loc('白板记录/课堂笔记/日常打卡，秒变笔记', 'Whiteboard, class notes, check-ins — notes in seconds'),
           (): void => {
             this.params.onClose()
             this.params.onPhotoImage()
@@ -113,8 +116,8 @@ export struct HomeMoreOptionsSheet {
           .margin({ left: 68 })
         this.buildOptionRow(
           $r('sys.symbol.shareplay'),
-          '知识图谱',
-          '知识图谱/思维导图/流程图，都能完成',
+          LocaleService.loc('知识图谱', 'Mind map'),
+          LocaleService.loc('知识图谱/思维导图/流程图，都能完成', 'Mind maps and flowcharts supported'),
           (): void => {
             this.params.onClose()
             this.params.onKnowledgeGraph()

@@ -6,6 +6,7 @@ import type { QingyuCloudSubscriptionStatus } from '../common/model/QingyuCloudS
 import { AppContextHolder } from '../services/AppContextHolder'
 import { Logger } from '../common/utils/Logger'
 import { buildQingyuCloudWebDavConfig } from '../services/QingyuCloudConfigHelper'
+import { LocaleService, APP_LOCALE_REVISION_KEY } from '../services/LocaleService'
 
 /** 与 `Login.ets` / `pushUrl` 参数一致，登录成功后 `router.back()` 返回云同步页 */
 const LOGIN_RETURN_CLOUD_SYNC = 'cloudSync'
@@ -26,6 +27,7 @@ interface ErrorLike {
 @Entry
 @Component
 struct CloudSyncSettings {
+  @StorageProp(APP_LOCALE_REVISION_KEY) @Watch('onLocaleChanged') localeRevision: number = 0
   @State selectedProvider: WebDAVProvider = 'webdav'
   @State serverUrl: string = ''
   @State username: string = ''
@@ -39,7 +41,7 @@ struct CloudSyncSettings {
   @State qingyuSubShowRenew: boolean = false
   @State qingyuSubShowConfirm: boolean = false
   @State qingyuSubLoading: boolean = false
-  @State qingyuSubButtonLabel: string = '立即续期'
+  @State qingyuSubButtonLabel: string = ''
   /** 与 Flutter `CloudSyncSettingPage` `_guestMode` 对齐 */
   @State guestMode: boolean = false
   private storedEncryptedPassword: string = ''
@@ -70,6 +72,12 @@ struct CloudSyncSettings {
 
   onPageShow(): void {
     void this.reloadGuestAndQingyuCard()
+  }
+
+  onLocaleChanged(): void {
+    if (this.selectedProvider === 'qingyu_cloud') {
+      void this.refreshQingyuSubscriptionCard()
+    }
   }
 
   private isPageActive(): boolean {
@@ -165,10 +173,10 @@ struct CloudSyncSettings {
         return
       }
       Logger.warn('CloudSyncSettings', `refreshQingyuSubscriptionCard failed: ${this.describeError(error as Object)}`)
-      this.qingyuSubHint = '暂时无法获取云服务状态'
+      this.qingyuSubHint = LocaleService.loc('暂时无法获取云服务状态', 'Unable to fetch cloud status')
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
-      this.qingyuSubButtonLabel = '立即续期'
+      this.qingyuSubButtonLabel = LocaleService.loc('立即续期', 'Renew now')
     } finally {
       if (this.isPageActive()) {
         this.qingyuSubLoading = false
@@ -178,7 +186,7 @@ struct CloudSyncSettings {
 
   private applyQingyuSubscriptionStatus(status: QingyuCloudSubscriptionStatus): void {
     if (status.kind === 'need_note_api_session') {
-      this.qingyuSubHint = '请先登录账号以使用轻羽云服务与支付'
+      this.qingyuSubHint = LocaleService.loc('请先登录账号以使用轻羽云服务与支付', 'Sign in to use Qingyu Cloud and payments')
       this.qingyuSubShowRenew = false
       this.qingyuSubShowConfirm = false
       return
@@ -190,44 +198,44 @@ struct CloudSyncSettings {
       return
     }
     if (status.kind === 'lifetime') {
-      this.qingyuSubHint = 'VIP用户可终身使用云服务'
+      this.qingyuSubHint = LocaleService.loc('VIP用户可终身使用云服务', 'VIP members get lifetime cloud access')
       this.qingyuSubShowRenew = false
       this.qingyuSubShowConfirm = true
       return
     }
     if (status.kind === 'expired') {
-      this.qingyuSubHint = '云服务已过期'
+      this.qingyuSubHint = LocaleService.loc('云服务已过期', 'Cloud subscription expired')
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
-      this.qingyuSubButtonLabel = '立即续期'
+      this.qingyuSubButtonLabel = LocaleService.loc('立即续期', 'Renew now')
       return
     }
     if (status.kind === 'active') {
-      this.qingyuSubHint = `云服务有效期至：${status.expiresDisplayYmd}`
+      this.qingyuSubHint = `${LocaleService.loc('云服务有效期至：', 'Cloud valid until: ')}${status.expiresDisplayYmd}`
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = true
-      this.qingyuSubButtonLabel = '立即续期'
+      this.qingyuSubButtonLabel = LocaleService.loc('立即续期', 'Renew now')
       return
     }
     if (status.kind === 'not_purchased' || status.kind === 'not_configured') {
-      this.qingyuSubHint = '暂未开通轻羽云服务'
+      this.qingyuSubHint = LocaleService.loc('暂未开通轻羽云服务', 'Qingyu Cloud not activated')
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
-      this.qingyuSubButtonLabel = '前往开通'
+      this.qingyuSubButtonLabel = LocaleService.loc('前往开通', 'Subscribe')
       return
     }
     if (status.kind === 'fetch_failed') {
-      this.qingyuSubHint = '暂时无法获取云服务状态'
+      this.qingyuSubHint = LocaleService.loc('暂时无法获取云服务状态', 'Unable to fetch cloud status')
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
-      this.qingyuSubButtonLabel = '立即续期'
+      this.qingyuSubButtonLabel = LocaleService.loc('立即续期', 'Renew now')
       return
     }
     if (status.kind === 'malformed') {
-      this.qingyuSubHint = '暂未开通轻羽云服务'
+      this.qingyuSubHint = LocaleService.loc('暂未开通轻羽云服务', 'Qingyu Cloud not activated')
       this.qingyuSubShowRenew = true
       this.qingyuSubShowConfirm = false
-      this.qingyuSubButtonLabel = '前往开通'
+      this.qingyuSubButtonLabel = LocaleService.loc('前往开通', 'Subscribe')
       return
     }
     this.qingyuSubHint = ''
@@ -360,14 +368,14 @@ struct CloudSyncSettings {
     try {
       const payload = await this.buildConfigPayload(skipRemoteQingyuFetch)
       if (payload.config.provider === 'qingyu_cloud' && await PreferencesService.getInstance().isGuestMode()) {
-        this.showUserMessage('请先登录后再保存轻羽云同步')
+        this.showUserMessage(LocaleService.loc('请先登录后再保存轻羽云同步', 'Sign in before saving Qingyu Cloud sync'))
         return payload
       }
       await PreferencesService.getInstance().saveSyncPolicy(payload.policy)
       await PreferencesService.getInstance().saveSyncProvider(this.selectedProvider)
       if (payload.config.provider === 'qingyu_cloud' && !payload.config.enabled) {
         Logger.warn('CloudSyncSettings', 'handleSave: qingyu_cloud with enabled=false (user turned off sync)')
-        this.showUserMessage('轻羽云同步已关闭')
+        this.showUserMessage(LocaleService.loc('轻羽云同步已关闭', 'Qingyu Cloud sync disabled'))
         await PreferencesService.getInstance().saveWebDAVConfig(payload.config)
         await PreferencesService.getInstance().setAuthInvalid(false)
         return payload
@@ -440,7 +448,7 @@ struct CloudSyncSettings {
       Logger.warn('CloudSyncSettings', `handleSaveAndClose failed: ${this.describeError(error)}`)
       this.closing = false
       this.pageActive = true
-      this.showUserMessage('保存失败，请稍后重试')
+      this.showUserMessage(LocaleService.loc('保存失败，请稍后重试', 'Save failed, please try again'))
       return
     }
     this.popOnce()
@@ -454,11 +462,11 @@ struct CloudSyncSettings {
         return
       }
       if (payload.config.provider === 'qingyu_cloud' && payload.config.enabled) {
-        this.showUserMessage('已使用轻羽云作为同步服务')
+        this.showUserMessage(LocaleService.loc('已使用轻羽云作为同步服务', 'Qingyu Cloud set as sync provider'))
       }
     } catch (error) {
       Logger.warn('CloudSyncSettings', `handleConfirmQingyuService failed: ${this.describeError(error)}`)
-      this.showUserMessage('保存失败，请稍后重试')
+      this.showUserMessage(LocaleService.loc('保存失败，请稍后重试', 'Save failed, please try again'))
     }
   }
 
@@ -489,9 +497,11 @@ struct CloudSyncSettings {
       }
       if (!payload.config.enabled) {
         if (this.selectedProvider === 'qingyu_cloud') {
-          this.showUserMessage('轻羽云同步未开启或暂时无法获取连接信息，请稍后重试')
+          this.showUserMessage(LocaleService.loc('轻羽云同步未开启或暂时无法获取连接信息，请稍后重试',
+            'Qingyu Cloud sync is off or unavailable; try again later'))
         } else {
-          this.showUserMessage('请先输入完整的 WebDAV 信息后再测试连接')
+          this.showUserMessage(LocaleService.loc('请先输入完整的 WebDAV 信息后再测试连接',
+            'Enter complete WebDAV details before testing'))
         }
         Logger.warn('CloudSyncSettings',
           `handleTestConnection aborted: incomplete config, effectivePasswordPresent=${payload.effectivePasswordPresent}`)
@@ -503,16 +513,19 @@ struct CloudSyncSettings {
         return
       }
       Logger.info('CloudSyncSettings', `handleTestConnection result: success=${success}`)
-      this.showUserMessage(success ? '连接测试成功' : '连接测试失败')
+      this.showUserMessage(success
+        ? LocaleService.loc('连接测试成功', 'Connection test succeeded')
+        : LocaleService.loc('连接测试失败', 'Connection test failed'))
       if (success && this.selectedProvider === 'qingyu_cloud') {
         void this.refreshQingyuSubscriptionCard()
       }
     } catch (error) {
       Logger.warn('CloudSyncSettings', `handleTestConnection failed: ${this.describeError(error)}`)
       if (this.isCredentialDecryptFailure(error)) {
-        this.showUserMessage('本地保存的 WebDAV 密码无效，请重新输入后重试')
+        this.showUserMessage(LocaleService.loc('本地保存的 WebDAV 密码无效，请重新输入后重试',
+          'Stored WebDAV password is invalid; re-enter and try again'))
       } else {
-        this.showUserMessage('连接测试失败')
+        this.showUserMessage(LocaleService.loc('连接测试失败', 'Connection test failed'))
       }
     } finally {
       if (this.isPageActive()) {
@@ -546,7 +559,7 @@ struct CloudSyncSettings {
                 void this.refreshQingyuSubscriptionCard()
               }
             })
-          Text('轻羽云')
+          Text($r('app.string.cloud_sync_qingyu'))
             .fontSize($r('app.float.body_font_size'))
             .fontColor($r('app.color.primary_text'))
         }
@@ -638,7 +651,7 @@ struct CloudSyncSettings {
                 .onChange((value: string) => {
                   this.serverUrl = value
                 })
-              TextInput({ text: this.username, placeholder: '账号' })
+              TextInput({ text: this.username, placeholder: LocaleService.loc('账号', 'Account') })
                 .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.primary_text'))
                 .placeholderColor($r('app.color.tertiary_text'))
@@ -649,7 +662,7 @@ struct CloudSyncSettings {
                 .onChange((value: string) => {
                   this.username = value
                 })
-              TextInput({ text: this.password, placeholder: '密码' })
+              TextInput({ text: this.password, placeholder: LocaleService.loc('密码', 'Password') })
                 .type(InputType.Password)
                 .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.primary_text'))
@@ -675,7 +688,9 @@ struct CloudSyncSettings {
                 })
 
               Row({ space: 10 }) {
-                Button(this.testing ? '测试中…' : '测试连接')
+                Button(this.testing
+                  ? LocaleService.loc('测试中…', 'Testing…')
+                  : LocaleService.loc('测试连接', 'Test connection'))
                   .layoutWeight(1)
                   .fontSize($r('app.float.caption_font_size'))
                   .fontWeight(FontWeight.Medium)
@@ -687,7 +702,7 @@ struct CloudSyncSettings {
                   .onClick(() => {
                     void this.handleTestConnection()
                   })
-                Button('保存')
+                Button(LocaleService.loc('保存', 'Save'))
                   .layoutWeight(1)
                   .fontSize($r('app.float.caption_font_size'))
                   .fontWeight(FontWeight.Medium)
@@ -722,7 +737,7 @@ struct CloudSyncSettings {
 
                 Row() {
                   Blank().layoutWeight(1)
-                  Button('登录')
+                  Button(LocaleService.loc('登录', 'Sign in'))
                     .fontSize(13)
                     .fontWeight(FontWeight.Medium)
                     .fontColor($r('app.color.on_accent'))
@@ -756,7 +771,9 @@ struct CloudSyncSettings {
               Column({ space: 14 }) {
                 this.buildSectionTitle($r('app.string.settings_qingyu_title'))
 
-                Text(this.qingyuSubLoading ? '加载中…' : this.qingyuSubHint)
+                Text(this.qingyuSubLoading
+                  ? LocaleService.loc('加载中…', 'Loading…')
+                  : this.qingyuSubHint)
                   .fontSize(12)
                   .fontColor($r('app.color.tertiary_text'))
                   .width('100%')
@@ -780,7 +797,7 @@ struct CloudSyncSettings {
                         })
                     }
                     if (this.qingyuSubShowConfirm) {
-                      Button('确定')
+                      Button(LocaleService.loc('确定', 'OK'))
                         .layoutWeight(1)
                         .fontSize($r('app.float.caption_font_size'))
                         .fontWeight(FontWeight.Medium)
@@ -814,7 +831,7 @@ struct CloudSyncSettings {
             this.buildSectionTitle($r('app.string.settings_sync_title'))
 
             Row() {
-              Text('自动同步')
+              Text($r('app.string.cloud_sync_auto'))
                 .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.primary_text'))
                 .layoutWeight(1)
@@ -829,7 +846,7 @@ struct CloudSyncSettings {
             Divider().color($r('app.color.divider')).strokeWidth(1)
 
             Row() {
-              Text('仅 Wi-Fi 同步')
+              Text($r('app.string.cloud_sync_wifi_only'))
                 .fontSize($r('app.float.body_font_size'))
                 .fontColor($r('app.color.primary_text'))
                 .layoutWeight(1)
@@ -841,11 +858,11 @@ struct CloudSyncSettings {
             }
             .width('100%')
 
-            Text('同步间隔（分钟）')
+            Text($r('app.string.cloud_sync_interval'))
               .fontSize(12)
               .fontColor($r('app.color.tertiary_text'))
               .margin({ top: 4, left: 4 })
-            TextInput({ text: this.syncIntervalMinutes, placeholder: '例如 60' })
+            TextInput({ text: this.syncIntervalMinutes, placeholder: LocaleService.loc('例如 60', 'e.g. 60') })
               .type(InputType.Number)
               .fontSize($r('app.float.body_font_size'))
               .fontColor($r('app.color.primary_text'))

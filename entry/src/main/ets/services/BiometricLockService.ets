@@ -2,6 +2,7 @@ import { userAuth } from '@kit.UserAuthenticationKit'
 import { PreferencesService } from './PreferencesService'
 import { AppContextHolder } from './AppContextHolder'
 import { Logger } from '../common/utils/Logger'
+import { LocaleService } from './LocaleService'
 
 export type BiometricLockKind = 'none' | 'face' | 'fingerprint'
 
@@ -36,17 +37,19 @@ export class BiometricLockService {
   }
 
   settingsLabelFor(kind: BiometricLockKind): string {
-    return kind === 'face' ? '面容锁' : '指纹锁'
+    return kind === 'face'
+      ? LocaleService.loc('面容锁', 'Face lock', 'Face IDロック')
+      : LocaleService.loc('指纹锁', 'Fingerprint lock', '指紋ロック')
   }
 
   unlockPromptFor(kind: BiometricLockKind): string {
     if (kind === 'face') {
-      return '验证面容以进入轻羽云笔记'
+      return LocaleService.loc('验证面容以进入轻羽云笔记', 'Verify face to open Qingyu Cloud Notes', 'Face IDでQingYuを開く')
     }
     if (kind === 'fingerprint') {
-      return '验证指纹以进入轻羽云笔记'
+      return LocaleService.loc('验证指纹以进入轻羽云笔记', 'Verify fingerprint to open Qingyu Cloud Notes', '指紋でQingYuを開く')
     }
-    return '验证身份以进入轻羽云笔记'
+    return LocaleService.loc('验证身份以进入轻羽云笔记', 'Verify identity to open Qingyu Cloud Notes', '本人確認してQingYuを開く')
   }
 
   async isEnabledLocally(): Promise<boolean> {
