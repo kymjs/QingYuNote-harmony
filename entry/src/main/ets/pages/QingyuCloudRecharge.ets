@@ -19,7 +19,8 @@ import { APP_LOCALE_REVISION_KEY, LocaleService } from '../services/LocaleServic
 
 /**
  * 轻羽云服务 — 会员档位。
- * 本地缓存 `config_hw.json`：`pay == true` 且当前版本在 `pay_version` 闭区间内走支付宝，否则华为 IAP。
+ * 本地缓存 `config_hw.json`：`pay == true` 且当前版本在 `pay_version` 闭区间内优先支付宝；
+ * 未安装支付宝时回退华为 IAP，否则默认华为 IAP。
  */
 @Entry
 @Component
@@ -176,6 +177,15 @@ struct QingyuCloudRecharge {
       return null
     }
     return oid
+  }
+
+  private async onPayTap(): Promise<void> {
+    const useAlipay = this.useAlipayPay && QingyuAlipayPayService.isAliPayInstalled()
+    if (useAlipay) {
+      await this.onAlipayTap()
+    } else {
+      await this.onHuaweiPayTap()
+    }
   }
 
   private async onHuaweiPayTap(): Promise<void> {
@@ -532,19 +542,6 @@ struct QingyuCloudRecharge {
           })
 
           Column({ space: 10 }) {
-            Button(this.applying ? LocaleService.loc('处理中…', 'Processing…', '処理中…') : `${this.payPrimaryCtaLabel}`)
-              .width('100%')
-              .height(48)
-              .fontSize($r('app.float.body_font_size'))
-              .fontWeight(FontWeight.Medium)
-              .fontColor(Color.White)
-              .backgroundColor($r('app.color.accent'))
-              .borderRadius($r('app.float.pill_radius'))
-              .enabled(!this.applying)
-              .visibility(this.useAlipayPay ? Visibility.None : Visibility.Visible)
-              .onClick(() => {
-                void this.onHuaweiPayTap()
-              })
             Button(this.applying ? LocaleService.loc('处理中…', 'Processing…', '処理中…') : this.payPrimaryCtaLabel)
               .width('100%')
               .height(48)
@@ -554,9 +551,8 @@ struct QingyuCloudRecharge {
               .backgroundColor($r('app.color.accent'))
               .borderRadius($r('app.float.pill_radius'))
               .enabled(!this.applying)
-              .visibility(this.useAlipayPay ? Visibility.Visible : Visibility.None)
               .onClick(() => {
-                void this.onAlipayTap()
+                void this.onPayTap()
               })
           }
           .width('100%')

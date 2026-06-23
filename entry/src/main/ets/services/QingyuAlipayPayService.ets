@@ -1,3 +1,4 @@
+import bundleManager from '@ohos.bundle.bundleManager'
 import { Pay } from '@cashier_alipay/cashiersdk'
 import { Logger } from '../common/utils/Logger'
 
@@ -5,6 +6,16 @@ import { Logger } from '../common/utils/Logger'
  * 轻羽云充值 — 支付宝 App 支付（orderStr 由服务端签发）。
  */
 export class QingyuAlipayPayService {
+  /** 是否已安装支付宝客户端（依赖 module.json5 中 `querySchemes: alipays`）。 */
+  static isAliPayInstalled(): boolean {
+    try {
+      return bundleManager.canOpenLink('alipays://')
+    } catch (e) {
+      Logger.warn('QingyuAlipayPayService', `isAliPayInstalled: ${JSON.stringify(e)}`)
+      return false
+    }
+  }
+
   /**
    * 唤起支付宝收银台。未安装支付宝时 SDK 可能走 H5（见官方 README）。
    */
