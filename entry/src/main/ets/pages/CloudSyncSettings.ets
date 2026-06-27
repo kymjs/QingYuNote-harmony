@@ -6,6 +6,7 @@ import type { QingyuCloudSubscriptionStatus } from '../common/model/QingyuCloudS
 import { AppContextHolder } from '../services/AppContextHolder'
 import { Logger } from '../common/utils/Logger'
 import { buildQingyuCloudWebDavConfig } from '../services/QingyuCloudConfigHelper'
+import { SyncSettingsRemoteReport } from '../services/SyncSettingsRemoteReport'
 import { LocaleService, APP_LOCALE_REVISION_KEY } from '../services/LocaleService'
 
 /** 与 `Login.ets` / `pushUrl` 参数一致，登录成功后 `router.back()` 返回云同步页 */
@@ -378,10 +379,12 @@ struct CloudSyncSettings {
         this.showUserMessage(LocaleService.loc('轻羽云同步已关闭', 'Qingyu Cloud sync disabled'))
         await PreferencesService.getInstance().saveWebDAVConfig(payload.config)
         await PreferencesService.getInstance().setAuthInvalid(false)
+        void SyncSettingsRemoteReport.getInstance().reportIfPossible(payload.config)
         return payload
       }
       await PreferencesService.getInstance().saveWebDAVConfig(payload.config)
       await PreferencesService.getInstance().setAuthInvalid(false)
+      void SyncSettingsRemoteReport.getInstance().reportIfPossible(payload.config)
       if (payload.config.provider === 'webdav') {
         this.storedEncryptedPassword = payload.config.encryptedPassword
         this.passwordTouched = false

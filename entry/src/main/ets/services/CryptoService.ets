@@ -6,6 +6,8 @@ const KEY_SEED = 'qingyu-notes-key'
 const AAD_SEED = 'qingyu-aad'
 const NOTE_KEY_PREFIX = 'zhangtaodeqingyuliulanqi-'
 const NOTE_AAD_SEED = 'qingyu-note-rsa-aad'
+const WEBDAV_SYNC_AAD_SEED = 'qingyu-webdav-sync-aad'
+const WEBDAV_SYNC_KEY_SUFFIX = 'qingyunote'
 const FLOWCHART_AAD_SEED = 'qingyu-flowchart-aad'
 const GCM_AUTH_TAG_LENGTH = 16
 
@@ -88,6 +90,28 @@ export class CryptoService {
 
   async encryptText(plainText: string): Promise<string> {
     return this.encryptTextWithKey(plainText, await this.getSymKey(), AAD_SEED)
+  }
+
+  /** WebDAV 用户名/密码上报服务端前加密（密钥：MD5(userId) 十六进制 + qingyunote 再 MD5）。 */
+  async encryptWebDavSecretForServer(plainText: string, userId: string): Promise<string> {
+    const trimmedUserId = userId.trim()
+    if (plainText.length === 0 || trimmedUserId.length === 0) {
+      return ''
+    }
+    const key = await this.deriveWebDavServerKey(trimmedUserId)
+    return this.encryptTextWithKey(plainText, key, WEBDAV_SYNC_AAD_SEED)
+  }
+
+  private async deriveWebDavServerKey(userId: string): Promise<cryptoFramework.SymKey> {
+    const md5Hex = await this.md5Hex(userId)
+    const combined = `${md5Hex}${WEBDAV_SYNC_KEY_SUFFIX}`
+    const combinedMd5 = await this.md5Hex(combined)
+    const keyBytes = new Uint8Array(16)
+    for (let i = 0; i < 16; i++) {
+      keyBytes[i] = parseInt(combinedMd5.substring(i * 2, i * 2 + 2), 16)
+    }
+    const generator = cryptoFramework.createSymKeyGenerator('AES128')
+    return generator.convertKey({ data: keyBytes })
   }
 
   private async encryptTextWithKey(plainText: string, symKey: cryptoFramework.SymKey, aad: string): Promise<string> {

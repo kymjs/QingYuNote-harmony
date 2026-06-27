@@ -1100,6 +1100,50 @@ export class NoteApiClient {
     return 'network_error'
   }
 
+  /** POST /api/v1/me/sync-settings：上报云同步方案（WebDAV 私密字段客户端加密）。 */
+  async putSyncSettings(
+    syncProvider: string,
+    enabled: boolean,
+    baseUrl: string = '',
+    notesDir: string = '',
+    usernameEnc: string = '',
+    passwordEnc: string = ''
+  ): Promise<void> {
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      return
+    }
+    const body: Record<string, Object> = {
+      sync_provider: syncProvider,
+      enabled: enabled
+    }
+    if (syncProvider === 'webdav') {
+      body.base_url = baseUrl
+      body.notes_dir = notesDir
+      body.username_enc = usernameEnc
+      body.password_enc = passwordEnc
+    }
+    const payload = JSON.stringify(body)
+    const req = http.createHttp()
+    try {
+      const headers = await this.buildCommonHeaders()
+      headers['Content-Type'] = 'application/json; charset=utf-8'
+      headers['Authorization'] = `Bearer ${tok}`
+      await req.request(this.joinUrl('/api/v1/me/sync-settings'), {
+        method: http.RequestMethod.POST,
+        header: headers,
+        extraData: payload,
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000
+      })
+    } catch (e) {
+      Logger.warn('NoteApiClient', `putSyncSettings failed: ${JSON.stringify(e)}`)
+    } finally {
+      req.destroy()
+    }
+  }
+
   /**
    * POST /api/v1/me/avatar：multipart 字段名 `file`。
    * 成功返回 null，否则为服务端 `error` 代码（与 patchProfile 一致）。
