@@ -190,4 +190,37 @@ export class RemoteAppConfigService {
       return false
     }
   }
+
+  /** 设置页「邀请得会员」：`redemption == true` 且当前版本在 `redemption_version` 闭区间内。 */
+  static async referralInviteMenuEnabledFromCache(filesDir: string): Promise<boolean> {
+    if (filesDir.length === 0) {
+      return false
+    }
+    const path = `${filesDir}/${REMOTE_APP_CONFIG_CACHE_FILE}`
+    try {
+      if (!fs.accessSync(path)) {
+        return false
+      }
+      const stat = fs.statSync(path)
+      if (stat.size <= 0) {
+        return false
+      }
+      const content = fs.readTextSync(path, { encoding: 'utf-8' })
+      const config = JSON.parse(content) as Record<string, Object>
+      const bounds = parseVersionRangeBounds(config['redemption_version'])
+      if (bounds === null) {
+        return false
+      }
+      const current = (await getAppVersionName()).trim()
+      if (current.length === 0) {
+        return false
+      }
+      if (!isVersionInClosedInterval(current, bounds.min, bounds.max)) {
+        return false
+      }
+      return config['redemption'] === true
+    } catch (_) {
+      return false
+    }
+  }
 }

@@ -76,6 +76,30 @@ export interface RegisterCaptchaNewBody {
   image_base64: string
 }
 
+/** `POST /api/v1/register` */
+export interface PhoneRegisterRequestBody {
+  phone: string
+  sms_verify_code: string
+  password: string
+  referral_claim_token?: string
+  inviter_phone?: string
+}
+
+/** `POST /api/v1/me/referral/popup/*` */
+export interface ReferralPopupEventBody {
+  variant: number
+}
+
+/** `POST /api/v1/me/sync-settings` */
+export interface SyncSettingsRequestBody {
+  sync_provider: string
+  enabled: boolean
+  base_url?: string
+  notes_dir?: string
+  username_enc?: string
+  password_enc?: string
+}
+
 /** `POST /api/v1/me/redeem` 成功体 */
 export interface RedeemSuccessBody {
   plan_id?: string
@@ -179,6 +203,8 @@ export interface ProfileBody {
   email?: string
   password_set?: boolean
   qingyu_subscription_active?: boolean
+  /** 服务端根据邀请弹窗曝光历史计算：历史上从未曝光则为 true */
+  invite_popup_pending?: boolean
 }
 
 export class NoteApiClient {
@@ -626,6 +652,26 @@ export class NoteApiClient {
     return profile
   }
 
+  async reportReferralPopupImpression(variant: number): Promise<void> {
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      return
+    }
+    const body: ReferralPopupEventBody = { variant: variant }
+    await this.requestJson(http.RequestMethod.POST, '/api/v1/me/referral/popup/impression',
+      JSON.stringify(body), tok)
+  }
+
+  async reportReferralPopupClick(variant: number): Promise<void> {
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      return
+    }
+    const body: ReferralPopupEventBody = { variant: variant }
+    await this.requestJson(http.RequestMethod.POST, '/api/v1/me/referral/popup/click',
+      JSON.stringify(body), tok)
+  }
+
   /**
    * POST /api/v1/me/redeem。
    * 成功返回对象（含 plan_id）；失败返回服务端 error 字符串；网络异常返回 null。
@@ -983,12 +1029,31 @@ export class NoteApiClient {
   /**
    * POST /api/v1/register：无需登录，短信核验后创建账号并写入会话（与手机号登录一致）。
    */
-  async registerWithPhoneSms(phone: string, smsVerifyCode: string, password: string): Promise<string | null> {
+  async registerWithPhoneSms(
+    phone: string,
+    smsVerifyCode: string,
+    password: string,
+    referralClaimToken?: string,
+    inviterPhone?: string
+  ): Promise<string | null> {
     const pPhone = phone.trim()
     const pCode = smsVerifyCode.trim()
     const pPwd = password.trim()
     if (pPhone.length === 0 || pCode.length === 0 || pPwd.length === 0) {
       return 'invalid_body'
+    }
+    const body: PhoneRegisterRequestBody = {
+      phone: pPhone,
+      sms_verify_code: pCode,
+      password: pPwd
+    }
+    const claim = referralClaimToken?.trim() ?? ''
+    if (claim.length > 0) {
+      body.referral_claim_token = claim
+    }
+    const inviter = inviterPhone?.trim() ?? ''
+    if (inviter.length > 0) {
+      body.inviter_phone = inviter
     }
     let devId = ''
     try {
@@ -1001,11 +1066,7 @@ export class NoteApiClient {
       const resp = await req.request(this.joinUrl('/api/v1/register'), {
         method: http.RequestMethod.POST,
         header: headers,
-        extraData: JSON.stringify({
-          phone: pPhone,
-          sms_verify_code: pCode,
-          password: pPwd
-        }),
+        extraData: JSON.stringify(body),
         expectDataType: http.HttpDataType.STRING,
         connectTimeout: 15000,
         readTimeout: 20000
@@ -1113,7 +1174,7 @@ export class NoteApiClient {
     if (tok === null || tok.length === 0) {
       return
     }
-    const body: Record<string, Object> = {
+    const body: SyncSettingsRequestBody = {
       sync_provider: syncProvider,
       enabled: enabled
     }

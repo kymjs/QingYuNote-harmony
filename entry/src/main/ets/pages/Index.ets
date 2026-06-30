@@ -26,7 +26,7 @@ import { CloudSyncNotifyThrottle } from '../common/utils/CloudSyncNotifyThrottle
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { IdUtils } from '../common/utils/IdUtils'
 import { navigateToBindPhoneIfNeeded } from '../common/utils/BindPhoneNavigation'
-import { maybeShowBetaTestInviteDialog } from '../common/utils/BetaTestInviteNavigation'
+import { maybeShowReferralInviteDialog } from '../common/utils/ReferralInviteNavigation'
 import { type NoteEditorEntryAction } from '../common/model/NoteEditorEntryAction'
 import { navigateToNoteEdit } from '../common/utils/NoteEditNavigation'
 import { navigateToFlowchart } from '../common/utils/FlowchartNavigation'
@@ -188,6 +188,7 @@ struct Index {
     }
     void this.loadDrawerUserProfile()
     void navigateToBindPhoneIfNeeded(this.getUIContext())
+    void maybeShowReferralInviteDialog(this.getUIContext())
     void this.runHomeEntryNetworkSetup()
     void this.loadDrawerUserProfile()
     if (!this.hasShownOnce) {
@@ -244,7 +245,7 @@ struct Index {
     await runAppUpdateCheckOnLaunch(this.getUIContext())
     if (this.lifecycle.isActive()) {
       void navigateToBindPhoneIfNeeded(this.getUIContext())
-      void maybeShowBetaTestInviteDialog(this.getUIContext())
+      void maybeShowReferralInviteDialog(this.getUIContext())
     }
   }
 

@@ -34,6 +34,10 @@ const GUEST_MODE_KEY = 'guest_mode'
 const NOTE_QUICK_ACTION_BAR_ENABLED_KEY = 'note_quick_action_bar_enabled'
 /** 与 Flutter `prefNoteFolderModeEnabledKey` 一致 */
 const NOTE_FOLDER_MODE_ENABLED_KEY = 'note_folder_mode_enabled'
+/** 与 Flutter `prefReferralClaimTokenKey` 一致 */
+const REFERRAL_CLAIM_TOKEN_KEY = 'referral_claim_token'
+/** 与 Flutter `prefReferralInviterPhoneKey` 一致 */
+const REFERRAL_INVITER_PHONE_KEY = 'referral_inviter_phone'
 /** 与 Flutter `prefBetaTestInviteDialogShownKey` 一致：公测邀请弹窗已展示过则不再弹出 */
 const BETA_TEST_INVITE_DIALOG_SHOWN_KEY = 'beta_test_invite_dialog_shown'
 /** 与 Flutter `prefMembershipExpiryReminderLastShownYmdKey` 一致：会员到期提醒弹窗上次展示日期 */
@@ -658,6 +662,64 @@ export class PreferencesService {
     } catch (error) {
       Logger.warn('PreferencesService',
         `setBetaTestInviteDialogShown failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  async getReferralClaimToken(): Promise<string | null> {
+    try {
+      const store = this.ensureStore()
+      const v = `${store.getSync(REFERRAL_CLAIM_TOKEN_KEY, '')}`
+      const t = v.trim()
+      return t.length > 0 ? t : null
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `getReferralClaimToken failed: ${this.describeError(error as Object)}`)
+      return null
+    }
+  }
+
+  async setReferralClaimToken(value: string | null): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      const t = (value ?? '').trim()
+      if (t.length === 0) {
+        store.deleteSync(REFERRAL_CLAIM_TOKEN_KEY)
+      } else {
+        store.putSync(REFERRAL_CLAIM_TOKEN_KEY, t)
+      }
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `setReferralClaimToken failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  async getReferralInviterPhone(): Promise<string | null> {
+    try {
+      const store = this.ensureStore()
+      const v = `${store.getSync(REFERRAL_INVITER_PHONE_KEY, '')}`
+      const t = v.trim()
+      return t.length > 0 ? t : null
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `getReferralInviterPhone failed: ${this.describeError(error as Object)}`)
+      return null
+    }
+  }
+
+  async setReferralInviterPhone(value: string | null): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      const t = (value ?? '').trim()
+      if (t.length === 0) {
+        store.deleteSync(REFERRAL_INVITER_PHONE_KEY)
+      } else {
+        store.putSync(REFERRAL_INVITER_PHONE_KEY, t)
+      }
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `setReferralInviterPhone failed: ${this.describeError(error as Object)}`)
     }
   }
 

@@ -1,6 +1,8 @@
 import { AppContextHolder } from '../services/AppContextHolder'
 import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
+import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
+import { openReferralInviteSharePage } from '../common/utils/ReferralInviteNavigation'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { SyncConstants } from '../common/constants/SyncConstants'
@@ -29,6 +31,7 @@ struct Settings {
   @State biometricAvailable: boolean = false
   @State biometricLockEnabled: boolean = false
   @State biometricLockLabel: string = ''
+  @State showReferralInviteMenu: boolean = false
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
   private noteSettingsChangedHandler = (): void => {
@@ -45,6 +48,7 @@ struct Settings {
       // ignore
     }
     void this.loadSettingsState()
+    void this.loadReferralInviteMenuVisibility()
   }
 
   aboutToDisappear(): void {
@@ -59,6 +63,16 @@ struct Settings {
 
   onPageShow(): void {
     void this.loadSettingsState()
+    void this.loadReferralInviteMenuVisibility()
+  }
+
+  private async loadReferralInviteMenuVisibility(): Promise<void> {
+    const context = AppContextHolder.tryGetContext()
+    const filesDir = context?.filesDir ?? ''
+    const enabled = await RemoteAppConfigService.referralInviteMenuEnabledFromCache(filesDir)
+    if (this.lifecycle.isActive()) {
+      this.showReferralInviteMenu = enabled
+    }
   }
 
   private async loadNoteSettingsOnly(): Promise<void> {
@@ -646,6 +660,34 @@ struct Settings {
           })
 
           Column({ space: 0 }) {
+            if (this.showReferralInviteMenu && !this.guestMode && this.accountSubId.length > 0) {
+              Row() {
+                Text('邀请得会员')
+                  .fontSize($r('app.float.body_font_size'))
+                  .fontColor($r('app.color.primary_text'))
+                  .layoutWeight(1)
+                Text('›')
+                  .fontSize(22)
+                  .fontColor($r('app.color.tertiary_text'))
+              }
+              .width('100%')
+              .padding({
+                left: 20,
+                right: 16,
+                top: 14,
+                bottom: 14
+              })
+              .justifyContent(FlexAlign.SpaceBetween)
+              .alignItems(VerticalAlign.Center)
+              .onClick(() => {
+                void openReferralInviteSharePage(this.getUIContext())
+              })
+
+              Divider()
+                .color($r('app.color.divider'))
+                .strokeWidth(1)
+            }
+
             Row() {
               Text($r('app.string.about_title'))
                 .fontSize($r('app.float.body_font_size'))

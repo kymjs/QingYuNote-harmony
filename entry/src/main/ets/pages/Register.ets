@@ -393,12 +393,14 @@ struct Register {
     if (ctx !== undefined) {
       await PreferencesService.getInstance().init(ctx)
     }
-    const err = await NoteApiClient.getInstance().registerWithPhoneSms(p, c, pw)
+    const claim = await PreferencesService.getInstance().getReferralClaimToken()
+    const err = await NoteApiClient.getInstance().registerWithPhoneSms(p, c, pw, claim ?? undefined)
     this.submitting = false
     if (err !== null) {
       this.showToast(this.mapRegisterConfirmError(err))
       return
     }
+    await PreferencesService.getInstance().setReferralClaimToken(null)
     // 与手机号登录成功一致：直接进入首页，不额外 Toast 打断过渡。
     void this.navigateAfterRegister()
   }
