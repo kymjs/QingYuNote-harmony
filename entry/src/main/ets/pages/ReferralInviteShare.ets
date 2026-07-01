@@ -163,7 +163,7 @@ struct ReferralInviteShare {
 
         this.buildRuleItem('每成功邀请 1 位好友注册，您得 ', '7 天', '轻羽云会员')
         this.buildRuleItem('好友通过您的链接注册，得 ', '1 个月', '轻羽云会员')
-        this.buildPlainRule('仅轻羽云会员可发起邀请，每日最多邀请 5 人')
+        this.buildPlainRule('每人每天最多邀请 5 人')
         this.buildPlainRule('好友须为历史上从未注册过的新用户')
       }
       .width('100%')
@@ -242,7 +242,7 @@ struct ReferralInviteShare {
         .layoutWeight(1)
         .height('100%')
         .alignItems(VerticalAlign.Center)
-        .justifyContent(FlexAlign.Center)
+        .justifyContent(FlexAlign.Start)
       }
       .width('100%')
       .height($r('app.float.toolbar_height'))
@@ -269,6 +269,10 @@ struct ReferralInviteShare {
         .width('100%')
         .constraintSize({ maxWidth: 520 })
         .padding({ left: 16, right: 16, top: 16, bottom: 32 })
+        .linearGradient({
+          angle: 180,
+          colors: [['#F0FAF4', 0], ['#FFFFFF', 0.4]]
+        })
       }
       .layoutWeight(1)
       .scrollBar(BarState.Off)
@@ -276,9 +280,6 @@ struct ReferralInviteShare {
     }
     .width('100%')
     .height('100%')
-    .linearGradient({
-      angle: 180,
-      colors: [['#F0FAF4', 0], ['#FFFFFF', 0.4]]
-    })
+    .backgroundColor($r('app.color.app_background'))
   }
 }

@@ -4,6 +4,7 @@ import { ComponentContent, UIContext } from '@kit.ArkUI'
 import { NoteApiClient } from '../../services/NoteApiClient'
 import { PreferencesService } from '../../services/PreferencesService'
 import { AppContextHolder } from '../../services/AppContextHolder'
+import { RemoteAppConfigService } from '../../services/RemoteAppConfigService'
 
 const OFFICIAL_INVITE_PAGE_URL = 'https://note.kymjs.com/invite.html'
 const BRAND_GREEN = '#0DAA4A'
@@ -256,28 +257,9 @@ function showReferralInviteFriendsDialog(
   }
 }
 
-async function openInvitePage(variant: number): Promise<void> {
-  const profile = await NoteApiClient.getInstance().fetchProfile()
-  if (profile === null || profile.qingyu_subscription_active !== true) {
-    return
-  }
+async function openReferralInviteShareFromPopup(uiContext: UIContext, variant: number): Promise<void> {
   await NoteApiClient.getInstance().reportReferralPopupClick(variant)
-  const uid = await PreferencesService.getInstance().getNoteApiUserId()
-  if (uid === null || uid.length === 0) {
-    return
-  }
-  const context = AppContextHolder.tryGetContext()
-  if (context === undefined) {
-    return
-  }
-  const url = `${OFFICIAL_INVITE_PAGE_URL}?uid=${encodeURIComponent(uid)}`
-  context.startAbility({
-    action: 'ohos.want.action.viewData',
-    entities: ['entity.system.browsable'],
-    uri: url
-  }).catch((err: BusinessError) => {
-    console.error(`openInvitePage failed: ${JSON.stringify(err)}`)
-  })
+  await openReferralInviteSharePage(uiContext)
 }
 
 /** 设置页「邀请得会员」：打开原生邀请分享页。 */
@@ -294,8 +276,8 @@ export async function openReferralInviteSharePage(uiContext: UIContext): Promise
 }
 
 /**
- * 首页进入后：拉取 profile，若服务端判定邀请弹窗从未曝光过则随机展示两种样式之一。
- * invite_popup_pending 由服务端根据 invite_popup_events 曝光历史计算，与是否本机首次安装无关。
+ * 首页进入后：远端 `redemption` + `redemption_version` 开启且服务端判定可展示时，随机展示两种样式之一。
+ * 会员：历史上从未曝光；非会员：当日未曝光。
  */
 export async function maybeShowReferralInviteDialog(uiContext: UIContext): Promise<void> {
   if (referralInviteInFlight) {
@@ -311,13 +293,17 @@ export async function maybeShowReferralInviteDialog(uiContext: UIContext): Promi
       await PreferencesService.getInstance().isGuestMode()) {
       return
     }
+    const filesDir = context?.filesDir ?? ''
+    if (!await RemoteAppConfigService.referralInviteMenuEnabledFromCache(filesDir)) {
+      return
+    }
     const profile = await NoteApiClient.getInstance().fetchProfile()
     if (profile === null || profile.invite_popup_pending !== true) {
       return
     }
     const variant = Math.random() < 0.5 ? 1 : 2
     const onShare = (): void => {
-      void openInvitePage(variant)
+      void openReferralInviteShareFromPopup(uiContext, variant)
     }
     const opened = variant === 1
       ? showReferralGiftPackDialog(uiContext, onShare)

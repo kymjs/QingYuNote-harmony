@@ -203,7 +203,7 @@ export interface ProfileBody {
   email?: string
   password_set?: boolean
   qingyu_subscription_active?: boolean
-  /** 服务端根据邀请弹窗曝光历史计算：历史上从未曝光则为 true */
+  /** 服务端根据邀请弹窗曝光历史计算：会员为历史上从未曝光；非会员为当日未曝光 */
   invite_popup_pending?: boolean
 }
 
