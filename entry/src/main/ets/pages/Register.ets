@@ -164,7 +164,13 @@ struct Register {
   }
 
   private isChinaMobile11(d: string): boolean {
-    if (d.length !== 11 || d.charAt(0) !== '1') {
+    if (d.length !== 11) {
+      return false
+    }
+    if (d.startsWith('100')) {
+      return true
+    }
+    if (d.charAt(0) !== '1') {
       return false
     }
     const second = d.charCodeAt(1)
