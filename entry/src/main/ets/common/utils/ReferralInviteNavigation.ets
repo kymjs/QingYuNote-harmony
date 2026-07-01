@@ -46,6 +46,7 @@ struct ReferralGiftPackDialog {
         }
         .width('100%')
         .padding({ top: 20, bottom: 8 })
+        .borderRadius({ topLeft: 24, topRight: 24 })
         .linearGradient({
           angle: 180,
           colors: [['#2ee87a33', 0], ['#ffffff', 1]]
@@ -98,6 +99,7 @@ struct ReferralGiftPackDialog {
     .constraintSize({ maxWidth: 400 })
     .backgroundColor(Color.White)
     .borderRadius(24)
+    .clip(true)
   }
 }
 
@@ -116,6 +118,7 @@ struct ReferralInviteFriendsDialog {
         }
         .width('100%')
         .padding({ top: 16, bottom: 4 })
+        .borderRadius({ topLeft: 24, topRight: 24 })
         .linearGradient({
           angle: 180,
           colors: [['#2ee87a33', 0], ['#ffffff', 1]]
@@ -135,7 +138,7 @@ struct ReferralInviteFriendsDialog {
         .fontSize(20)
         .fontWeight(FontWeight.Bold)
         .margin({ top: 12 })
-      Text('每成功邀请 1 位好友，您得 7 天会员，好友得 1 个月会员')
+      Text('每成功邀请 1 位好友，\n您得 7 天会员，好友得 1 个月会员')
         .fontSize(14)
         .fontColor('#6b7280')
         .textAlign(TextAlign.Center)
@@ -164,6 +167,7 @@ struct ReferralInviteFriendsDialog {
     .constraintSize({ maxWidth: 400 })
     .backgroundColor(Color.White)
     .borderRadius(24)
+    .clip(true)
   }
 }
 
