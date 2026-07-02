@@ -56,11 +56,24 @@ import {
 } from '../common/utils/NoteEditSaveHelper'
 import {
   noteEditDelayMs,
+  NOTE_EDIT_SHARE_SCROLL_ID,
+  NOTE_EDIT_SHARE_SNAPSHOT_MAX_FULL_CARD_VP,
+  saveShareCachePngToGallery,
   shareExportBodyHasImages,
   shareExportContentHasImages,
   shareExportMountDelayMs,
-  shareExportMountKey
+  shareExportMountKey,
+  sharePngFromCachePath,
+  updateSharePreviewImageLayoutVp
 } from '../common/utils/NoteEditShareHelper'
+import {
+  mergeSharePixelMapsVertical,
+  normalizeAllShareSlicesForMerge,
+  packSharePixelMapToPng,
+  trimShareTransparentVerticalEdges
+} from '../common/utils/NoteEditShareSnapshot'
+import { NoteEditShareExportMount } from '../components/NoteEditShareExportMount'
+import { NoteEditSharePreviewOverlay } from '../components/NoteEditSharePreviewOverlay'
 import { type NoteEditorEntryAction } from '../common/model/NoteEditorEntryAction'
 import { maybeShowMembershipExpiryReminderDialog } from '../common/utils/MembershipExpiryReminderNavigation'
 import { ensureAiMembershipAccess } from '../common/utils/AiMembershipGateNavigation'
@@ -70,9 +83,7 @@ import {
   NOTE_SHARE_EXPORT_SNAPSHOT_ID,
   buildJinshuLightSegmentCaptureIds
 } from '../share/NoteShareExportCard'
-import { NoteSharePreviewSheet } from '../share/NoteSharePreviewSheet'
-import { systemShare } from '@kit.ShareKit'
-import { uniformTypeDescriptor as utd } from '@kit.ArkData'
+import { NoteSharePreviewSheetParams } from '../share/NoteSharePreviewSheet'
 
 interface NoteEditParams {
   noteId?: string
@@ -201,10 +212,8 @@ struct NoteEdit {
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
   private static readonly SHARE_CARD_ID: string = NOTE_SHARE_EXPORT_SNAPSHOT_ID
-  private static readonly SHARE_SCROLL_ID: string = 'note_share_export_scroll_capture'
   /** 超过此高度（vp）时整卡 snapshot 易触发 100001，改优先截 Scroll 视口再分段拼接。 */
-  private static readonly SHARE_SNAPSHOT_MAX_FULL_CARD_VP: number = 2400
-  private static readonly SHARE_AVATAR_SIZE: number = 48
+  private static readonly SHARE_SNAPSHOT_MAX_FULL_CARD_VP: number = NOTE_EDIT_SHARE_SNAPSHOT_MAX_FULL_CARD_VP
 
   /** 使用 UIContext.getHostContext，替代已废弃的全局 getContext。 */
   private obtainUiAbilityContext(): common.UIAbilityContext | undefined {
@@ -1475,76 +1484,15 @@ struct NoteEdit {
     }
   }
 
-  private async saveCachePngToGallery(cachePath: string): Promise<boolean> {
-    const context = this.obtainUiAbilityContext()
-    if (context === undefined) {
-      return false
-    }
-    try {
-      const helper = photoAccessHelper.getPhotoAccessHelper(context)
-      const srcFileUris: Array<string> = [fileUri.getUriFromPath(cachePath)]
-      const photoCreationConfigs: Array<photoAccessHelper.PhotoCreationConfig> = [
-        {
-          title: `note_share_${Date.now()}`,
-          fileNameExtension: 'png',
-          photoType: photoAccessHelper.PhotoType.IMAGE,
-          subtype: photoAccessHelper.PhotoSubtype.DEFAULT
-        }
-      ]
-      const destUris: Array<string> = await helper.showAssetsCreationDialog(srcFileUris, photoCreationConfigs)
-      if (destUris.length === 0) {
-        return false
-      }
-      const src = fileIo.openSync(cachePath, fileIo.OpenMode.READ_ONLY)
-      const dest = await fileIo.open(destUris[0], fileIo.OpenMode.WRITE_ONLY)
-      await fileIo.copyFile(src.fd, dest.fd)
-      fileIo.closeSync(src)
-      fileIo.closeSync(dest)
-      return true
-    } catch (error) {
-      Logger.error('NoteEdit', `saveCachePngToGallery failed: ${JSON.stringify(error)}`)
-      return false
-    }
+  private async trimShareSlice(pm: image.PixelMap): Promise<image.PixelMap | null> {
+    const ui = this.getUIContext()
+    const contentPx = this.shareExportColumnVp > 0
+      ? Math.max(1, Math.round(ui.vp2px(this.shareExportColumnVp)))
+      : 0
+    return trimShareTransparentVerticalEdges(pm, contentPx)
   }
 
-  private async updateSharePreviewImageLayout(path: string): Promise<void> {
-    if (path.length === 0) {
-      this.sharePreviewImageHeightVp = 0
-      return
-    }
-    try {
-      let src: image.ImageSource | null = null
-      try {
-        src = image.createImageSource(path)
-      } catch (_) {
-        src = image.createImageSource(`file://${path}`)
-      }
-      if (src === null) {
-        return
-      }
-      const pm = await src.createPixelMap({
-        desiredDynamicRange: image.DecodingDynamicRange.SDR,
-        desiredPixelFormat: image.PixelMapFormat.RGBA_8888
-      })
-      const info = pm.getImageInfoSync()
-      await pm.release()
-      await src.release()
-      const w = info.size.width
-      const h = info.size.height
-      if (w <= 0 || h <= 0) {
-        return
-      }
-      const previewW = Math.max(1, this.pageWidth)
-      this.sharePreviewImageHeightVp = (h / w) * previewW
-      Logger.info('NoteEdit',
-        `share preview layout ${w}x${h}px widthVp=${previewW} heightVp=${this.sharePreviewImageHeightVp}`)
-    } catch (error) {
-      Logger.warn('NoteEdit', `updateSharePreviewImageLayout failed: ${JSON.stringify(error)}`)
-      this.sharePreviewImageHeightVp = 0
-    }
-  }
-
-  private async exportShareImageToCache(
+  private async offlineSnapshotCapture(): Promise<string | null> {
     theme: ShareCardTheme = this.shareTheme,
     tone: ShareCardTone = this.shareTone
   ): Promise<string | null> {
@@ -1695,258 +1643,6 @@ struct NoteEdit {
   }
 
   /**
-   * 与单屏分享一致：先 ImagePacker(SDR) 再解码，使每张滚动截图的 PixelMap 与 PNG 编解码管线对齐，
-   * 避免 RS 离屏截图直接 readPixels + 手工合并时的 HDR/通道解读与相册「正常图」不一致。
-   */
-  private async normalizeSliceViaSdrPngRoundTrip(pm: image.PixelMap): Promise<image.PixelMap | null> {
-    const packer = image.createImagePacker()
-    let inputReleased = false
-    try {
-      try {
-        await pm.convertPixelFormat(image.PixelMapFormat.RGBA_8888)
-      } catch (_) {
-        // 部分 RS 截图 convert 失败仍可走 packing
-      }
-      const pngBuf = await packer.packToData(pm, {
-        format: 'image/png',
-        quality: 100,
-        desiredDynamicRange: image.PackingDynamicRange.SDR
-      })
-      await pm.release()
-      inputReleased = true
-      const src = image.createImageSource(pngBuf)
-      try {
-        return await src.createPixelMap({
-          desiredDynamicRange: image.DecodingDynamicRange.SDR,
-          desiredPixelFormat: image.PixelMapFormat.RGBA_8888
-        })
-      } finally {
-        await src.release()
-      }
-    } catch (e) {
-      Logger.error('NoteEdit', `normalizeSliceViaSdrPngRoundTrip failed: ${JSON.stringify(e)}`)
-      if (!inputReleased) {
-        try {
-          await pm.release()
-        } catch (_) {
-        }
-      }
-      return null
-    }
-  }
-
-  /** 全部转为「SDR PNG 往返」后的 PixelMap；失败时释放已分配资源与剩余原始切片。 */
-  private async normalizeAllSlicesForMerge(slices: image.PixelMap[]): Promise<image.PixelMap[] | null> {
-    const out: image.PixelMap[] = []
-    for (let i = 0; i < slices.length; i++) {
-      const n = await this.normalizeSliceViaSdrPngRoundTrip(slices[i])
-      if (!n) {
-        for (const p of out) {
-          await p.release()
-        }
-        for (let j = i + 1; j < slices.length; j++) {
-          await slices[j].release()
-        }
-        return null
-      }
-      out.push(n)
-    }
-    return out
-  }
-
-  private async packPixelMapToPng(pm: image.PixelMap): Promise<ArrayBuffer | null> {
-    const packer = image.createImagePacker()
-    try {
-      try {
-        await pm.convertPixelFormat(image.PixelMapFormat.RGBA_8888)
-      } catch (_) {
-        // 部分 PixelMap 与 convert 不兼容时仍可 packing
-      }
-      const buf = await packer.packToData(pm, {
-        format: 'image/png',
-        quality: 100,
-        desiredDynamicRange: image.PackingDynamicRange.SDR
-      })
-      await pm.release()
-      return buf
-    } catch (err) {
-      Logger.error('NoteEdit', `packPixelMapToPng failed: ${JSON.stringify(err)}`)
-      await pm.release()
-      return null
-    }
-  }
-
-  /**
-   * 单屏分享截图：裁掉上下透明留白（Scroll 视口高于卡片内容时常见）。
-   * 优先按 alpha 检测内容边界；辅以 shareExportColumnVp 限制高度。
-   */
-  private async trimTransparentVerticalEdges(pm: image.PixelMap): Promise<image.PixelMap | null> {
-    try {
-      const info = pm.getImageInfoSync()
-      const widthPx = info.size.width
-      const srcH = info.size.height
-      if (srcH <= 1) {
-        return pm
-      }
-      const stride = info.stride
-      const srcBuf = new ArrayBuffer(pm.getPixelBytesNumber())
-      pm.readPixelsToBufferSync(srcBuf)
-      const srcView = new Uint8Array(srcBuf)
-      const alphaThreshold = 8
-      let top = -1
-      let bottom = -1
-      for (let r = 0; r < srcH; r++) {
-        const rowStart = r * stride
-        let rowOpaque = false
-        for (let x = 0; x < widthPx; x++) {
-          const si = rowStart + x * 4
-          if (srcView[si + 3] > alphaThreshold) {
-            rowOpaque = true
-            break
-          }
-        }
-        if (rowOpaque) {
-          if (top < 0) {
-            top = r
-          }
-          bottom = r
-        }
-      }
-      const ui = this.getUIContext()
-      const contentPx = this.shareExportColumnVp > 0
-        ? Math.max(1, Math.round(ui.vp2px(this.shareExportColumnVp)))
-        : 0
-      if (top < 0) {
-        if (contentPx > 0 && contentPx < srcH) {
-          top = 0
-          bottom = contentPx - 1
-        } else {
-          return pm
-        }
-      } else if (contentPx > 0) {
-        const contentBottom = top + contentPx - 1
-        if (contentBottom < bottom) {
-          bottom = contentBottom
-        }
-      }
-      const cropH = bottom - top + 1
-      if (cropH <= 0 || cropH >= srcH) {
-        return pm
-      }
-      const headAlpha = info.alphaType
-      const mergeAlphaType =
-        headAlpha === image.AlphaType.UNKNOWN ? image.AlphaType.PREMUL : headAlpha
-      const rowBytes = widthPx * 4
-      const dstBuf = new ArrayBuffer(rowBytes * cropH)
-      const dstView = new Uint8Array(dstBuf)
-      for (let r = 0; r < cropH; r++) {
-        const srcRow = top + r
-        const srcLineStart = srcRow * stride
-        const dstLineStart = r * rowBytes
-        for (let x = 0; x < widthPx; x++) {
-          const si = srcLineStart + x * 4
-          const di = dstLineStart + x * 4
-          dstView[di] = srcView[si + 2]
-          dstView[di + 1] = srcView[si + 1]
-          dstView[di + 2] = srcView[si]
-          dstView[di + 3] = srcView[si + 3]
-        }
-      }
-      await pm.release()
-      return await image.createPixelMap(dstBuf, {
-        size: { width: widthPx, height: cropH },
-        pixelFormat: image.PixelMapFormat.RGBA_8888,
-        alphaType: mergeAlphaType
-      })
-    } catch (err) {
-      Logger.error('NoteEdit', `trimTransparentVerticalEdges failed: ${JSON.stringify(err)}`)
-      return null
-    }
-  }
-
-  /**
-   * 将多张纵向分段截图合并为一张 PixelMap。
-   * - rowStepPx：单屏在物理像素上的高度上限，用于裁掉比视口「更高」的截图底部。
-   * - sliceSkipTopPx：每张切片从像素矩阵顶部跳过的行数；除首张外一般为「视口高度 − 与上一张之间的滚动增量(px)」，
-   *   用于去掉相邻截图在纵向的重叠（若滚动增量小于视口高度，下一张顶部会与上一张底部重复）。
-   * - 调用方应在拼接前经 normalizeAllSlicesForMerge，使每张切片与单屏导出同源（SDR PNG 往返后的 RGBA）。
-   * - readPixelsToBufferSync 在本机为 **BGRA** 字节序（与 readPixelsSync 的 RGBA 语义差一次 R/B 交换）。
-   *   逐像素 **BGRA→RGBA** 写入合并缓冲，再以 **RGBA_8888** 建 PixelMap，与单屏 snapshot 直打包路径一致。
-   *   仅用 BGRA 建 PixelMap 再 ImagePacker 仍可能偏色。
-   */
-  private async mergePixelMapsVertical(slices: image.PixelMap[], widthPx: number,
-    totalHeightPx: number, rowStepPx: number, sliceSkipTopPx: number[]): Promise<image.PixelMap | null> {
-    if (slices.length === 0 || totalHeightPx <= 0 || sliceSkipTopPx.length !== slices.length) {
-      Logger.warn('NoteEdit',
-        `mergePixelMapsVertical: bad args slices=${slices.length} totalH=${totalHeightPx} skipLen=${sliceSkipTopPx.length}`)
-      return null
-    }
-    try {
-      const headInfo = slices[0].getImageInfoSync()
-      const headAlpha = headInfo.alphaType
-      const mergeAlphaType =
-        headAlpha === image.AlphaType.UNKNOWN ? image.AlphaType.PREMUL : headAlpha
-      const mergeBufferPixelFormat = image.PixelMapFormat.RGBA_8888
-      const rowBytes = widthPx * 4
-      const dstBuf = new ArrayBuffer(rowBytes * totalHeightPx)
-      const dstView = new Uint8Array(dstBuf)
-      let dstRowTop = 0
-      for (let s = 0; s < slices.length && dstRowTop < totalHeightPx; s++) {
-        const pm = slices[s]
-        const info = pm.getImageInfoSync()
-        const srcStride = info.stride
-        const srcH = info.size.height
-        const srcBuf = new ArrayBuffer(pm.getPixelBytesNumber())
-        pm.readPixelsToBufferSync(srcBuf)
-        const srcView = new Uint8Array(srcBuf)
-        let skipTop = Math.max(0, Math.floor(sliceSkipTopPx[s]))
-        if (skipTop >= srcH) {
-          Logger.warn('NoteEdit', `mergePixelMapsVertical: slice[${s}] skipped skipTop=${skipTop}>=srcH=${srcH}`)
-          continue
-        }
-        const availAfterSkip = srcH - skipTop
-        const cap = rowStepPx > 0 ? Math.min(availAfterSkip, rowStepPx) : availAfterSkip
-        const rowsToCopy = Math.min(cap, totalHeightPx - dstRowTop)
-        for (let r = 0; r < rowsToCopy; r++) {
-          const srcRow = skipTop + r
-          const srcLineStart = srcRow * srcStride
-          const dstLineStart = (dstRowTop + r) * rowBytes
-          if (srcLineStart + rowBytes > srcView.byteLength) {
-            Logger.warn('NoteEdit',
-              `mergePixelMapsVertical: slice[${s}] row=${r} src overflow srcLineStart=${srcLineStart}`)
-            break
-          }
-          for (let x = 0; x < widthPx; x++) {
-            const si = srcLineStart + x * 4
-            const di = dstLineStart + x * 4
-            dstView[di] = srcView[si + 2]
-            dstView[di + 1] = srcView[si + 1]
-            dstView[di + 2] = srcView[si]
-            dstView[di + 3] = srcView[si + 3]
-          }
-        }
-        dstRowTop += rowsToCopy
-      }
-      const actualHeight = Math.max(1, Math.min(dstRowTop, totalHeightPx))
-      const trimmedBuf =
-        actualHeight === totalHeightPx ? dstBuf : dstBuf.slice(0, rowBytes * actualHeight)
-      const mergedPm = await image.createPixelMap(trimmedBuf, {
-        size: { width: widthPx, height: actualHeight },
-        pixelFormat: mergeBufferPixelFormat,
-        alphaType: mergeAlphaType
-      })
-      return mergedPm
-    } catch (err) {
-      Logger.error('NoteEdit', `mergePixelMapsVertical failed: ${JSON.stringify(err)}`)
-      return null
-    } finally {
-      for (const pm of slices) {
-        await pm.release()
-      }
-    }
-  }
-
-  /**
    * 对已挂载的导出节点分段截图并纵向拼接。
    * 不使用 createFromBuilder，避免 Builder 在隔离上下文中缺少 observeComponentCreation2。
    */
@@ -1965,8 +1661,8 @@ struct NoteEdit {
     const snap = this.getUIContext().getComponentSnapshot()
     const preferScroll = this.shareSnapshotPreferScrollViewport()
     const candidates: string[] = preferScroll
-      ? [NoteEdit.SHARE_SCROLL_ID, NoteEdit.SHARE_CARD_ID]
-      : [NoteEdit.SHARE_CARD_ID, NoteEdit.SHARE_SCROLL_ID]
+      ? [NOTE_EDIT_SHARE_SCROLL_ID, NoteEdit.SHARE_CARD_ID]
+      : [NoteEdit.SHARE_CARD_ID, NOTE_EDIT_SHARE_SCROLL_ID]
     for (const candidate of candidates) {
       if (preferScroll && candidate === NoteEdit.SHARE_CARD_ID &&
         this.shareExportColumnVp > NoteEdit.SHARE_SNAPSHOT_MAX_FULL_CARD_VP) {
@@ -2044,12 +1740,12 @@ struct NoteEdit {
       return null
     }
     if (slices.length === 1) {
-      const trimmed = await this.trimTransparentVerticalEdges(slices[0])
+      const trimmed = await this.trimShareSlice(slices[0])
       await slices[0].release()
       if (!trimmed) {
         return null
       }
-      const buf = await this.packPixelMapToPng(trimmed)
+      const buf = await packSharePixelMapToPng(trimmed)
       await trimmed.release()
       return buf
     }
@@ -2062,7 +1758,7 @@ struct NoteEdit {
       totalHeightPx += info.size.height
     }
     const sliceSkipTopPx: number[] = new Array(slices.length).fill(0)
-    const normalized = await this.normalizeAllSlicesForMerge(slices)
+    const normalized = await normalizeAllShareSlicesForMerge(slices)
     for (const s of slices) {
       await s.release()
     }
@@ -2074,12 +1770,12 @@ struct NoteEdit {
     for (const n of normalized) {
       normHeightPx += n.getImageInfoSync().size.height
     }
-    const merged = await this.mergePixelMapsVertical(normalized, widthPx, normHeightPx, 0, sliceSkipTopPx)
+    const merged = await mergeSharePixelMapsVertical(normalized, widthPx, normHeightPx, 0, sliceSkipTopPx)
     if (!merged) {
       Logger.error('NoteEdit', 'captureJinshuLightSegmented: mergePixelMapsVertical returned null')
       return null
     }
-    const buf = await this.packPixelMapToPng(merged)
+    const buf = await packSharePixelMapToPng(merged)
     await merged.release()
     return buf
   }
@@ -2125,7 +1821,7 @@ struct NoteEdit {
     Logger.info('NoteEdit',
       `captureScrollingCardToImageCore start key=${this.shareCardCaptureKey} ` +
       `theme=${this.shareExportTheme} tone=${this.shareExportTone} targetCardId=${NoteEdit.SHARE_CARD_ID} ` +
-      `targetScrollId=${NoteEdit.SHARE_SCROLL_ID} ` +
+      `targetScrollId=${NOTE_EDIT_SHARE_SCROLL_ID} ` +
       `waitUntilRenderFinished=${waitOpts.waitUntilRenderFinished ?? false}`)
 
     await this.flushShareCardRenderSnapshot()
@@ -2208,11 +1904,11 @@ struct NoteEdit {
     const singleScreen = totalVp <= stepVp + vpEps
 
     if (singleScreen || snapshotCoversContent) {
-      const trimmed = await this.trimTransparentVerticalEdges(firstPm)
+      const trimmed = await this.trimShareSlice(firstPm)
       if (!trimmed) {
         return null
       }
-      return await this.packPixelMapToPng(trimmed)
+      return await packSharePixelMapToPng(trimmed)
     }
 
     const slices: image.PixelMap[] = [firstPm]
@@ -2287,63 +1983,29 @@ struct NoteEdit {
       }
     }
     if (slices.length === 1) {
-      const trimmed = await this.trimTransparentVerticalEdges(slices[0])
+      const trimmed = await this.trimShareSlice(slices[0])
       if (!trimmed) {
         return null
       }
-      return await this.packPixelMapToPng(trimmed)
+      return await packSharePixelMapToPng(trimmed)
     }
 
-    const normalized = await this.normalizeAllSlicesForMerge(slices)
+    const normalized = await normalizeAllShareSlicesForMerge(slices)
     if (!normalized) {
       Logger.error('NoteEdit', 'shareLongImage: normalizeAllSlicesForMerge failed')
       return null
     }
     const merged =
-      await this.mergePixelMapsVertical(normalized, widthPx, mergeHeightPx, rowStepPx, sliceSkipTopPx)
+      await mergeSharePixelMapsVertical(normalized, widthPx, mergeHeightPx, rowStepPx, sliceSkipTopPx)
     if (!merged) {
       Logger.error('NoteEdit', 'shareLongImage: mergePixelMapsVertical returned null')
       return null
     }
-    return await this.packPixelMapToPng(merged)
-  }
-
-  private formatShareCreatedAt(timestamp: number): string {
-    const ms = timestamp > 0 ? timestamp : Date.now()
-    const date = new Date(ms)
-    return `创作于${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
-  }
-
-  private shareDisplayName(): string {
-    const name = (this.shareProfile?.username ?? '').trim()
-    return name.length > 0 ? name : EditorUiStrings.loc('轻羽云笔记用户', 'Qingyu Cloud Notes user', 'QingYuユーザー')
+    return await packSharePixelMapToPng(merged)
   }
 
   private shareAvatarUrlTrim(): string {
     return (this.shareProfile?.avatar_url ?? '').trim()
-  }
-
-  @Builder
-  private buildShareAvatar() {
-    if (this.shareAvatarUrlTrim().length > 0 && !this.shareAvatarNetworkFailed) {
-      CachedNetworkImage({
-        url: this.shareAvatarUrlTrim(),
-        imageWidth: NoteEdit.SHARE_AVATAR_SIZE,
-        imageHeight: NoteEdit.SHARE_AVATAR_SIZE,
-        imageBorderRadius: NoteEdit.SHARE_AVATAR_SIZE / 2,
-        objectFit: ImageFit.Cover,
-        showLoading: false,
-        onError: () => {
-          this.shareAvatarNetworkFailed = true
-        }
-      })
-    } else {
-      Image($r('app.media.icon_app'))
-        .width(NoteEdit.SHARE_AVATAR_SIZE)
-        .height(NoteEdit.SHARE_AVATAR_SIZE)
-        .borderRadius(NoteEdit.SHARE_AVATAR_SIZE / 2)
-        .objectFit(ImageFit.Cover)
-    }
   }
 
   /** 通过分享预览保存或分享长图。 */
@@ -2373,7 +2035,7 @@ struct NoteEdit {
         return
       }
       this.sharePreviewPath = path
-      await this.updateSharePreviewImageLayout(path)
+      this.sharePreviewImageHeightVp = await updateSharePreviewImageLayoutVp(path, this.pageWidth)
       this.sharePreviewVisible = true
       this.shareOptionsSheetVisible = true
       this.shareSheetRevision++
@@ -2409,7 +2071,7 @@ struct NoteEdit {
     this.sharePreviewRegenerating = false
     if (path && path.length > 0) {
       this.sharePreviewPath = path
-      await this.updateSharePreviewImageLayout(path)
+      this.sharePreviewImageHeightVp = await updateSharePreviewImageLayoutVp(path, this.pageWidth)
       Logger.info('NoteEdit',
         `regenerateSharePreview done path=${path} theme=${theme} tone=${tone} revision=${this.shareSheetRevision}`)
     } else {
@@ -2429,7 +2091,11 @@ struct NoteEdit {
     if (this.sharePreviewPath.length === 0) {
       return
     }
-    const ok = await this.saveCachePngToGallery(this.sharePreviewPath)
+    const context = this.obtainUiAbilityContext()
+    if (context === undefined) {
+      return
+    }
+    const ok = await saveShareCachePngToGallery(context, this.sharePreviewPath)
     this.showPreviewMessage(ok ? EditorUiStrings.loc('已保存到相册', 'Saved to album', 'アルバムに保存しました') : EditorUiStrings.loc('保存到相册失败', 'Failed to save to album', 'アルバムへの保存に失敗しました'))
     if (ok) {
       this.closeSharePreview()
@@ -2447,19 +2113,8 @@ struct NoteEdit {
     }
     const cachePath = this.sharePreviewPath
     this.closeSharePreview()
-    try {
-      const uri = fileUri.getUriFromPath(cachePath)
-      const shareData: systemShare.SharedData = new systemShare.SharedData({
-        utd: utd.UniformDataType.PNG,
-        uri: uri
-      })
-      const controller: systemShare.ShareController = new systemShare.ShareController(shareData)
-      await controller.show(context, {
-        selectionMode: systemShare.SelectionMode.SINGLE,
-        previewMode: systemShare.SharePreviewMode.DETAIL
-      })
-    } catch (error) {
-      Logger.error('NoteEdit', `onSharePreviewShareOthers failed: ${JSON.stringify(error)}`)
+    const ok = await sharePngFromCachePath(context, cachePath)
+    if (!ok) {
       this.showPreviewMessage(EditorUiStrings.loc('分享失败', 'Share failed', '共有に失敗しました'))
     }
   }
@@ -2469,57 +2124,49 @@ struct NoteEdit {
     await this.runShareNote()
   }
 
-  @Builder
-  private buildShareOptionsSheet() {
-    NoteSharePreviewSheet({
-      theme: this.shareTheme,
-      tone: this.shareTone,
-      showAppIcon: this.shareShowAppIcon,
-      sheetRevision: this.shareSheetRevision,
-      params: {
-        onThemeChange: (theme: ShareCardTheme): void => {
-          Logger.info('NoteEdit',
-            `shareSheet button=theme label=${ShareThemeColors.label(theme)} ` +
-            `from=${this.shareTheme} to=${theme} revision=${this.shareSheetRevision}`)
-          if (this.shareTheme !== theme) {
-            this.shareTheme = theme
-            this.shareSheetRevision++
-            void this.persistShareCardPreferences(theme, this.shareTone)
-            void this.regenerateSharePreview(theme, this.shareTone)
-          }
-        },
-        onToneChange: (tone: ShareCardTone): void => {
-          Logger.info('NoteEdit',
-            `shareSheet button=tone label=${ShareThemeColors.toneLabel(tone)} ` +
-            `from=${this.shareTone} to=${tone} revision=${this.shareSheetRevision}`)
-          if (this.shareTone !== tone) {
-            this.shareTone = tone
-            this.shareSheetRevision++
-            void this.persistShareCardPreferences(this.shareTheme, tone)
-            void this.regenerateSharePreview(this.shareTheme, tone)
-          }
-        },
-        onFooterImageToggle: (): void => {
-          this.shareShowAppIcon = !this.shareShowAppIcon
-          Logger.info('NoteEdit',
-            `shareSheet button=footerImage showAppIcon=${this.shareShowAppIcon}`)
-          void this.regenerateSharePreview()
-        },
-        onSave: (): void => {
-          Logger.info('NoteEdit', 'shareSheet button=action label=保存到相册')
-          void this.onSharePreviewSave()
-        },
-        onShare: (): void => {
-          Logger.info('NoteEdit', 'shareSheet button=action label=分享')
-          void this.onSharePreviewShareOthers()
-        },
-        onCancel: (): void => {
-          Logger.info('NoteEdit', 'shareSheet button=cancel label=取消')
-          this.closeSharePreview()
+  private sharePreviewSheetParams(): NoteSharePreviewSheetParams {
+    return {
+      onThemeChange: (theme: ShareCardTheme): void => {
+        Logger.info('NoteEdit',
+          `shareSheet button=theme label=${ShareThemeColors.label(theme)} ` +
+          `from=${this.shareTheme} to=${theme} revision=${this.shareSheetRevision}`)
+        if (this.shareTheme !== theme) {
+          this.shareTheme = theme
+          this.shareSheetRevision++
+          void this.persistShareCardPreferences(theme, this.shareTone)
+          void this.regenerateSharePreview(theme, this.shareTone)
         }
+      },
+      onToneChange: (tone: ShareCardTone): void => {
+        Logger.info('NoteEdit',
+          `shareSheet button=tone label=${ShareThemeColors.toneLabel(tone)} ` +
+          `from=${this.shareTone} to=${tone} revision=${this.shareSheetRevision}`)
+        if (this.shareTone !== tone) {
+          this.shareTone = tone
+          this.shareSheetRevision++
+          void this.persistShareCardPreferences(this.shareTheme, tone)
+          void this.regenerateSharePreview(this.shareTheme, tone)
+        }
+      },
+      onFooterImageToggle: (): void => {
+        this.shareShowAppIcon = !this.shareShowAppIcon
+        Logger.info('NoteEdit',
+          `shareSheet button=footerImage showAppIcon=${this.shareShowAppIcon}`)
+        void this.regenerateSharePreview()
+      },
+      onSave: (): void => {
+        Logger.info('NoteEdit', 'shareSheet button=action label=保存到相册')
+        void this.onSharePreviewSave()
+      },
+      onShare: (): void => {
+        Logger.info('NoteEdit', 'shareSheet button=action label=分享')
+        void this.onSharePreviewShareOthers()
+      },
+      onCancel: (): void => {
+        Logger.info('NoteEdit', 'shareSheet button=cancel label=取消')
+        this.closeSharePreview()
       }
-    })
-      .key(`share_preview_sheet_${this.shareShowAppIcon}`)
+    }
   }
 
   @Builder
@@ -3443,104 +3090,39 @@ struct NoteEdit {
         this.buildAiWorkingOverlay()
       }
 
-      if (this.shareExportActive) {
-        Scroll(this.shareScroller) {
+      NoteEditShareExportMount({
+        active: this.shareExportActive,
+        scrollBg: this.shareExportScrollBg,
+        mountKey: this.shareExportMountKey(),
+        shareScroller: this.shareScroller,
+        onCardHeightChange: (height: number): void => {
+          this.shareCardHeight = height
+        },
+        exportCard: (): void => {
           this.buildShareExportCard()
         }
-        .id(NoteEdit.SHARE_SCROLL_ID)
-        .key(`share_scroll_${this.shareExportMountKey()}`)
-        .scrollable(ScrollDirection.Vertical)
-        .scrollBar(BarState.Off)
-        .width('100%')
-        .height('100%')
-        .constraintSize({ minHeight: 800 })
-        .backgroundColor(this.shareExportScrollBg)
-        .onAreaChange((_, value) => {
-          this.shareCardHeight = Number.parseFloat(`${value.height}`) || 0
-        })
-        .position({ x: 0, y: 0 })
-        .opacity(0.01)
-        .hitTestBehavior(HitTestMode.None)
-        .zIndex(10003)
-      }
+      })
 
-      if (this.sharePreviewPreparing && !this.sharePreviewVisible) {
-        Stack({ alignContent: Alignment.TopStart }) {
-          Column()
-            .width('100%')
-            .height('100%')
-            .backgroundColor('rgba(0,0,0,0.92)')
-          Column() {
-            LoadingProgress()
-              .width(40)
-              .height(40)
-              .color(Color.White)
-          }
-          .width('100%')
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
+      NoteEditSharePreviewOverlay({
+        preparing: this.sharePreviewPreparing,
+        visible: this.sharePreviewVisible,
+        regenerating: this.sharePreviewRegenerating,
+        previewPath: this.sharePreviewPath,
+        previewImageHeightVp: this.sharePreviewImageHeightVp,
+        pageWidth: this.pageWidth,
+        optionsSheetVisible: this.shareOptionsSheetVisible,
+        shareTheme: this.shareTheme,
+        shareTone: this.shareTone,
+        shareShowAppIcon: this.shareShowAppIcon,
+        sheetRevision: this.shareSheetRevision,
+        sheetParams: this.sharePreviewSheetParams(),
+        onPreviewImageComplete: (width: number, height: number): void => {
+          const previewW = Math.max(1, this.pageWidth)
+          this.sharePreviewImageHeightVp = (height / width) * previewW
+          Logger.info('NoteEdit',
+            `share preview onComplete ${width}x${height} heightVp=${this.sharePreviewImageHeightVp}`)
         }
-        .width('100%')
-        .height('100%')
-        .zIndex(10004)
-      }
-
-      if (this.sharePreviewVisible) {
-        Column() {
-          Stack({ alignContent: Alignment.TopStart }) {
-            Column()
-              .width('100%')
-              .height('100%')
-              .backgroundColor(this.sharePreviewRegenerating ? 'rgba(0,0,0,0.92)' : 'rgba(0,0,0,0.55)')
-            if (this.sharePreviewRegenerating) {
-              Column() {
-                LoadingProgress()
-                  .width(40)
-                  .height(40)
-                  .color(Color.White)
-              }
-              .width('100%')
-              .height('100%')
-              .justifyContent(FlexAlign.Center)
-            } else if (this.sharePreviewPath.length > 0) {
-              Scroll() {
-                Image(`file://${this.sharePreviewPath}`)
-                  .width('100%')
-                  .height(this.sharePreviewImageHeightVp > 0 ? this.sharePreviewImageHeightVp : '100%')
-                  .objectFit(ImageFit.Contain)
-                  .onComplete((event) => {
-                    if (this.sharePreviewImageHeightVp > 0) {
-                      return
-                    }
-                    const w = Number(event?.width ?? 0)
-                    const h = Number(event?.height ?? 0)
-                    if (w > 0 && h > 0) {
-                      const previewW = Math.max(1, this.pageWidth)
-                      this.sharePreviewImageHeightVp = (h / w) * previewW
-                      Logger.info('NoteEdit',
-                        `share preview onComplete ${w}x${h} heightVp=${this.sharePreviewImageHeightVp}`)
-                    }
-                  })
-              }
-              .scrollable(ScrollDirection.Vertical)
-              .scrollBar(BarState.Off)
-              .width('100%')
-              .height('100%')
-              .padding({ top: 48, bottom: 8 })
-            }
-          }
-          .layoutWeight(1)
-          .width('100%')
-          .height('100%')
-
-          if (this.shareOptionsSheetVisible) {
-            this.buildShareOptionsSheet()
-          }
-        }
-        .width('100%')
-        .height('100%')
-        .zIndex(10004)
-      }
+      })
     }
     .width('100%')
     .height('100%')
