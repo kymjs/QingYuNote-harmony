@@ -6,7 +6,6 @@ import {
   type EditorInsertResult,
   type EditorTextDiff
 } from '../common/utils/EditorMarkdownInsert'
-import { CachedNetworkImage } from '../components/CachedNetworkImage'
 import { EditorQuickActionBar, type EditorQuickActionType } from '../components/EditorQuickActionBar'
 import { ImageCacheService } from '../services/ImageCacheService'
 import {
@@ -1413,22 +1412,6 @@ struct NoteEdit {
     }
   }
 
-  private resolveImageSrc(src: string): string {
-    if (src.startsWith('http://') || src.startsWith('https://')) {
-      return src
-    }
-    if (src.startsWith('file://')) {
-      return src
-    }
-    if (src.startsWith('/')) {
-      return fileUri.getUriFromPath(src)
-    }
-    const base =
-      this.filesDirCache.length > 0 ? this.filesDirCache : (this.obtainUiAbilityContext()?.filesDir ?? '')
-    const absPath = `${base}/${src}`
-    return fileUri.getUriFromPath(absPath)
-  }
-
   private async insertImage(thenOptimize: boolean = false): Promise<void> {
     if (thenOptimize && !(await ensureAiMembershipAccess(this.getUIContext()))) {
       return
@@ -1492,7 +1475,7 @@ struct NoteEdit {
     return trimShareTransparentVerticalEdges(pm, contentPx)
   }
 
-  private async offlineSnapshotCapture(): Promise<string | null> {
+  private async exportShareImageToCache(
     theme: ShareCardTheme = this.shareTheme,
     tone: ShareCardTone = this.shareTone
   ): Promise<string | null> {
@@ -2117,11 +2100,6 @@ struct NoteEdit {
     if (!ok) {
       this.showPreviewMessage(EditorUiStrings.loc('分享失败', 'Share failed', '共有に失敗しました'))
     }
-  }
-
-  /** @deprecated 保留兼容；请使用 [runShareNote]。 */
-  private async runSaveLongImageToGallery(): Promise<void> {
-    await this.runShareNote()
   }
 
   private sharePreviewSheetParams(): NoteSharePreviewSheetParams {
@@ -2883,7 +2861,7 @@ struct NoteEdit {
                 .margin({ right: 5, left: 5 })
                 .padding(3)
                 .onClick(() => {
-                  void this.runSaveLongImageToGallery()
+                  void this.runShareNote()
                 })
             }
             .alignItems(VerticalAlign.Center)

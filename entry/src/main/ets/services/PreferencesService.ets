@@ -208,6 +208,18 @@ export class PreferencesService {
     }
   }
 
+  /** 自建 WebDAV 是否完整且已启用（用于首页自动选用轻羽云 / 齿轮显隐，避免残留 baseUrl 误挡）。 */
+  async hasEnabledCustomWebDAVConfig(): Promise<boolean> {
+    try {
+      const snap = await this.getSavedCustomWebDAVConfigSnapshot()
+      return snap !== null && snap.enabled
+    } catch (error) {
+      Logger.warn('PreferencesService',
+        `hasEnabledCustomWebDAVConfig failed: ${this.describeError(error as Object)}`)
+      return false
+    }
+  }
+
   /** 读取持久化的自建 WebDAV（`saved_*`），不受当前 sync_provider 影响。 */
   async getSavedCustomWebDAVConfigSnapshot(): Promise<WebDAVConfig | null> {
     try {
@@ -229,7 +241,7 @@ export class PreferencesService {
       if (!(await this.isUserLoggedIn())) {
         return false
       }
-      if (await this.hasSavedCustomWebDAVConfig()) {
+      if (await this.hasEnabledCustomWebDAVConfig()) {
         return false
       }
       const intent = await this.getQingyuCloudSyncIntent()

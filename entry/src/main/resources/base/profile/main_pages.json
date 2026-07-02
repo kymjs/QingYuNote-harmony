@@ -1,5 +1,6 @@
 {
   "src": [
+    "pages/UpdateGate",
     "pages/Login",
     "pages/Register",
     "pages/ChangePassword",

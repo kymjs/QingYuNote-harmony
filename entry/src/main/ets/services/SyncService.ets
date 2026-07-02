@@ -12,6 +12,9 @@ import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { AppContextHolder } from './AppContextHolder'
 import { NoteImagesChangedEventPayload, SyncConstants } from '../common/constants/SyncConstants'
 import { NoteSettingsRemoteSync } from './NoteSettingsRemoteSync'
+import { blockWebDavSyncIfForceUpdateRequired } from './AppUpdateUi'
+
+const WEBDAV_SYNC_FORCE_UPDATE_MESSAGE = '当前版本过低，请更新后再同步'
 
 const TOMBSTONE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 const FULL_SYNC_CONCURRENCY = 3
@@ -172,6 +175,15 @@ export class SyncService {
         success: false,
         action: 'skip',
         message: '请开通轻羽云服务',
+        remoteModified: 0
+      }
+    }
+    if (await blockWebDavSyncIfForceUpdateRequired()) {
+      return {
+        noteId,
+        success: false,
+        action: 'skip',
+        message: WEBDAV_SYNC_FORCE_UPDATE_MESSAGE,
         remoteModified: 0
       }
     }
@@ -406,6 +418,10 @@ export class SyncService {
   private async performFullSync(): Promise<SyncResult[]> {
     Logger.info('SyncService', 'performFullSync start')
     this.lastFullSyncHadMoreNotesFlag = false
+    if (await blockWebDavSyncIfForceUpdateRequired()) {
+      Logger.info('SyncService', 'performFullSync blocked by force update policy')
+      return []
+    }
     if (!(await this.isQingyuSubscriptionSyncAllowed())) {
       this.notifyQingyuSyncBlockedThrottled()
       return []

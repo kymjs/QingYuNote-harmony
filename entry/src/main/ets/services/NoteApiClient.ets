@@ -3,6 +3,7 @@ import http from '@ohos.net.http'
 import { NoteApiConstants } from '../common/constants/NoteApiConstants'
 import { PreferencesService } from './PreferencesService'
 import { getAppVersionName } from './AppUpdateService'
+import { handleServerUpgradeRequired } from './AppUpdateUi'
 import { Logger } from '../common/utils/Logger'
 
 /**
@@ -244,6 +245,35 @@ export class NoteApiClient {
 
   private static cachedAppVersion: string = ''
 
+  private static handleUpgradeRequiredBody(bodyText: string): void {
+    let minVersion: string | undefined = undefined
+    let downloadUrl: string | undefined = undefined
+    if (bodyText.trim().length > 0) {
+      try {
+        const obj = JSON.parse(bodyText) as Record<string, Object>
+        const mv = obj['min_version']
+        if (typeof mv === 'string' && mv.trim().length > 0) {
+          minVersion = mv.trim()
+        }
+        const du = obj['download_url']
+        if (typeof du === 'string' && du.trim().length > 0) {
+          downloadUrl = du.trim()
+        }
+      } catch (_) {
+      }
+    }
+    void handleServerUpgradeRequired(undefined, minVersion, downloadUrl)
+  }
+
+  /** 统一处理 HTTP 426；返回 true 表示已触发强更 UI，调用方应中止后续逻辑。 */
+  static interceptUpgradeRequired(httpStatus: number, bodyText: string): boolean {
+    if (httpStatus !== 426) {
+      return false
+    }
+    NoteApiClient.handleUpgradeRequiredBody(bodyText)
+    return true
+  }
+
   /** 构建通用请求头，包含 X-Platform、X-Device-Id 与 X-App-Version。 */
   private async buildCommonHeaders(): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
@@ -284,6 +314,10 @@ export class NoteApiClient {
       })
       const status = resp.responseCode
       const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(status, text)) {
+        const blocked: PostAuthJsonStatusResult = { status: status, obj: null }
+        return blocked
+      }
       let obj: Object | null = null
       if (text.trim().length > 0) {
         try {
@@ -332,6 +366,9 @@ export class NoteApiClient {
       })
       const code = resp.responseCode
       const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(code, text)) {
+        return null
+      }
       if (code < 200 || code >= 300) {
         Logger.warn('NoteApiClient', `HTTP ${code} ${path} body=${text.slice(0, 400)}`)
         return null
@@ -415,6 +452,9 @@ export class NoteApiClient {
       })
       const httpCode = resp.responseCode
       const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(httpCode, text)) {
+        return 'upgrade_required'
+      }
       if (httpCode >= 200 && httpCode < 300) {
         let obj: Object
         try {
@@ -477,6 +517,9 @@ export class NoteApiClient {
         })
         const code = resp.responseCode
         const text = (resp.result as string) ?? ''
+        if (NoteApiClient.interceptUpgradeRequired(code, text)) {
+          return null
+        }
         if (code >= 200 && code < 300 && text.trim().length > 0) {
           try {
             return JSON.parse(text) as QingyuWebDAVBody
@@ -701,6 +744,9 @@ export class NoteApiClient {
       })
       const httpCode = resp.responseCode
       const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(httpCode, text)) {
+        return 'upgrade_required'
+      }
       if (httpCode >= 200 && httpCode < 300) {
         try {
           return JSON.parse(text) as RedeemSuccessBody
@@ -750,6 +796,9 @@ export class NoteApiClient {
       })
       const code = resp.responseCode
       const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(code, text)) {
+        return 'upgrade_required'
+      }
       if (code >= 200 && code < 300) {
         return null
       }
@@ -792,6 +841,9 @@ export class NoteApiClient {
       })
       const code = resp.responseCode
       const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(code, text)) {
+        return 'upgrade_required'
+      }
       if (code >= 200 && code < 300) {
         return null
       }
@@ -829,6 +881,9 @@ export class NoteApiClient {
       })
       const code = resp.responseCode
       const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(code, text)) {
+        return null
+      }
       if (code >= 200 && code < 300) {
         try {
           const obj = JSON.parse(text) as Record<string, Object>
@@ -879,6 +934,9 @@ export class NoteApiClient {
       })
       const code = resp.responseCode
       const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(code, text)) {
+        return 'upgrade_required'
+      }
       if (code >= 200 && code < 300) {
         return null
       }
@@ -915,6 +973,9 @@ export class NoteApiClient {
       })
       const code = resp.responseCode
       const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(code, text)) {
+        return 'upgrade_required'
+      }
       if (code >= 200 && code < 300) {
         return null
       }
@@ -947,6 +1008,9 @@ export class NoteApiClient {
       })
       const code = resp.responseCode
       const text = ((resp.result as string) ?? '').trim()
+      if (NoteApiClient.interceptUpgradeRequired(code, text)) {
+        return null
+      }
       if (code >= 200 && code < 300) {
         try {
           const obj = JSON.parse(text) as Record<string, Object>
@@ -1013,6 +1077,9 @@ export class NoteApiClient {
       })
       const code = resp.responseCode
       const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(code, text)) {
+        return 'upgrade_required'
+      }
       if (code >= 200 && code < 300) {
         return null
       }
@@ -1073,6 +1140,9 @@ export class NoteApiClient {
       })
       const httpCode = resp.responseCode
       const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(httpCode, text)) {
+        return 'upgrade_required'
+      }
       if (httpCode >= 200 && httpCode < 300) {
         let obj: Object
         try {
@@ -1136,6 +1206,9 @@ export class NoteApiClient {
         })
         const code = resp.responseCode
         const text = (resp.result as string) ?? ''
+        if (NoteApiClient.interceptUpgradeRequired(code, text)) {
+          return 'upgrade_required'
+        }
         if (code >= 200 && code < 300) {
           if (refreshProfile) {
             void this.fetchProfile()
@@ -1190,7 +1263,7 @@ export class NoteApiClient {
       const headers = await this.buildCommonHeaders()
       headers['Content-Type'] = 'application/json; charset=utf-8'
       headers['Authorization'] = `Bearer ${tok}`
-      await req.request(this.joinUrl('/api/v1/me/sync-settings'), {
+      const resp = await req.request(this.joinUrl('/api/v1/me/sync-settings'), {
         method: http.RequestMethod.POST,
         header: headers,
         extraData: payload,
@@ -1198,6 +1271,11 @@ export class NoteApiClient {
         connectTimeout: 15000,
         readTimeout: 20000
       })
+      const code = resp.responseCode
+      const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(code, text)) {
+        return
+      }
     } catch (e) {
       Logger.warn('NoteApiClient', `putSyncSettings failed: ${JSON.stringify(e)}`)
     } finally {
@@ -1255,6 +1333,9 @@ export class NoteApiClient {
       })
       const code = resp.responseCode
       const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(code, text)) {
+        return 'upgrade_required'
+      }
       if (code >= 200 && code < 300) {
         return null
       }
@@ -1335,6 +1416,9 @@ export class NoteApiClient {
       })
       const code = resp.responseCode
       const text = (resp.result as string) ?? ''
+      if (NoteApiClient.interceptUpgradeRequired(code, text)) {
+        return 'upgrade_required'
+      }
       if (code >= 200 && code < 300) {
         return null
       }

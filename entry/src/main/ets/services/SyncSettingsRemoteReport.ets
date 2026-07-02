@@ -12,6 +12,44 @@ export class SyncSettingsRemoteReport {
     return SyncSettingsRemoteReport.instance
   }
 
+  /** 按本地 preferences 上报当前云同步方案（首页进入 / 自动开通后调用）。 */
+  async reportCurrentIfPossible(): Promise<void> {
+    if (await PreferencesService.getInstance().isGuestMode()) {
+      return
+    }
+    const userId = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
+    if (userId.length === 0) {
+      return
+    }
+    const custom = await PreferencesService.getInstance().getSavedCustomWebDAVConfigSnapshot()
+    if (custom !== null && custom.enabled) {
+      await this.reportIfPossible(custom)
+      return
+    }
+    const intent = await PreferencesService.getInstance().getQingyuCloudSyncIntent()
+    if (intent === 'qingyu') {
+      await this.reportIfPossible({
+        baseUrl: '',
+        username: '',
+        encryptedPassword: '',
+        notesDir: '/qingyu-notes/',
+        enabled: true,
+        provider: 'qingyu_cloud'
+      })
+      return
+    }
+    if (intent === 'disabled') {
+      await this.reportIfPossible({
+        baseUrl: '',
+        username: '',
+        encryptedPassword: '',
+        notesDir: '/qingyu-notes/',
+        enabled: false,
+        provider: 'qingyu_cloud'
+      })
+    }
+  }
+
   async reportIfPossible(config: WebDAVConfig): Promise<void> {
     if (await PreferencesService.getInstance().isGuestMode()) {
       return

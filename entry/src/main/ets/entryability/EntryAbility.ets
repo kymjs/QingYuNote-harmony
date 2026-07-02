@@ -10,6 +10,7 @@ import { AppScheduler } from '../services/AppScheduler'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { LocaleService, APP_LOCALE_REVISION_KEY } from '../services/LocaleService'
+import { recheckForceUpdateOnResume } from '../services/AppUpdateUi'
 
 const DOMAIN = 0x0000
 const DEFERRED_SERVICES_DELAY_MS = 1500
@@ -56,7 +57,7 @@ export default class EntryAbility extends UIAbility {
       if (!loggedIn && !guest) {
         await PreferencesService.getInstance().clearLoginReturnTarget()
       }
-      const entryPage = (loggedIn || guest) ? 'pages/Index' : 'pages/Login'
+      const entryPage = 'pages/UpdateGate'
       windowStage.loadContent(entryPage, (err) => {
         if (err.code) {
           hilog.error(DOMAIN, 'noteTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err))
@@ -66,7 +67,7 @@ export default class EntryAbility extends UIAbility {
       })
     } catch (error) {
       hilog.error(DOMAIN, 'noteTag', 'bootstrapWindow failed: %{public}s', JSON.stringify(error))
-      windowStage.loadContent('pages/Login', (err) => {
+      windowStage.loadContent('pages/UpdateGate', (err) => {
         if (err.code) {
           hilog.error(DOMAIN, 'noteTag', 'Failed to load fallback Login. Cause: %{public}s', JSON.stringify(err))
         }
@@ -80,6 +81,10 @@ export default class EntryAbility extends UIAbility {
 
   onForeground(): void {
     void AppScheduler.getInstance().onForeground()
+    const uiContext = AppContextHolder.tryGetLastUiContext()
+    if (uiContext !== undefined) {
+      void recheckForceUpdateOnResume(uiContext)
+    }
     hilog.info(DOMAIN, 'noteTag', '%{public}s', 'Ability onForeground')
   }
 

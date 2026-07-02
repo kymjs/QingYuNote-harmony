@@ -6,11 +6,12 @@ import { NoteRepository } from '../services/NoteRepository'
 import { SyncService } from '../services/SyncService'
 import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
-import { runAppUpdateCheckOnLaunch } from '../services/AppUpdateUi'
+import { runAppUpdateCheckOnLaunch, recheckForceUpdateOnResume } from '../services/AppUpdateUi'
 import {
   previewQingyuForHomeSubscription,
   tryAutoProvisionQingyuCloudOnHomeEntry
 } from '../services/QingyuCloudAutoProvision'
+import { SyncSettingsRemoteReport } from '../services/SyncSettingsRemoteReport'
 import { WebDAVClient } from '../services/WebDAVClient'
 import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
 import { Logger } from '../common/utils/Logger'
@@ -86,6 +87,7 @@ struct Index {
   @State appLockBlocking: boolean = false
   @State appLockRecovering: boolean = false
   private hasShownOnce: boolean = false
+  private startupSyncHandled: boolean = false
   /** 仅统计「非首次」onPageShow 触发的 loadNotes 完成时间；与 initializeHome 首次加载无关，避免阻断从编辑页返回后的刷新。 */
   private lastPageShowNotesReloadAtMs: number = 0
   /** 当前水平拖动开始时抽屉进度，用于计算跟手位移。 */
@@ -120,6 +122,7 @@ struct Index {
 
   aboutToAppear(): void {
     this.lifecycle.appear()
+    AppContextHolder.setLastUiContext(this.getUIContext())
     try {
       AppContextHolder.getContext().eventHub.on(SyncConstants.qingyuSyncBlockedEvent, this.qingyuBlockedHandler)
       AppContextHolder.getContext().eventHub.on(SyncConstants.cloudSyncNotConfiguredToastEvent,
@@ -182,10 +185,12 @@ struct Index {
   }
 
   private async handleIndexPageShow(): Promise<void> {
+    AppContextHolder.setLastUiContext(this.getUIContext())
     await this.ensureLoggedInOrRedirectToLogin()
     if (!this.lifecycle.isActive()) {
       return
     }
+    void recheckForceUpdateOnResume(this.getUIContext())
     void this.loadDrawerUserProfile()
     void navigateToBindPhoneIfNeeded(this.getUIContext())
     void maybeShowReferralInviteDialog(this.getUIContext())
@@ -239,9 +244,8 @@ struct Index {
     if (!this.lifecycle.isActive()) {
       return
     }
-    void this.runHomeEntryNetworkSetup()
-    /** 与版本检查并行启动同步，避免「检查更新」阻塞云同步开始时间。 */
-    void this.startStartupSyncIfNeeded()
+    /** 先完成自动开通与上报，再判定启动同步，避免首启竞态导致有订阅却未选用轻羽云。 */
+    await this.runHomeEntryNetworkSetup()
     await runAppUpdateCheckOnLaunch(this.getUIContext())
     if (this.lifecycle.isActive()) {
       void navigateToBindPhoneIfNeeded(this.getUIContext())
@@ -252,10 +256,18 @@ struct Index {
   private async runHomeEntryNetworkSetup(): Promise<void> {
     try {
       await tryAutoProvisionQingyuCloudOnHomeEntry()
+      await SyncSettingsRemoteReport.getInstance().reportCurrentIfPossible()
       if (!this.lifecycle.isActive()) {
         return
       }
       await this.refreshCloudSyncConfiguredState()
+      if (!this.lifecycle.isActive()) {
+        return
+      }
+      if (!this.startupSyncHandled && await this.shouldRunStartupSync()) {
+        this.startupSyncHandled = true
+        void this.maybeSyncAfterInitialLoad()
+      }
     } catch (error) {
       Logger.error('Index', `runHomeEntryNetworkSetup failed: ${JSON.stringify(error)}`)
     }
@@ -379,11 +391,19 @@ struct Index {
     }
   }
 
-  /** 与 Flutter `_refreshCloudSyncConfigured` 对齐：仅按轻羽云订阅状态显隐右上角齿轮入口。
-   *  未开通/已过期/配置缺失等场景都视为未配置，需展示齿轮入口。
-   *  自建 WebDAV 同步路径不影响此入口（齿轮点开仍可在云同步页配置自建 WebDAV）。 */
+  /** 已配置完整自建 WebDAV，或轻羽云订阅有效（active/lifetime）时为 true，右上角不展示配置入口。 */
   private async refreshCloudSyncConfiguredState(): Promise<void> {
     try {
+      const context = AppContextHolder.tryGetContext()
+      if (context) {
+        await PreferencesService.getInstance().init(context)
+      }
+      if (await PreferencesService.getInstance().hasEnabledCustomWebDAVConfig()) {
+        if (this.lifecycle.isActive()) {
+          this.cloudSyncConfigured = true
+        }
+        return
+      }
       const status =
         await WebDAVClient.getInstance().fetchQingyuCloudSubscriptionStatus(previewQingyuForHomeSubscription)
       if (!this.lifecycle.isActive()) {
@@ -466,6 +486,9 @@ struct Index {
     }
     try {
       await this.loadNotes(false)
+      await tryAutoProvisionQingyuCloudOnHomeEntry()
+      await SyncSettingsRemoteReport.getInstance().reportCurrentIfPossible()
+      await this.refreshCloudSyncConfiguredState()
       if (!(await this.hasAnyCloudStorageForPullRefresh())) {
         this.showUserMessage('未配置云存储，无法同步笔记')
         return

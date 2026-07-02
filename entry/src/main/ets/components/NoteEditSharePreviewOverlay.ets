@@ -39,79 +39,81 @@ export struct NoteEditSharePreviewOverlay {
   }
 
   build() {
-  if (this.preparing && !this.visible) {
-      Stack({ alignContent: Alignment.TopStart }) {
-        Column()
-          .width('100%')
-          .height('100%')
-          .backgroundColor('rgba(0,0,0,0.92)')
-        Column() {
-          LoadingProgress()
-            .width(40)
-            .height(40)
-            .color(Color.White)
-        }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-      }
-      .width('100%')
-      .height('100%')
-      .zIndex(10004)
-    }
-
-    if (this.visible) {
-      Column() {
+    Stack() {
+      if (this.preparing && !this.visible) {
         Stack({ alignContent: Alignment.TopStart }) {
           Column()
             .width('100%')
             .height('100%')
-            .backgroundColor(this.regenerating ? 'rgba(0,0,0,0.92)' : 'rgba(0,0,0,0.55)')
-          if (this.regenerating) {
-            Column() {
-              LoadingProgress()
-                .width(40)
-                .height(40)
-                .color(Color.White)
-            }
-            .width('100%')
-            .height('100%')
-            .justifyContent(FlexAlign.Center)
-          } else if (this.previewPath.length > 0) {
-            Scroll() {
-              Image(`file://${this.previewPath}`)
-                .width('100%')
-                .height(this.previewImageHeightVp > 0 ? this.previewImageHeightVp : '100%')
-                .objectFit(ImageFit.Contain)
-                .onComplete((event) => {
-                  if (this.previewImageHeightVp > 0) {
-                    return
-                  }
-                  const w = Number(event?.width ?? 0)
-                  const h = Number(event?.height ?? 0)
-                  if (w > 0 && h > 0) {
-                    this.onPreviewImageComplete(w, h)
-                  }
-                })
-            }
-            .scrollable(ScrollDirection.Vertical)
-            .scrollBar(BarState.Off)
-            .width('100%')
-            .height('100%')
-            .padding({ top: 48, bottom: 8 })
+            .backgroundColor('rgba(0,0,0,0.92)')
+          Column() {
+            LoadingProgress()
+              .width(40)
+              .height(40)
+              .color(Color.White)
           }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
         }
-        .layoutWeight(1)
         .width('100%')
         .height('100%')
+        .zIndex(10004)
+      } else if (this.visible) {
+        Column() {
+          Stack({ alignContent: Alignment.TopStart }) {
+            Column()
+              .width('100%')
+              .height('100%')
+              .backgroundColor(this.regenerating ? 'rgba(0,0,0,0.92)' : 'rgba(0,0,0,0.55)')
+            if (this.regenerating) {
+              Column() {
+                LoadingProgress()
+                  .width(40)
+                  .height(40)
+                  .color(Color.White)
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
+            } else if (this.previewPath.length > 0) {
+              Scroll() {
+                Image(`file://${this.previewPath}`)
+                  .width('100%')
+                  .height(this.previewImageHeightVp > 0 ? this.previewImageHeightVp : '100%')
+                  .objectFit(ImageFit.Contain)
+                  .onComplete((event) => {
+                    if (this.previewImageHeightVp > 0) {
+                      return
+                    }
+                    const w = Number(event?.width ?? 0)
+                    const h = Number(event?.height ?? 0)
+                    if (w > 0 && h > 0) {
+                      this.onPreviewImageComplete(w, h)
+                    }
+                  })
+              }
+              .scrollable(ScrollDirection.Vertical)
+              .scrollBar(BarState.Off)
+              .width('100%')
+              .height('100%')
+              .padding({ top: 48, bottom: 8 })
+            }
+          }
+          .layoutWeight(1)
+          .width('100%')
+          .height('100%')
 
-        if (this.optionsSheetVisible) {
-          this.buildOptionsSheet()
+          if (this.optionsSheetVisible) {
+            this.buildOptionsSheet()
+          }
         }
+        .width('100%')
+        .height('100%')
+        .zIndex(10004)
       }
-      .width('100%')
-      .height('100%')
-      .zIndex(10004)
     }
+    .width('100%')
+    .height('100%')
   }
 }

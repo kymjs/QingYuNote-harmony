@@ -5,7 +5,7 @@ import { fileIo, fileUri } from '@kit.CoreFileKit'
 import { common } from '@kit.AbilityKit'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import { systemShare } from '@kit.ShareKit'
-import { utd } from '@kit.ArkData'
+import { uniformTypeDescriptor as utd } from '@kit.ArkData'
 import { Logger } from './Logger'
 
 export const NOTE_EDIT_SHARE_SCROLL_ID: string = 'note_share_export_scroll_capture'
