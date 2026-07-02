@@ -1,8 +1,13 @@
 import { Want } from '@kit.AbilityKit'
-import { deviceInfo, pasteboard } from '@kit.BasicServicesKit'
+import { deviceInfo } from '@kit.BasicServicesKit'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
+import { noteImportStatusText } from '../common/utils/ImportProgressStatusText'
+import {
+  pollSystemClipboardToken,
+  takePendingApiKeyFromAppStorage
+} from '../common/utils/ImportClipboardHelper'
 import { PreferencesService } from '../services/PreferencesService'
 import {
   YinxiangImportException,
@@ -81,19 +86,14 @@ struct YinxiangImport {
     progress: YinxiangImportProgress | null,
     running: boolean
   ): string {
-    if (!running) {
-      return ''
-    }
     if (progress === null) {
-      return '正在获取笔记列表…'
+      return noteImportStatusText(null, running)
     }
-    if (progress.currentNoteTitle.length > 0) {
-      return `正在导入《${progress.currentNoteTitle}》（${progress.processedNotes + 1}/${progress.totalNotes}）`
-    }
-    if (progress.totalNotes > 0 && progress.processedNotes >= progress.totalNotes) {
-      return '导入完成'
-    }
-    return '正在获取笔记列表…'
+    return noteImportStatusText({
+      processedNotes: progress.processedNotes,
+      totalNotes: progress.totalNotes,
+      currentNoteTitle: progress.currentNoteTitle
+    }, running)
   }
 
   private async loadToken(): Promise<void> {
@@ -196,40 +196,14 @@ struct YinxiangImport {
       return
     }
 
-    // 1. 优先:取 H5WebContainer 通过 AppStorage 传过来的 Developer Token
-    try {
-      const stored: string | undefined = AppStorage.get<string>('pendingYinxiangApiKey')
-      if (stored && stored.length > 0) {
-        AppStorage.delete('pendingYinxiangApiKey')
-        const trimmed = stored.trim()
-        if (trimmed.length > 0 && trimmed.startsWith(YINXIANG_API_KEY_PREFIX)) {
-          this.startImportWithKey(trimmed)
-          return
-        }
-      }
-    } catch (e) {
-      console.error(`YinxiangImport readAppStorage: ${JSON.stringify(e)}`)
+    const stored = takePendingApiKeyFromAppStorage('pendingYinxiangApiKey')
+    if (stored.length > 0 && stored.startsWith(YINXIANG_API_KEY_PREFIX)) {
+      this.startImportWithKey(stored)
+      return
     }
 
-    // 2. 兜底:轮询读系统剪贴板(用户手动复制、桌面端系统浏览器、PC Harmony 等场景)
-    let text: string = ''
-    let trimmed: string = ''
-    for (let attempt = 0; attempt < 5; attempt++) {
-      try {
-        const systemPasteboard = pasteboard.getSystemPasteboard()
-        const data = await systemPasteboard.getData()
-        text = data.getPrimaryText()
-      } catch (error) {
-        console.error(`YinxiangImport readClipboard: ${JSON.stringify(error)}`)
-        return
-      }
-      trimmed = (text ?? '').trim()
-      if (trimmed.length > 0 && trimmed.startsWith(YINXIANG_API_KEY_PREFIX)) {
-        break
-      }
-      await new Promise<void>((resolve) => setTimeout(resolve, 120))
-    }
-    if (trimmed.length === 0 || !trimmed.startsWith(YINXIANG_API_KEY_PREFIX)) {
+    const trimmed = await pollSystemClipboardToken(YINXIANG_API_KEY_PREFIX)
+    if (trimmed.length === 0) {
       return
     }
     this.startImportWithKey(trimmed)

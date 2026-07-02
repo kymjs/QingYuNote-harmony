@@ -1,8 +1,13 @@
 import { Want } from '@kit.AbilityKit'
-import { deviceInfo, pasteboard } from '@kit.BasicServicesKit'
+import { deviceInfo } from '@kit.BasicServicesKit'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
+import { bookImportStatusText } from '../common/utils/ImportProgressStatusText'
+import {
+  pollSystemClipboardToken,
+  takePendingApiKeyFromAppStorage
+} from '../common/utils/ImportClipboardHelper'
 import { PreferencesService } from '../services/PreferencesService'
 import {
   WereadImportException,
@@ -81,19 +86,14 @@ struct WereadImport {
     progress: WereadImportProgress | null,
     running: boolean
   ): string {
-    if (!running) {
-      return ''
-    }
     if (progress === null) {
-      return '正在获取笔记本列表…'
+      return bookImportStatusText(null, running)
     }
-    if (progress.currentBookTitle.length > 0) {
-      return `正在导入《${progress.currentBookTitle}》（${progress.processedBooks + 1}/${progress.totalBooks}）`
-    }
-    if (progress.totalBooks > 0 && progress.processedBooks >= progress.totalBooks) {
-      return '导入完成'
-    }
-    return '正在获取笔记本列表…'
+    return bookImportStatusText({
+      processedBooks: progress.processedBooks,
+      totalBooks: progress.totalBooks,
+      currentBookTitle: progress.currentBookTitle
+    }, running)
   }
 
   private async loadToken(): Promise<void> {
@@ -196,43 +196,14 @@ struct WereadImport {
       return
     }
 
-    // 1. 优先:取 H5WebContainer 通过 AppStorage 传过来的 wrk- key
-    // (Harmony WebView 内的 navigator.clipboard 与系统剪贴板隔离,
-    //  靠 JS 从页面 DOM 抓取后存到 AppStorage 是最可靠的来源)
-    let trimmed: string = ''
-    try {
-      const stored: string | undefined = AppStorage.get<string>('pendingWereadApiKey')
-      if (stored && stored.length > 0) {
-        AppStorage.delete('pendingWereadApiKey')
-        trimmed = stored.trim()
-        if (trimmed.length > 0 && trimmed.startsWith(WEREAD_API_KEY_PREFIX)) {
-          this.startImportWithKey(trimmed)
-          return
-        }
-        trimmed = ''
-      }
-    } catch (e) {
-      console.error(`WereadImport readAppStorage: ${JSON.stringify(e)}`)
+    const stored = takePendingApiKeyFromAppStorage('pendingWereadApiKey')
+    if (stored.length > 0 && stored.startsWith(WEREAD_API_KEY_PREFIX)) {
+      this.startImportWithKey(stored)
+      return
     }
 
-    // 2. 兜底:轮询读系统剪贴板(用户手动复制、桌面端系统浏览器、PC Harmony 等场景)
-    let text: string = ''
-    for (let attempt = 0; attempt < 5; attempt++) {
-      try {
-        const systemPasteboard = pasteboard.getSystemPasteboard()
-        const data = await systemPasteboard.getData()
-        text = data.getPrimaryText()
-      } catch (error) {
-        console.error(`WereadImport readClipboard: ${JSON.stringify(error)}`)
-        return
-      }
-      trimmed = (text ?? '').trim()
-      if (trimmed.length > 0 && trimmed.startsWith(WEREAD_API_KEY_PREFIX)) {
-        break
-      }
-      await new Promise<void>((resolve) => setTimeout(resolve, 120))
-    }
-    if (trimmed.length === 0 || !trimmed.startsWith(WEREAD_API_KEY_PREFIX)) {
+    const trimmed = await pollSystemClipboardToken(WEREAD_API_KEY_PREFIX)
+    if (trimmed.length === 0) {
       return
     }
     this.startImportWithKey(trimmed)

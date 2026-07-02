@@ -46,6 +46,19 @@ import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { NoteImageGalleryUtils } from '../common/utils/NoteImageGalleryUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { NoteFolderTree, type FolderSidebarRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
+import {
+  hasEditorTitleOrBody,
+  resolveTitleForSave,
+  shouldSkipAutoSaveSchedule,
+  type TitleSaveResolution
+} from '../common/utils/NoteEditSaveHelper'
+import {
+  noteEditDelayMs,
+  shareExportBodyHasImages,
+  shareExportContentHasImages,
+  shareExportMountDelayMs,
+  shareExportMountKey
+} from '../common/utils/NoteEditShareHelper'
 import { type NoteEditorEntryAction } from '../common/model/NoteEditorEntryAction'
 import { maybeShowMembershipExpiryReminderDialog } from '../common/utils/MembershipExpiryReminderNavigation'
 import { ensureAiMembershipAccess } from '../common/utils/AiMembershipGateNavigation'
@@ -65,16 +78,6 @@ interface NoteEditParams {
   openWithPreview?: boolean
   /** 从首页「更多方式」进入时，加载完成后自动触发的动作。 */
   initialAction?: NoteEditorEntryAction
-}
-
-interface TitleSaveResolution {
-  title: string
-  skipTitleAutoFill: boolean
-}
-
-/** 仅当标题和正文至少有一个非空时为 true（与 Flutter `_hasEditorTitleOrBody` 对齐）。 */
-function hasEditorTitleOrBody(title: string, content: string): boolean {
-  return title.trim().length > 0 || content.trim().length > 0
 }
 
 @Entry
@@ -848,17 +851,7 @@ struct NoteEdit {
   }
 
   private resolveTitleForSave(rawTitle: string, content: string): TitleSaveResolution {
-    const trimmedTitle = rawTitle.trim()
-    if (trimmedTitle.length > 0) {
-      return { title: trimmedTitle, skipTitleAutoFill: false }
-    }
-    if (this.titleFieldFocused) {
-      return { title: '', skipTitleAutoFill: true }
-    }
-    if (content.trim().length === 0) {
-      return { title: '', skipTitleAutoFill: false }
-    }
-    return { title: MarkdownUtils.editorAutoTitle(content), skipTitleAutoFill: false }
+    return resolveTitleForSave(rawTitle, content, this.titleFieldFocused)
   }
 
   private onTitleFieldFocus(): void {
@@ -992,10 +985,12 @@ struct NoteEdit {
   }
 
   private scheduleSave(): void {
-    const placeholderTodo =
-      this.noteTagsSafe().includes('Todo') && !this.shouldPersistTodoNote()
-    if ((this.title.trim().length === 0 && this.content.trim().length === 0) ||
-      placeholderTodo) {
+    if (shouldSkipAutoSaveSchedule(
+      this.title,
+      this.content,
+      this.noteTagsSafe().includes('Todo'),
+      this.shouldPersistTodoNote()
+    )) {
       if (this.saveTimer !== -1) {
         clearTimeout(this.saveTimer)
         this.saveTimer = -1
@@ -1740,7 +1735,7 @@ struct NoteEdit {
   ): Promise<void> {
     if (this.shareExportActive) {
       this.shareExportActive = false
-      await NoteEdit.delayMs(48)
+      await noteEditDelayMs(48)
     }
     this.shareCardCaptureKey++
     const palette = ShareThemeColors.resolve(theme, tone)
@@ -1757,27 +1752,35 @@ struct NoteEdit {
       `mountShareExportCard key=${this.shareCardCaptureKey} theme=${theme} tone=${tone} ` +
       `compat=${snapshotCompatMode} skipQr=${snapshotSkipQr} scrollBg=${this.shareExportScrollBg}`)
     this.shareScroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
-    const hasImages = this.shareExportContentHasImages()
-    const mountDelayMs = jinshuLight ? 1100 : (hasImages ? 920 : 680)
-    await NoteEdit.delayMs(mountDelayMs)
+    const hasImages = shareExportContentHasImages(
+      this.previewBlocksState,
+      this.shareAvatarUrlTrim()
+    )
+    const mountDelayMs = shareExportMountDelayMs(theme, tone, hasImages)
+    await noteEditDelayMs(mountDelayMs)
   }
 
   /** 分享正文是否含 Markdown 图片块。 */
   private shareExportBodyHasImages(): boolean {
-    for (const block of this.previewBlocksState) {
-      if (block.type === 'image') {
-        return true
-      }
-    }
-    return false
+    return shareExportBodyHasImages(this.previewBlocksState)
   }
 
-  /** 分享导出内容是否含网络头像或 Markdown 图片（ComponentSnapshot checkImage 需更久渲染）。 */
   private shareExportContentHasImages(): boolean {
-    if (this.shareAvatarUrlTrim().length > 0) {
-      return true
-    }
-    return this.shareExportBodyHasImages()
+    return shareExportContentHasImages(
+      this.previewBlocksState,
+      this.shareAvatarUrlTrim()
+    )
+  }
+
+  private shareExportMountKey(): string {
+    return shareExportMountKey(
+      this.shareCardCaptureKey,
+      this.shareExportTheme,
+      this.shareExportTone,
+      this.shareExportSnapshotCompatMode,
+      this.shareExportSnapshotSkipQr,
+      this.shareShowAppIcon
+    )
   }
 
   /** 长内容优先截 Scroll 视口，避免整卡高度超过 ComponentSnapshot 底层限制（约 8614px）。 */
@@ -1813,10 +1816,6 @@ struct NoteEdit {
       Logger.error('NoteEdit', `offlineSnapshotCapture failed: ${JSON.stringify(err)}`)
       return null
     }
-  }
-
-  private static delayMs(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms))
   }
 
   /**
@@ -2076,7 +2075,7 @@ struct NoteEdit {
    * 不使用 createFromBuilder，避免 Builder 在隔离上下文中缺少 observeComponentCreation2。
    */
   private async captureScrollingCardToImage(): Promise<ArrayBuffer | null> {
-    await NoteEdit.delayMs(240)
+    await noteEditDelayMs(240)
     return await this.captureScrollingCardToImageCore()
   }
 
@@ -2218,9 +2217,9 @@ struct NoteEdit {
       `compat=${this.shareExportSnapshotCompatMode} skipQr=${this.shareExportSnapshotSkipQr}`)
     for (let round = 0; round < 2; round++) {
       this.shareScroller.scrollEdge(Edge.Bottom)
-      await NoteEdit.delayMs(160)
+      await noteEditDelayMs(160)
       this.shareScroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
-      await NoteEdit.delayMs(160)
+      await noteEditDelayMs(160)
       try {
         const warmPm = await this.getShareSnapshotWithCandidates(waitOpts, `flush_round_${round}`)
         if (warmPm) {
@@ -2235,7 +2234,7 @@ struct NoteEdit {
         Logger.warn('NoteEdit', `flushShareCardRenderSnapshot round=${round} failed: ${JSON.stringify(error)}`)
       }
     }
-    await NoteEdit.delayMs(120)
+    await noteEditDelayMs(120)
   }
 
   private async captureScrollingCardToImageCore(): Promise<ArrayBuffer | null> {
@@ -2245,7 +2244,7 @@ struct NoteEdit {
     const offsetWarnVp = 2.0
 
     this.shareScroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
-    await NoteEdit.delayMs(100)
+    await noteEditDelayMs(100)
 
     Logger.info('NoteEdit',
       `captureScrollingCardToImageCore start key=${this.shareCardCaptureKey} ` +
@@ -2265,12 +2264,12 @@ struct NoteEdit {
 
     // 长内容下 Column.onAreaChange 可能偏小；用 Scroller 最大偏移推算可滚范围（界面会先滚到底再回到顶部）。
     this.shareScroller.scrollEdge(Edge.Bottom)
-    await NoteEdit.delayMs(120)
+    await noteEditDelayMs(120)
     const bottomOff = this.shareScroller.currentOffset()
     const maxScrollVp = Math.max(0, bottomOff.yOffset)
 
     this.shareScroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
-    await NoteEdit.delayMs(100)
+    await noteEditDelayMs(100)
 
     let firstPm: image.PixelMap | null = null
     try {
@@ -2352,14 +2351,14 @@ struct NoteEdit {
       // 目标超过 Scroller 初次测量的最大偏移时，先顶一次底再 scrollTo，便于引擎刷新可滚区域，露出末尾文案。
       if (nextYVp > maxScrollVp + vpEps) {
         this.shareScroller.scrollEdge(Edge.Bottom)
-        await NoteEdit.delayMs(100)
+        await noteEditDelayMs(100)
       }
       this.shareScroller.scrollTo({ xOffset: 0, yOffset: nextYVp, animation: false })
-      await NoteEdit.delayMs(150)
+      await noteEditDelayMs(150)
       let actualY = this.shareScroller.currentOffset().yOffset
       if (Math.abs(actualY - nextYVp) > offsetWarnVp) {
         this.shareScroller.scrollTo({ xOffset: 0, yOffset: nextYVp, animation: false })
-        await NoteEdit.delayMs(80)
+        await noteEditDelayMs(80)
         actualY = this.shareScroller.currentOffset().yOffset
       }
       // scrollTo 可能被钳制，用小步 scrollBy 逼近目标，便于末尾 slogan 区域进入视口。
@@ -2368,7 +2367,7 @@ struct NoteEdit {
         const remainVp = nextYVp - actualY
         const stepNudge = Math.min(64, Math.max(1, remainVp))
         this.shareScroller.scrollBy(0, stepNudge)
-        await NoteEdit.delayMs(45)
+        await noteEditDelayMs(45)
         const tryY = this.shareScroller.currentOffset().yOffset
         if (tryY <= actualY + 0.25) {
           break
@@ -2645,13 +2644,6 @@ struct NoteEdit {
       }
     })
       .key(`share_preview_sheet_${this.shareShowAppIcon}`)
-  }
-
-  private shareExportMountKey(): string {
-    return `${this.shareCardCaptureKey}_${this.shareExportTheme}_${this.shareExportTone}_` +
-      `${this.shareExportSnapshotCompatMode ? 'compat' : 'normal'}_` +
-      `${this.shareExportSnapshotSkipQr ? 'noqr' : 'qr'}_` +
-      `${this.shareShowAppIcon ? 'appicon' : 'qrcode'}`
   }
 
   @Builder
