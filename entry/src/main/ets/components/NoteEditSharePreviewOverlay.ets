@@ -115,5 +115,8 @@ export struct NoteEditSharePreviewOverlay {
     }
     .width('100%')
     .height('100%')
+    .hitTestBehavior(
+      (this.preparing && !this.visible) || this.visible ? HitTestMode.Default : HitTestMode.None
+    )
   }
 }

@@ -3053,6 +3053,7 @@ struct NoteEdit {
         }
           .position({ x: 0, y: 0 })
           .zIndex(998)
+          .hitTestBehavior(HitTestMode.Transparent)
       }
 
       // 移动端编辑模式下的可拖动悬浮 AI 按钮（预览模式隐藏）
@@ -3062,6 +3063,7 @@ struct NoteEdit {
         }
           .position({ x: 0, y: 0 })
           .zIndex(998)
+          .hitTestBehavior(HitTestMode.Transparent)
       }
 
       if (this.aiNoteWorking) {
