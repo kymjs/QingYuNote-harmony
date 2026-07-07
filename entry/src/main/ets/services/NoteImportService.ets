@@ -56,7 +56,7 @@ export class NoteImportService {
     return this.importFromUris(uris, context)
   }
 
-  /** 从 URI 列表串行导入；context 用于拿到 filesDir 创建图片目录。 */
+  /** 从 URI 列表串行导入；context 用于拿到 filesDir 创建图片目录。支持文件与文件夹。 */
   async importFromUris(uris: string[], context: common.UIAbilityContext): Promise<NoteImportResult> {
     const result = new NoteImportResult()
     if (uris.length === 0) {
@@ -70,25 +70,12 @@ export class NoteImportService {
     }
     for (const uri of uris) {
       try {
-        const displayName = this.displayNameFromUri(uri)
-        const ext = NoteImportService.extensionOf(displayName).toLowerCase()
-        if (ext === 'md' || ext === 'markdown' || ext === 'txt') {
-          await this.importMarkdownLike(uri, displayName, imagesDir, result)
-        } else if (ext === 'html' || ext === 'htm') {
-          await this.importHtml(uri, displayName, imagesDir, result)
-        } else if (ext === 'docx') {
-          await this.importDocx(uri, displayName, imagesDir, result)
-        } else if (ext === 'doc') {
-          result.failedFiles.push(`${displayName}：暂不支持旧版 .doc，请另存为 .docx 后重试`)
-        } else if (NoteImportService.ALLOWED_IMAGE_EXTS.has(ext)) {
-          if (imagesDir === null) {
-            result.failedFiles.push(`${displayName}：图片目录不可用`)
-            continue
-          }
-          await this.importImage(uri, displayName, ext, imagesDir, result)
-        } else {
-          result.skippedFiles.push(displayName)
+        if (NoteImportService.isDirectory(uri)) {
+          await this.importDirectory(uri, '', imagesDir, result)
+          continue
         }
+        const displayName = this.displayNameFromUri(uri)
+        await this.importFileUri(uri, displayName, '', imagesDir, result)
       } catch (error) {
         Logger.warn('NoteImportService', `import ${uri} failed: ${JSON.stringify(error)}`)
         const displayName = this.displayNameFromUri(uri)
@@ -98,13 +85,89 @@ export class NoteImportService {
     return result
   }
 
+  /** 递归导入文件夹：先建文件夹笔记，再处理子目录与支持的文件。 */
+  private async importDirectory(
+    dirUri: string,
+    parentNoteId: string,
+    imagesDir: string | null,
+    result: NoteImportResult
+  ): Promise<void> {
+    const folderNoteId = await this.upsertFolderNote(dirUri, parentNoteId, result)
+    const entries = NoteImportService.listDirEntries(dirUri)
+    entries.sort((a, b) => {
+      return this.basenameFromPath(a).toLowerCase()
+        .localeCompare(this.basenameFromPath(b).toLowerCase())
+    })
+    for (const entryUri of entries) {
+      if (NoteImportService.isDirectory(entryUri)) {
+        await this.importDirectory(entryUri, folderNoteId, imagesDir, result)
+      } else {
+        const displayName = this.displayNameFromUri(entryUri)
+        await this.importFileUri(entryUri, displayName, folderNoteId, imagesDir, result)
+      }
+    }
+  }
+
+  private async upsertFolderNote(
+    dirUri: string,
+    parentNoteId: string,
+    result: NoteImportResult
+  ): Promise<string> {
+    const title = this.folderTitleFromUri(dirUri)
+    const displayName = this.displayNameFromUri(dirUri)
+    const note = await NoteRepository.getInstance().createNote({
+      title,
+      content: '',
+      tags: [],
+      skipTitleAutoFill: true
+    })
+    if (parentNoteId.length > 0) {
+      await NoteRepository.getInstance().saveDraft(note.id, {
+        title,
+        parentId: parentNoteId,
+        skipTitleAutoFill: true
+      })
+    }
+    result.importedCount += 1
+    result.importedNames.push(displayName)
+    return note.id
+  }
+
+  private async importFileUri(
+    uri: string,
+    displayName: string,
+    parentNoteId: string,
+    imagesDir: string | null,
+    result: NoteImportResult
+  ): Promise<void> {
+    const ext = NoteImportService.extensionOf(displayName).toLowerCase()
+    if (ext === 'md' || ext === 'markdown' || ext === 'txt') {
+      await this.importMarkdownLike(uri, displayName, imagesDir, result, parentNoteId)
+    } else if (ext === 'html' || ext === 'htm') {
+      await this.importHtml(uri, displayName, imagesDir, result, parentNoteId)
+    } else if (ext === 'docx') {
+      await this.importDocx(uri, displayName, imagesDir, result, parentNoteId)
+    } else if (ext === 'doc') {
+      result.failedFiles.push(`${displayName}：暂不支持旧版 .doc，请另存为 .docx 后重试`)
+    } else if (NoteImportService.ALLOWED_IMAGE_EXTS.has(ext)) {
+      if (imagesDir === null) {
+        result.failedFiles.push(`${displayName}：图片目录不可用`)
+        return
+      }
+      await this.importImage(uri, displayName, ext, imagesDir, result, parentNoteId)
+    } else {
+      result.skippedFiles.push(displayName)
+    }
+  }
+
   // ---------- 解析分支 ----------
 
   private async importMarkdownLike(
     uri: string,
     displayName: string,
     imagesDir: string | null,
-    result: NoteImportResult
+    result: NoteImportResult,
+    parentNoteId: string = ''
   ): Promise<void> {
     if (!NoteImportService.fileExists(uri)) {
       result.skippedFiles.push(displayName)
@@ -115,14 +178,21 @@ export class NoteImportService {
     const markdown = imagesDir !== null
       ? await this.relocateMarkdownImages(raw, baseDir, imagesDir)
       : raw
-    await this.createImportedNote(this.titleFromDisplayName(displayName), markdown, displayName, result)
+    await this.createImportedNote(
+      this.titleFromDisplayName(displayName),
+      markdown,
+      displayName,
+      result,
+      parentNoteId
+    )
   }
 
   private async importHtml(
     uri: string,
     displayName: string,
     imagesDir: string | null,
-    result: NoteImportResult
+    result: NoteImportResult,
+    parentNoteId: string = ''
   ): Promise<void> {
     if (!NoteImportService.fileExists(uri)) {
       result.skippedFiles.push(displayName)
@@ -137,14 +207,21 @@ export class NoteImportService {
     if (imagesDir !== null) {
       markdown = await this.relocateMarkdownImages(markdown, baseDir, imagesDir)
     }
-    await this.createImportedNote(this.titleFromDisplayName(displayName), markdown, displayName, result)
+    await this.createImportedNote(
+      this.titleFromDisplayName(displayName),
+      markdown,
+      displayName,
+      result,
+      parentNoteId
+    )
   }
 
   private async importDocx(
     uri: string,
     displayName: string,
     imagesDir: string | null,
-    result: NoteImportResult
+    result: NoteImportResult,
+    parentNoteId: string = ''
   ): Promise<void> {
     if (!NoteImportService.fileExists(uri)) {
       result.skippedFiles.push(displayName)
@@ -183,7 +260,13 @@ export class NoteImportService {
     if (imagesDir !== null) {
       markdown = await this.relocateMarkdownImages(markdown, '', imagesDir)
     }
-    await this.createImportedNote(this.titleFromDisplayName(displayName), markdown, displayName, result)
+    await this.createImportedNote(
+      this.titleFromDisplayName(displayName),
+      markdown,
+      displayName,
+      result,
+      parentNoteId
+    )
   }
 
   private async importImage(
@@ -191,7 +274,8 @@ export class NoteImportService {
     displayName: string,
     ext: string,
     imagesDir: string,
-    result: NoteImportResult
+    result: NoteImportResult,
+    parentNoteId: string = ''
   ): Promise<void> {
     if (!NoteImportService.fileExists(uri)) {
       result.skippedFiles.push(displayName)
@@ -200,21 +284,34 @@ export class NoteImportService {
     const bytes = NoteImportService.readUriBytes(uri)
     const relPath = await this.writeImageBytes(bytes, '.' + ext, imagesDir)
     const content = `![图片](${relPath})`
-    await this.createImportedNote(this.titleFromDisplayName(displayName), content, displayName, result)
+    await this.createImportedNote(
+      this.titleFromDisplayName(displayName),
+      content,
+      displayName,
+      result,
+      parentNoteId
+    )
   }
 
   private async createImportedNote(
     title: string,
     content: string,
     displayName: string,
-    result: NoteImportResult
+    result: NoteImportResult,
+    parentNoteId: string = ''
   ): Promise<void> {
-    await NoteRepository.getInstance().createNote({
+    const note = await NoteRepository.getInstance().createNote({
       title,
       content,
       tags: [],
       skipTitleAutoFill: true
     })
+    if (parentNoteId.length > 0) {
+      await NoteRepository.getInstance().saveDraft(note.id, {
+        parentId: parentNoteId,
+        skipTitleAutoFill: true
+      })
+    }
     result.importedCount += 1
     result.importedNames.push(displayName)
   }
@@ -429,6 +526,11 @@ export class NoteImportService {
       const options = new picker.DocumentSelectOptions()
       options.fileSuffixFilters = NoteImportService.FILE_SUFFIX_FILTERS
       options.maxSelectNumber = NoteImportService.MAX_SELECT_NUMBER
+      try {
+        options.selectMode = picker.DocumentSelectMode.MIXED
+      } catch (_) {
+        // 低版本系统无 MIXED 时退回仅文件选择。
+      }
       const uris: string[] = await documentPicker.select(options)
       return Array.isArray(uris) ? uris : []
     } catch (error) {
@@ -460,6 +562,12 @@ export class NoteImportService {
     return base.length === 0 ? '未命名笔记' : base
   }
 
+  private folderTitleFromUri(uri: string): string {
+    const displayName = this.displayNameFromUri(uri)
+    const base = displayName.trim()
+    return base.length === 0 ? '未命名文件夹' : base
+  }
+
   private isRemoteImageUrl(src: string): boolean {
     const lower = src.toLowerCase()
     return lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('//')
@@ -481,6 +589,40 @@ export class NoteImportService {
       return ''
     }
     return base.substring(dot + 1)
+  }
+
+  private static isDirectory(uri: string): boolean {
+    try {
+      const stat = fs.statSync(uri)
+      return stat.isDirectory()
+    } catch (_) {
+      return false
+    }
+  }
+
+  private static listDirEntries(dirUri: string): string[] {
+    const dirPath = NoteImportService.uriToPath(dirUri) ?? dirUri
+    try {
+      if (!NoteImportService.isDirectory(dirUri)) {
+        return []
+      }
+      const names = fs.listFileSync(dirPath, {
+        recursion: false,
+        listNum: 0
+      }) as string[]
+      const out: string[] = []
+      for (const name of names) {
+        if (name.length === 0) {
+          continue
+        }
+        const joined = dirPath.endsWith('/') ? dirPath + name : dirPath + '/' + name
+        out.push(joined)
+      }
+      return out
+    } catch (error) {
+      Logger.warn('NoteImportService', `listDirEntries failed: ${JSON.stringify(error)}`)
+      return []
+    }
   }
 
   private static fileExists(uri: string): boolean {

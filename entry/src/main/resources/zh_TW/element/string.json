@@ -46,7 +46,7 @@
     },
     {
       "name": "import_notes_files",
-      "value": "導入md/doc/txt等文件"
+      "value": "導入md/doc/txt等文件或文件夾"
     },
     {
       "name": "weread_import_title",
