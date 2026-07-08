@@ -710,11 +710,11 @@
     },
     {
       "name": "home_paste_extract_title",
-      "value": "Extract from pasted content"
+      "value": "Create note from link"
     },
     {
       "name": "home_paste_extract_subtitle",
-      "value": "WeChat articles not supported yet; coming soon…"
+      "value": "WeChat, RED & other note links — notes in seconds"
     },
     {
       "name": "home_image_note_title",

@@ -706,11 +706,11 @@
     },
     {
       "name": "home_paste_extract_title",
-      "value": "粘貼內容提取"
+      "value": "連結生成筆記"
     },
     {
       "name": "home_paste_extract_subtitle",
-      "value": "暫不支持公衆號文章，後續版本將優化…"
+      "value": "微信/小紅書/其他筆記連結，秒變筆記"
     },
     {
       "name": "home_image_note_title",

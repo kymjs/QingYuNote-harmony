@@ -969,11 +969,11 @@ struct NoteEdit {
         return
       }
       if (action === 'aiLinkExtract') {
-        void this.openAiLinkExtractDialog()
+        void this.openAiLinkExtractDialog(true)
       } else if (action === 'insertImage') {
         void this.insertImage()
       } else if (action === 'generateNoteFromImage') {
-        void this.insertImage(true)
+        void this.insertImage(true, true)
       } else if (action === 'todoList') {
         this.applyTodoListEntryDefaults()
       }
@@ -1328,6 +1328,13 @@ struct NoteEdit {
     }
   }
 
+  private maybeSwitchToPreviewAfterAiSuccess(switchToPreviewOnSuccess: boolean): void {
+    if (!switchToPreviewOnSuccess) {
+      return
+    }
+    this.switchMode(this.isSplitMode() ? 'split' : 'preview')
+  }
+
   private shouldRenderPreview(): boolean {
     return this.isSplitMode() || this.previewMode === 'preview'
   }
@@ -1410,7 +1417,10 @@ struct NoteEdit {
     }
   }
 
-  private async insertImage(thenOptimize: boolean = false): Promise<void> {
+  private async insertImage(
+    thenOptimize: boolean = false,
+    switchToPreviewOnSuccess: boolean = false
+  ): Promise<void> {
     if (thenOptimize && !(await ensureAiMembershipAccess(this.getUIContext()))) {
       return
     }
@@ -1457,7 +1467,7 @@ struct NoteEdit {
         this.previewDirty = true
       }
       if (thenOptimize && this.lifecycle.isActive()) {
-        await this.onAiOptimizeContent()
+        await this.onAiOptimizeContent(switchToPreviewOnSuccess)
       }
     } catch (error) {
       Logger.error('NoteEdit', `insertImage failed: ${JSON.stringify(error)}`)
@@ -2259,7 +2269,7 @@ struct NoteEdit {
     })
   }
 
-  private async onAiOptimizeContent(): Promise<void> {
+  private async onAiOptimizeContent(switchToPreviewOnSuccess: boolean = false): Promise<void> {
     if (this.aiNoteWorking) {
       return
     }
@@ -2299,6 +2309,7 @@ struct NoteEdit {
         this.content = optimized
       }
       this.handleContentChange()
+      this.maybeSwitchToPreviewAfterAiSuccess(switchToPreviewOnSuccess)
       this.showPreviewMessage(EditorUiStrings.loc(noteHasText ? 'AI 已优化笔记正文' : 'AI 已根据图片生成笔记', noteHasText ? 'AI polished the note' : 'AI generated note from image', noteHasText ? 'AIが本文を最適化しました' : 'AIが画像からノートを生成しました'))
     } catch (e) {
       const msg = UserFacingMessage.forAi(
@@ -2312,7 +2323,7 @@ struct NoteEdit {
     }
   }
 
-  private async openAiLinkExtractDialog(): Promise<void> {
+  private async openAiLinkExtractDialog(switchToPreviewOnSuccess: boolean = false): Promise<void> {
     if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
       return
     }
@@ -2336,7 +2347,7 @@ struct NoteEdit {
             // ignore
           }
         }
-        void this.onAiExtractLink(url)
+        void this.onAiExtractLink(url, switchToPreviewOnSuccess)
       }
     }
     holder = new ComponentContent(ui, wrapBuilder(buildEditorAiLinkExtractDialogContent), params)
@@ -2350,7 +2361,10 @@ struct NoteEdit {
     }
   }
 
-  private async onAiExtractLink(url: string): Promise<void> {
+  private async onAiExtractLink(
+    url: string,
+    switchToPreviewOnSuccess: boolean = false
+  ): Promise<void> {
     if (this.aiNoteWorking || url.trim().length === 0) {
       return
     }
@@ -2369,6 +2383,7 @@ struct NoteEdit {
         this.title = result.title.trim()
       }
       this.handleContentChange()
+      this.maybeSwitchToPreviewAfterAiSuccess(switchToPreviewOnSuccess)
       this.showPreviewMessage(EditorUiStrings.loc('AI 已生成链接摘要并写入正文', 'AI added link summary to note', 'AIがリンク要約を本文に追加しました'))
     } catch (e) {
       const msg = UserFacingMessage.forAi(

@@ -90,8 +90,8 @@ export struct HomeMoreOptionsSheet {
       Column() {
         this.buildOptionRow(
           $r('sys.symbol.link'),
-          LocaleService.loc('粘贴内容提取', 'Extract from pasted content'),
-          LocaleService.loc('暂不支持公众号文章，后续版本将优化…', 'WeChat articles not supported yet; coming soon…'),
+          LocaleService.loc('链接生成笔记', 'Create note from link'),
+          LocaleService.loc('微信/小红书/其他笔记链接，秒变笔记', 'WeChat, RED & other note links — notes in seconds'),
           (): void => {
             this.params.onClose()
             this.params.onPasteLink()

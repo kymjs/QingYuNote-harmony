@@ -2,6 +2,7 @@ import { http } from '@kit.NetworkKit'
 import { AiNoteImageLoader, AiNoteImagePayload } from './AiNoteImageLoader'
 import { AiNotePrompt } from './AiNotePrompt'
 import { AiTagService } from './AiTagService'
+import { LinkExtractClient } from './LinkExtractClient'
 import { NoteApiClient, AiTagConfigBody, buildChatCompletionRequestBody } from './NoteApiClient'
 import { MarkdownUtils } from '../common/utils/MarkdownUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
@@ -88,6 +89,26 @@ export class AiNoteService {
     if (link.length === 0) {
       throw new Error('请输入有效链接')
     }
+    try {
+      const prompt = AiNotePrompt.buildLinkSummaryUserMessage(link, '')
+      const extracted = await LinkExtractClient.getInstance().extractLink(link, prompt)
+      console.info(`LinkExtract summarizeLink via server2 ok`)
+      return {
+        title: extracted.title,
+        body: extracted.content.length > 0 ? extracted.content : extracted.title
+      }
+    } catch (e) {
+      const msg = (e instanceof Error) ? e.message : `${e}`
+      if (e instanceof Error && e.message === '未登录或服务不可用') {
+        console.error(`LinkExtract summarizeLink unauthorized, NOT falling back`)
+        throw e
+      }
+      console.error(`LinkExtract summarizeLink server2 failed, fallback to LOCAL. reason=${msg}`)
+      return AiNoteService.summarizeLinkLocally(link)
+    }
+  }
+
+  private static async summarizeLinkLocally(link: string): Promise<AiLinkSummaryResult> {
     const excerpt = await AiNoteService.fetchPageExcerpt(link)
     const raw = await AiNoteService.chatPlainText(
       AiNotePrompt.LINK_SUMMARY_SYSTEM,

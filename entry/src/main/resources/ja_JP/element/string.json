@@ -710,11 +710,11 @@
     },
     {
       "name": "home_paste_extract_title",
-      "value": "貼り付け内容から抽出"
+      "value": "リンクからノート作成"
     },
     {
       "name": "home_paste_extract_subtitle",
-      "value": "WeChat記事は未対応です。今後のバージョンで改善予定…"
+      "value": "WeChat・RED・各種ノートのリンクを瞬時にノート化"
     },
     {
       "name": "home_image_note_title",
