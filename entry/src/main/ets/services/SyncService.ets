@@ -258,6 +258,7 @@ export class SyncService {
           contentLength: note.content.length
         })
         await this.syncImagesForNote(note, rawContent)
+        await this.syncAudioForNote(note)
         await this.uploadFlowchartSidecarIfNeeded(noteId, note)
         if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced',
           uploaded.remoteModified || note.lastOperationAt, note.lastOperationAt)) {
@@ -286,6 +287,7 @@ export class SyncService {
           contentLength: note.content.length
         })
         await this.syncImagesForNote(note, rawContent)
+        await this.syncAudioForNote(note)
         await this.uploadFlowchartSidecarIfNeeded(noteId, note)
         if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced',
           uploaded.remoteModified || note.lastOperationAt, note.lastOperationAt)) {
@@ -310,6 +312,8 @@ export class SyncService {
         await NoteRepository.getInstance().overwriteFromRemote(noteId, remoteContent, remoteStat.remoteModified)
         await this.downloadFlowchartSidecarIfRemote(noteId)
         await this.downloadImagesForNote(noteId, remoteContent)
+    await this.downloadAudioForNote(noteId, remoteContent)
+        await this.downloadAudioForNote(noteId, remoteContent)
         return {
           noteId,
           success: true,
@@ -334,6 +338,7 @@ export class SyncService {
         return purgeWhenEqual
       }
       await this.downloadImagesForNote(noteId, remoteWhenEqual)
+      await this.downloadAudioForNote(noteId, remoteWhenEqual)
       if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced', remoteStat.remoteModified, note.lastOperationAt)) {
         NoteRepository.getInstance().notifyNotesChanged()
       }
@@ -658,8 +663,9 @@ export class SyncService {
       const lastMs = syncState.deletedAt > 0 ? syncState.deletedAt : Date.now()
       const rawContent = await FileService.getInstance().readNoteFile(noteId)
       const payload = rawContent.length > 0 ? rawContent : NoteStateCodec.serializeRemoteRecycleBinFile(noteId, lastMs)
+      const tombNote = await NoteRepository.getInstance().getNote(noteId)
       const uploaded = await WebDAVClient.getInstance().uploadNote(noteId, payload, lastMs, {
-        deletedTime: 1
+        deletedTime: tombNote?.deletedTime ?? 1
       })
       const nextRemote = uploaded.remoteModified > 0 ? uploaded.remoteModified : lastMs
       if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced', nextRemote, syncState.lastOperationAt)) {
@@ -681,6 +687,7 @@ export class SyncService {
     await NoteRepository.getInstance().overwriteFromRemote(noteId, remoteContent, remoteModified)
     await this.downloadFlowchartSidecarIfRemote(noteId)
     await this.downloadImagesForNote(noteId, remoteContent)
+    await this.downloadAudioForNote(noteId, remoteContent)
     return {
       noteId,
       success: true,
@@ -701,12 +708,41 @@ export class SyncService {
     if (note.deletedTime !== 0) {
       return false
     }
+    // 语音笔记：仅有录音、正文尚为空时仍需同步 audio 到远端供转写服务读取。
+    if (note.audioId.trim().length > 0) {
+      return false
+    }
     const bodyEmpty = note.content.trim().length === 0
     if (!bodyEmpty) {
       return false
     }
     const t = note.title.trim()
     return t.length === 0 || t === '未命名笔记'
+  }
+
+  /** 语音转写前确保录音已上传 WebDAV；失败时抛出异常供上层展示。 */
+  async uploadAudioForNoteOrThrow(noteId: string): Promise<void> {
+    const note = await NoteRepository.getInstance().getNote(noteId)
+    if (!note) {
+      throw new Error('笔记不存在')
+    }
+    const audioId = note.audioId.trim()
+    if (audioId.length === 0) {
+      throw new Error('录音文件未找到，请稍后重试')
+    }
+    const ctx = AppContextHolder.getContext()
+    if (!ctx) {
+      throw new Error('同步失败，请稍后重试')
+    }
+    const localPath = `${ctx.filesDir}/audio/${audioId}`
+    if (!FileService.fileExists(localPath)) {
+      Logger.error('SyncService', `uploadAudioForNoteOrThrow missing local file: noteId=${noteId}, path=${localPath}`)
+      throw new Error('录音文件未找到，请稍后重试')
+    }
+    const bytes = FileService.readFileAsArrayBuffer(localPath)
+    Logger.info('SyncService', `uploadAudioForNoteOrThrow start: noteId=${noteId}, audioId=${audioId}, bytes=${bytes.byteLength}`)
+    await WebDAVClient.getInstance().uploadAudio(audioId, bytes)
+    Logger.info('SyncService', `uploadAudioForNoteOrThrow done: noteId=${noteId}, audioId=${audioId}`)
   }
 
   private async uploadFlowchartSidecarIfNeeded(noteId: string, note: Note): Promise<void> {
@@ -966,6 +1002,7 @@ export class SyncService {
     }
     await NoteRepository.getInstance().overwriteFromRemote(noteId, remoteContent, remoteStat.remoteModified)
     await this.downloadImagesForNote(noteId, remoteContent)
+    await this.downloadAudioForNote(noteId, remoteContent)
     return {
       noteId,
       success: true,
@@ -1001,7 +1038,9 @@ export class SyncService {
       Logger.warn('SyncService',
         `applyPermanentDeleteListedInIndex deleteNote failed: noteId=${noteId}, ${this.describeError(error as Object)}`)
     }
-    await this.deleteImagesForNote(content)
+    await this.deleteImagesForNote(content, noteId)
+    const audioId = NoteStateCodec.parseNoteFile(content, noteId).state.audioId
+    await this.deleteAudioForNote(audioId)
     await NoteRepository.getInstance().purgeLocalNoteCompletely(noteId)
     return {
       noteId,
@@ -1022,7 +1061,8 @@ export class SyncService {
     }
     Logger.info('SyncService', `applyRemotePermanentDeleteIfNeeded: remote deleted_time=2, noteId=${noteId}`)
     await WebDAVClient.getInstance().deleteNote(noteId)
-    await this.deleteImagesForNote(payload.content)
+    await this.deleteImagesForNote(remoteContent, noteId)
+    await this.deleteAudioForNote(payload.state.audioId)
     await NoteRepository.getInstance().purgeLocalNoteCompletely(noteId)
     return {
       noteId,
@@ -1101,6 +1141,49 @@ export class SyncService {
     })
   }
 
+  private async syncAudioForNote(note: Note): Promise<void> {
+    const audioId = note.audioId.trim()
+    if (audioId.length === 0) {
+      return
+    }
+    const ctx = AppContextHolder.getContext()
+    if (!ctx) {
+      return
+    }
+    try {
+      const localPath = `${ctx.filesDir}/audio/${audioId}`
+      if (!FileService.fileExists(localPath)) {
+        return
+      }
+      const bytes = FileService.readFileAsArrayBuffer(localPath)
+      await WebDAVClient.getInstance().uploadAudio(audioId, bytes)
+    } catch (error) {
+      Logger.warn('SyncService', `syncAudioForNote failed for ${note.audioId}: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  private async downloadAudioForNote(noteId: string, content: string): Promise<void> {
+    const parsed = NoteStateCodec.parseNoteFile(content, noteId)
+    const audioId = parsed.state.audioId.trim()
+    if (audioId.length === 0) {
+      return
+    }
+    const ctx = AppContextHolder.getContext()
+    if (!ctx) {
+      return
+    }
+    const localPath = `${ctx.filesDir}/audio/${audioId}`
+    if (FileService.fileExists(localPath)) {
+      return
+    }
+    try {
+      const bytes = await WebDAVClient.getInstance().downloadAudio(audioId)
+      FileService.writeFile(localPath, bytes)
+    } catch (error) {
+      Logger.warn('SyncService', `downloadAudioForNote failed for ${audioId}: ${this.describeError(error as Object)}`)
+    }
+  }
+
   private async downloadImagesForNote(noteId: string, content: string): Promise<void> {
     const parsed = NoteStateCodec.parseNoteFile(content, noteId)
     const imageRefs = parsed.state.imageRefs.length > 0
@@ -1154,8 +1237,8 @@ export class SyncService {
     hub?.emit(SyncConstants.noteImagesChangedEvent, new NoteImagesChangedEventPayload(noteId))
   }
 
-  private async deleteImagesForNote(content: string): Promise<void> {
-    const imageRefs = NoteStateCodec.extractImageRefs(content)
+  private async deleteImagesForNote(content: string, fallbackNoteId: string = ''): Promise<void> {
+    const imageRefs = NoteStateCodec.collectImageRefsForDeletion(content, fallbackNoteId)
     if (imageRefs.length === 0) {
       return
     }
@@ -1186,5 +1269,25 @@ export class SyncService {
         Logger.warn('SyncService', `deleteImagesForNote failed for ${item.ref}: ${this.describeError(error as Object)}`)
       }
     })
+  }
+
+  private async deleteAudioForNote(audioId: string): Promise<void> {
+    const trimmed = audioId.trim()
+    if (trimmed.length === 0) {
+      return
+    }
+    const ctx = AppContextHolder.getContext()
+    if (!ctx) {
+      return
+    }
+    try {
+      const localPath = `${ctx.filesDir}/audio/${trimmed}`
+      if (FileService.fileExists(localPath)) {
+        FileService.deleteFile(localPath)
+      }
+      await WebDAVClient.getInstance().deleteAudio(trimmed)
+    } catch (error) {
+      Logger.warn('SyncService', `deleteAudioForNote failed for ${trimmed}: ${this.describeError(error as Object)}`)
+    }
   }
 }

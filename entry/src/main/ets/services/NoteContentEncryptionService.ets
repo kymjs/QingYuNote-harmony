@@ -154,6 +154,7 @@ export class NoteContentEncryptionService {
       content: note.content,
       tags: [...note.tags],
       imageRefs: [...note.imageRefs],
+      audioId: note.audioId,
       summary: note.summary,
       localModified: note.localModified,
       remoteModified: note.remoteModified,

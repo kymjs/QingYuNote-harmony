@@ -81,6 +81,14 @@ import {
   buildJinshuLightSegmentCaptureIds
 } from '../share/NoteShareExportCard'
 import { NoteSharePreviewSheetParams } from '../share/NoteSharePreviewSheet'
+import {
+  buildVoiceRecordingSheetContent,
+  type VoiceRecordingSheetParams
+} from '../components/VoiceRecordingSheet'
+import { NoteAudioPlayerBar } from '../components/NoteAudioPlayerBar'
+import { AudioConstants } from '../common/constants/AudioConstants'
+import { VoiceTranscribeClient } from '../services/VoiceTranscribeClient'
+import { SyncService } from '../services/SyncService'
 
 interface NoteEditParams {
   noteId?: string
@@ -179,6 +187,8 @@ struct NoteEdit {
   @State shareExportSnapshotCompatMode: boolean = false
   @State shareExportSnapshotSkipQr: boolean = false
   @State shareShowAppIcon: boolean = false
+  @State audioId: string = ''
+  @State voiceRecordingVisible: boolean = false
   private saveTimer: number = -1
   private previewTimer: number = -1
   private previewDirty: boolean = true
@@ -758,6 +768,149 @@ struct NoteEdit {
     }
   }
 
+  private async ensureNoteExistsForRecording(): Promise<void> {
+    if (this.noteId.length > 0) {
+      return
+    }
+    const note = await NoteRepository.getInstance().createNote({
+      title: EditorUiStrings.loc('新录音', 'New recording', '新規録音'),
+      content: '',
+      tags: [],
+      skipTitleAutoFill: true
+    })
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.noteId = note.id
+    this.title = note.title
+    this.previousContent = ''
+    this.lastSavedAt = note.updatedAt
+    this.noteCreatedAt = note.createdAt
+    this.saveStatus = '已保存'
+  }
+
+  private async showVoiceRecordingSheet(): Promise<void> {
+    await this.ensureNoteExistsForRecording()
+    if (!this.lifecycle.isActive() || this.noteId.length === 0) {
+      return
+    }
+    this.voiceRecordingVisible = true
+  }
+
+  private isVoicePlaceholderNote(): boolean {
+    return this.audioId.length === 0 &&
+      this.content.trim().length === 0 &&
+      (this.title.trim().length === 0 ||
+        this.title.trim() === EditorUiStrings.loc('新录音', 'New recording', '新規録音'))
+  }
+
+  private onVoiceRecordingCancel(): void {
+    if (this.isVoicePlaceholderNote() && this.noteId.length > 0) {
+      void this.abandonVoicePlaceholderNote()
+    }
+  }
+
+  private async abandonVoicePlaceholderNote(): Promise<void> {
+    const id = this.noteId
+    if (id.length === 0) {
+      return
+    }
+    await NoteRepository.getInstance().purgeLocalNoteCompletely(id)
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.getUIContext().getRouter().back()
+  }
+
+  private fileExistsAtPath(path: string): boolean {
+    try {
+      fileIo.accessSync(path)
+      return true
+    } catch (_) {
+      return false
+    }
+  }
+
+  private async onVoiceRecordingComplete(outputPath: string): Promise<void> {
+    if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+      return
+    }
+    if (!this.lifecycle.isActive() || this.noteId.length === 0) {
+      return
+    }
+    this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
+    this.aiNoteWorking = true
+    try {
+      if (!this.fileExistsAtPath(outputPath)) {
+        throw new Error(EditorUiStrings.loc('录音文件未找到，请稍后重试', 'Recording not found; try again', '録音ファイルが見つかりません。後でもう一度お試しください'))
+      }
+      const audioId = AudioConstants.audioFileNameForNote(this.noteId)
+      const note = await NoteRepository.getInstance().saveDraft(this.noteId, {
+        audioId: audioId
+      })
+      if (!this.lifecycle.isActive()) {
+        return
+      }
+      this.audioId = note.audioId
+      const syncResult = await SyncService.getInstance().syncNote(this.noteId)
+      if (!syncResult.success) {
+        throw new Error(EditorUiStrings.loc('同步失败，请稍后重试', 'Sync failed; try again', '同期に失敗しました。後でもう一度お試しください'))
+      }
+      await SyncService.getInstance().uploadAudioForNoteOrThrow(this.noteId)
+      const text = await VoiceTranscribeClient.getInstance().transcribeLocalFile(outputPath)
+      if (!this.lifecycle.isActive()) {
+        return
+      }
+      this.content = text
+      this.previousContent = text
+      this.contentCaretIndex = text.length
+      this.handleContentChange()
+      await this.handleAutoSave()
+    } catch (e) {
+      const message = e instanceof Error
+        ? e.message
+        : EditorUiStrings.loc('语音转文字失败，请稍后重试', 'Speech-to-text failed; try again', '音声認識に失敗しました。後でもう一度お試しください')
+      this.showPreviewMessage(
+        UserFacingMessage.forAi(
+          e instanceof Error ? e.message : undefined,
+          message
+        )
+      )
+      Logger.error('NoteEdit', `onVoiceRecordingComplete failed: ${JSON.stringify(e)}`)
+    } finally {
+      this.aiNoteWorking = false
+    }
+  }
+
+  @Builder
+  private buildVoiceRecordingSheet(): void {
+    buildVoiceRecordingSheetContent({
+      noteId: this.noteId,
+      noteTitle: this.title.trim().length > 0
+        ? this.title.trim()
+        : EditorUiStrings.loc('新录音', 'New recording', '新規録音'),
+      onClose: (): void => {
+        this.voiceRecordingVisible = false
+      },
+      onCancel: (): void => {
+        this.onVoiceRecordingCancel()
+      },
+      onComplete: (outputPath: string): void => {
+        void this.onVoiceRecordingComplete(outputPath)
+      },
+      onPermissionDenied: (): void => {
+        try {
+          this.getUIContext().getPromptAction().showToast({
+            message: EditorUiStrings.loc('需要麦克风权限才能录音', 'Microphone permission is required to record', '録音にはマイク権限が必要です'),
+            duration: 2000
+          })
+        } catch (error) {
+          console.error(`showToast failed: ${JSON.stringify(error)}`)
+        }
+      }
+    } as VoiceRecordingSheetParams)
+  }
+
   private noteTagsSafe(): string[] {
     return this.noteTags ?? []
   }
@@ -929,6 +1082,7 @@ struct NoteEdit {
     }
     this.title = note.title
     this.content = note.content
+    this.audioId = note.audioId ?? ''
     this.previousContent = note.content
     this.contentCaretIndex = note.content.length
     this.lastSavedAt = note.updatedAt
@@ -976,6 +1130,8 @@ struct NoteEdit {
         void this.insertImage(true, true)
       } else if (action === 'todoList') {
         this.applyTodoListEntryDefaults()
+      } else if (action === 'voiceMemo') {
+        void this.showVoiceRecordingSheet()
       }
     }, 0)
   }
@@ -3015,6 +3171,18 @@ struct NoteEdit {
           left: this.pageWidth >= 600 ? 24 : 6,
           right: this.pageWidth >= 600 ? 24 : 6
         })
+
+        if (this.audioId.trim().length > 0 && this.noteId.trim().length > 0) {
+          NoteAudioPlayerBar({
+            audioId: this.audioId,
+            noteId: this.noteId
+          })
+            .width('100%')
+            .padding({
+              left: this.pageWidth >= 600 ? 24 : 6,
+              right: this.pageWidth >= 600 ? 24 : 6
+            })
+        }
       }
       .width('100%')
       .height('100%')
@@ -3147,6 +3315,15 @@ struct NoteEdit {
       }
       if ((!wasSplitMode && nextSplitMode) || this.shouldRenderPreview()) {
         this.preparePreviewForCurrentMode(this.content, true)
+      }
+    })
+    .bindSheet($$this.voiceRecordingVisible, this.buildVoiceRecordingSheet(), {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: false,
+      showClose: false,
+      backgroundColor: Color.Transparent,
+      onDisappear: (): void => {
+        this.voiceRecordingVisible = false
       }
     })
   }

@@ -116,6 +116,22 @@ export class WebDAVClient {
   private static readonly _remoteIndexFileName: string = '.qingyu-index.json'
   /** 与 Flutter `WebDavClient.imageDirName` 一致。 */
   static readonly imageDirName: string = 'qingyu-note-image'
+  static readonly audioDirName: string = 'audio'
+
+  static guessAudioContentType(fileName: string): string {
+    const lower = fileName.toLowerCase()
+    if (lower.endsWith('.wav')) {
+      return 'audio/wav'
+    }
+    if (lower.endsWith('.m4a')) {
+      return 'audio/mp4'
+    }
+    if (lower.endsWith('.mp3')) {
+      return 'audio/mpeg'
+    }
+    return 'application/octet-stream'
+  }
+
   /** 与 Flutter `WebDavClient._propfindRequestBody` 一致。 */
   private static readonly _propfindRequestBody: string =
     '<?xml version="1.0" encoding="utf-8"?>' +
@@ -265,6 +281,7 @@ export class WebDAVClient {
       await this.createDirectoryPath(config.baseUrl, config.notesDir)
     }
     await this.ensureImageDirectory(config)
+    await this.ensureAudioDirectory(config)
   }
 
   private async ensureQingyuNotesTreeAndMetadata(config: WebDAVConfig): Promise<void> {
@@ -274,6 +291,7 @@ export class WebDAVClient {
       const response = await this.sendRequest(targetUrl, http.RequestMethod.HEAD)
       if (this.isReachableDirectoryResponse(response.responseCode)) {
         await this.ensureImageDirectory(config)
+        await this.ensureAudioDirectory(config)
         return
       }
     } catch (error) {
@@ -282,6 +300,7 @@ export class WebDAVClient {
     }
     await this.createDirectoryPath(config.baseUrl, config.notesDir)
     await this.ensureImageDirectory(config)
+    await this.ensureAudioDirectory(config)
   }
 
   private isQingyuProvider(provider: WebDAVProvider): boolean {
@@ -337,6 +356,24 @@ export class WebDAVClient {
     } catch (error) {
       Logger.warn('WebDAVClient',
         `ensureImageDirectory MKCOL failed: url=${this.sanitizeUrl(imageUrl)}, ${this.describeError(error as Object)}`)
+    }
+  }
+
+  private async ensureAudioDirectory(config: WebDAVConfig): Promise<void> {
+    const directoryUrl = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
+    const audioUrl = `${directoryUrl}${WebDAVClient.audioDirName}/`
+    try {
+      const response = await this.sendRequest(audioUrl, http.RequestMethod.HEAD)
+      if (this.isReachableDirectoryResponse(response.responseCode)) {
+        return
+      }
+    } catch (error) {
+      Logger.warn('WebDAVClient', `ensureAudioDirectory HEAD failed: ${this.describeError(error as Object)}`)
+    }
+    try {
+      await this.sendRequest(audioUrl, 'MKCOL')
+    } catch (error) {
+      Logger.warn('WebDAVClient', `ensureAudioDirectory MKCOL failed: ${this.describeError(error as Object)}`)
     }
   }
 
@@ -561,6 +598,46 @@ export class WebDAVClient {
     Logger.info('WebDAVClient', `deleteImage response: fileName=${fileName}, responseCode=${response.responseCode}`)
     if (response.responseCode >= 400 && response.responseCode !== 404) {
       throw new Error(`Image delete failed with status ${response.responseCode}`)
+    }
+  }
+
+  async uploadAudio(fileName: string, bytes: ArrayBuffer): Promise<void> {
+    const config = await this.requireConfig()
+    const directoryUrl = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
+    const audioUrl = `${directoryUrl}${WebDAVClient.audioDirName}/${encodeURIComponent(fileName)}`
+    const contentType = WebDAVClient.guessAudioContentType(fileName)
+    const response = await this.sendRequest(audioUrl, http.RequestMethod.PUT, '', {
+      contentType: contentType,
+      rawData: bytes
+    })
+    if (response.responseCode >= 400) {
+      throw new Error(`Audio upload failed with status ${response.responseCode}`)
+    }
+  }
+
+  async downloadAudio(fileName: string): Promise<ArrayBuffer> {
+    const config = await this.requireConfig()
+    const directoryUrl = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
+    const audioUrl = `${directoryUrl}${WebDAVClient.audioDirName}/${encodeURIComponent(fileName)}`
+    const response = await this.sendRequest(audioUrl, http.RequestMethod.GET, undefined, {
+      expectArrayBuffer: true
+    })
+    if (response.responseCode >= 400) {
+      throw new Error(`Audio download failed with status ${response.responseCode}`)
+    }
+    if (response.result instanceof ArrayBuffer) {
+      return response.result as ArrayBuffer
+    }
+    throw new Error('Unexpected response type for audio download')
+  }
+
+  async deleteAudio(fileName: string): Promise<void> {
+    const config = await this.requireConfig()
+    const directoryUrl = PathUtils.joinRemoteDirectoryUrl(config.baseUrl, config.notesDir)
+    const audioUrl = `${directoryUrl}${WebDAVClient.audioDirName}/${encodeURIComponent(fileName)}`
+    const response = await this.sendRequest(audioUrl, http.RequestMethod.DELETE)
+    if (response.responseCode >= 400 && response.responseCode !== 404) {
+      throw new Error(`Audio delete failed with status ${response.responseCode}`)
     }
   }
 

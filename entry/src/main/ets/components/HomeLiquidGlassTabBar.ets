@@ -7,7 +7,7 @@ import {
   type SystemMaterialParams
 } from '@kit.UIDesignKit'
 
-/** 首页底部三按钮 TabBar：更多 / 待办 / 笔记（HdsTabs 悬浮 + 沉浸光感，低版本毛玻璃降级）。 */
+/** 首页底部三按钮 TabBar：更多 / 语音 / 笔记（HdsTabs 悬浮 + 沉浸光感，低版本毛玻璃降级）。 */
 
 const TAB_BAR_HEIGHT_VP = 45
 
@@ -26,7 +26,7 @@ const TAB_BAR_HORIZONTAL_PADDING_VP = 4
 export struct HomeLiquidGlassTabBar {
   @StorageProp(APP_LOCALE_REVISION_KEY) localeRevision: number = 0
   onMore: () => void = (): void => {}
-  onTodo: () => void = (): void => {}
+  onVoice: () => void = (): void => {}
   onNote: () => void = (): void => {}
 
   private tabsController: HdsTabsController = new HdsTabsController()
@@ -81,7 +81,7 @@ export struct HomeLiquidGlassTabBar {
     if (index === 0) {
       this.onMore()
     } else if (index === 1) {
-      this.onTodo()
+      this.onVoice()
     } else if (index === 2) {
       this.onNote()
     }
@@ -116,7 +116,7 @@ export struct HomeLiquidGlassTabBar {
   @Builder
   private buildTabItems() {
     this.buildTabItem(LocaleService.loc('更多', 'More'), $r('sys.symbol.square_grid_2x2'), this.onMore)
-    this.buildTabItem(LocaleService.loc('待办', 'Todo'), $r('sys.symbol.list_bullet'), this.onTodo)
+    this.buildTabItem(LocaleService.loc('语音', 'Voice'), $r('sys.symbol.mic'), this.onVoice)
     this.buildTabItem(LocaleService.loc('笔记', 'Notes'), $r('sys.symbol.square_and_pencil'), this.onNote)
   }
 
@@ -131,7 +131,7 @@ export struct HomeLiquidGlassTabBar {
       TabContent() {
         this.buildPassthroughTabPane()
       }
-      .tabBar(this.buildTabBarStyle($r('sys.symbol.list_bullet'), LocaleService.loc('待办', 'Todo')))
+      .tabBar(this.buildTabBarStyle($r('sys.symbol.mic'), LocaleService.loc('语音', 'Voice')))
 
       TabContent() {
         this.buildPassthroughTabPane()

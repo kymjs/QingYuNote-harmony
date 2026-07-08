@@ -441,6 +441,10 @@
       "value": "Read clipboard after copying a WeRead API Key on the H5 page to start import; only used in foreground during import"
     },
     {
+      "name": "permission_microphone_reason",
+      "value": "Used to record voice notes"
+    },
+    {
       "name": "login_title",
       "value": "Sign in"
     },

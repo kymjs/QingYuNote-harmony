@@ -6,7 +6,12 @@ export class UserFacingMessage {
     '笔记正文为空，无法优化',
     '请输入有效链接',
     '未登录或服务不可用',
-    'AI 未返回有效内容'
+    'AI 未返回有效内容',
+    '语音转文字失败，请稍后重试',
+    '语音转文字未返回有效内容',
+    '录音文件未找到，请稍后重试',
+    '录音格式无法识别，请重新录制',
+    '同步失败，请稍后重试'
   ]
 
   static sanitize(raw: string | undefined | null, fallback: string): string {

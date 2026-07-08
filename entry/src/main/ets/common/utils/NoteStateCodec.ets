@@ -72,6 +72,7 @@ export class NoteStateCodec {
       userData: note.userData,
       rsa: note.rsa,
       imageRefs: [...note.imageRefs],
+      audioId: note.audioId ?? '',
       deletedTime: note.deletedTime,
       type_: note.type_
     }
@@ -103,6 +104,9 @@ export class NoteStateCodec {
     }
     if (state.rsa !== 0) {
       lines.push('rsa: true')
+    }
+    if (state.audioId.length > 0) {
+      lines.push(`audio_id: ${state.audioId}`)
     }
     lines.push(`image_refs: ${NoteStateCodec.serializeTags(state.imageRefs)}`)
     lines.push(`deleted_time: ${state.deletedTime}`)
@@ -153,6 +157,7 @@ export class NoteStateCodec {
       userData: state.userData,
       rsa: state.rsa,
       imageRefs: [],
+      audioId: '',
       deletedTime: 1,
       type_: state.type_,
     }
@@ -181,6 +186,7 @@ export class NoteStateCodec {
       userData: '',
       rsa: 0,
       imageRefs: [],
+      audioId: '',
       deletedTime: 0,
       type_: type
     }
@@ -257,6 +263,9 @@ export class NoteStateCodec {
           break
         case 'image_refs':
           parsed.imageRefs = NoteStateCodec.parseTags(value)
+          break
+        case 'audio_id':
+          parsed.audioId = value
           break
         case 'deleted_time':
           parsed.deletedTime = NoteStateCodec.parseInteger(value, parsed.deletedTime)
@@ -391,6 +400,18 @@ export class NoteStateCodec {
       match = IMAGE_REF_REGEX.exec(content)
     }
     IMAGE_REF_REGEX.lastIndex = 0
+    return Array.from(refs).sort()
+  }
+
+  /** 彻底删除笔记时合并正文 Markdown 与 NOTE_STATE 中的图片引用。 */
+  static collectImageRefsForDeletion(rawContent: string, fallbackNoteId: string = ''): string[] {
+    const parsed = NoteStateCodec.parseNoteFile(rawContent, fallbackNoteId)
+    const refs = new Set<string>(NoteStateCodec.extractImageRefs(parsed.content))
+    for (const ref of parsed.state.imageRefs) {
+      if (ref.length > 0) {
+        refs.add(ref)
+      }
+    }
     return Array.from(refs).sort()
   }
 }

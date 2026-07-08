@@ -4,3 +4,4 @@ export type NoteEditorEntryAction =
   | 'insertImage'
   | 'generateNoteFromImage'
   | 'todoList'
+  | 'voiceMemo'

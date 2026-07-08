@@ -431,7 +431,9 @@ export class NoteRepository {
     const summaryChanged = nextSummary !== existing.summary
     const tagsChanged = !this.areTagsEqual(nextTags, existing.tags)
     const parentIdChanged = nextParentId !== existing.parentId
-    if (!contentChanged && !titleChanged && !summaryChanged && !tagsChanged && !parentIdChanged) {
+    const nextAudioId = patch.audioId !== undefined ? patch.audioId : existing.audioId
+    const audioIdChanged = nextAudioId !== existing.audioId
+    if (!contentChanged && !titleChanged && !summaryChanged && !tagsChanged && !parentIdChanged && !audioIdChanged) {
       return this.cloneNote(existing)
     }
 
@@ -442,6 +444,7 @@ export class NoteRepository {
     updated.tags = [...nextTags]
     updated.parentId = nextParentId
     updated.summary = nextSummary
+    updated.audioId = nextAudioId
     updated.localModified = now
     updated.deleted = false
     updated.deletedAt = 0
@@ -484,6 +487,8 @@ export class NoteRepository {
     }
     await FileService.getInstance().writeNoteFile(updated)
     await DatabaseService.getInstance().upsertSyncState(this.toSyncState(updated))
+    await this.deleteImagesForNote(updated.content, updated.imageRefs)
+    await this.deleteAudioForNote(updated.audioId)
     this.bumpVersion()
     await WebDAVClient.getInstance().appendPermanentlyDeletedNoteId(id)
     this.scheduleSyncHandler?.(id)
@@ -590,7 +595,8 @@ export class NoteRepository {
     await this.init()
     const note = await this.getNote(noteId)
     if (note !== null) {
-      await this.deleteImagesForNote(note.content)
+      await this.deleteImagesForNote(note.content, note.imageRefs)
+      await this.deleteAudioForNote(note.audioId)
     }
     await FileService.getInstance().deleteNoteFile(noteId)
     await DatabaseService.getInstance().deleteSyncState(noteId)
@@ -849,6 +855,7 @@ export class NoteRepository {
       content: '',
       tags: [],
       imageRefs: [...base.imageRefs],
+      audioId: '',
       summary: '',
       localModified: fallback,
       remoteModified: state.remoteModified,
@@ -904,6 +911,7 @@ export class NoteRepository {
       content,
       tags: [...resolvedTags],
       imageRefs: resolvedImageRefs,
+      audioId: state.audioId ?? '',
       summary: MarkdownUtils.summary(content),
       localModified: resolvedLocalModified,
       remoteModified: effectiveSyncState.remoteModified,
@@ -975,6 +983,7 @@ export class NoteRepository {
       content: note.content,
       tags: [...note.tags],
       imageRefs: [...note.imageRefs],
+      audioId: note.audioId,
       summary: note.summary,
       localModified: note.localModified,
       remoteModified: note.remoteModified,
@@ -1022,8 +1031,16 @@ export class NoteRepository {
     })
   }
 
-  private async deleteImagesForNote(content: string): Promise<void> {
-    const imageRefs = NoteStateCodec.extractImageRefs(content)
+  private async deleteImagesForNote(content: string, stateImageRefs?: string[]): Promise<void> {
+    const refs = new Set<string>(NoteStateCodec.extractImageRefs(content))
+    if (stateImageRefs !== undefined) {
+      for (const ref of stateImageRefs) {
+        if (ref.length > 0) {
+          refs.add(ref)
+        }
+      }
+    }
+    const imageRefs = Array.from(refs)
     if (imageRefs.length === 0) {
       return
     }
@@ -1045,6 +1062,25 @@ export class NoteRepository {
       } catch (error) {
         Logger.warn('NoteRepository', `deleteImagesForNote failed for ${ref}: ${JSON.stringify(error)}`)
       }
+    }
+  }
+
+  private async deleteAudioForNote(audioId: string): Promise<void> {
+    const trimmed = audioId.trim()
+    if (trimmed.length === 0) {
+      return
+    }
+    const ctx = this.context
+    if (!ctx) {
+      return
+    }
+    try {
+      const localPath = `${ctx.filesDir}/audio/${trimmed}`
+      if (FileService.fileExists(localPath)) {
+        FileService.deleteFile(localPath)
+      }
+    } catch (error) {
+      Logger.warn('NoteRepository', `deleteAudioForNote failed for ${audioId}: ${JSON.stringify(error)}`)
     }
   }
 }

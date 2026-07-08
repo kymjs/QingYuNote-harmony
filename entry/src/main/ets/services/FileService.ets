@@ -193,6 +193,7 @@ export class FileService {
       content,
       tags: [...state.tags],
       imageRefs,
+      audioId: state.audioId ?? '',
       summary: '',
       localModified: savedAt,
       remoteModified: 0,
@@ -316,7 +317,8 @@ export class FileService {
 
   static fileExists(path: string): boolean {
     try {
-      return fs.accessSync(path)
+      fs.accessSync(path)
+      return true
     } catch (_) {
       return false
     }

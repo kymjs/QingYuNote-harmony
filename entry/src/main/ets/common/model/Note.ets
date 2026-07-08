@@ -21,6 +21,7 @@ export interface NoteStateBlock {
   userData: string
   rsa: number
   imageRefs: string[]
+  audioId: string
   deletedTime: number
   type_: number
 }
@@ -64,6 +65,7 @@ export interface Note {
   userData: string
   rsa: number
   imageRefs: string[]
+  audioId: string
   deletedTime: number
   type_: number
 }
@@ -130,6 +132,8 @@ export interface UpdateNoteInput {
   parentId?: string
   /** 为 true 且 title 为空时，不调用 MarkdownUtils.extractTitle。 */
   skipTitleAutoFill?: boolean
+  /** 关联录音文件名（如 `{noteId}.m4a`）；undefined 时不修改。 */
+  audioId?: string
 }
 
 /** 回收站列表加载结果（含仅存在于远端、尚未写入本地的条目 id）。 */

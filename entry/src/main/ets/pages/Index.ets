@@ -545,6 +545,14 @@ struct Index {
     void this.openEditor()
   }
 
+  private onHomeVoiceTabPressed(): void {
+    if (this.searchExpanded) {
+      this.searchExpanded = false
+      return
+    }
+    void this.openEditor(undefined, false, 'voiceMemo')
+  }
+
   private onHomeTodoTabPressed(): void {
     if (this.searchExpanded) {
       this.searchExpanded = false
@@ -570,6 +578,9 @@ struct Index {
     buildHomeMoreOptionsSheetContent({
       onClose: (): void => {
         this.closeMoreOptionsSheet()
+      },
+      onTodoList: (): void => {
+        void this.openEditor(undefined, false, 'todoList')
       },
       onPasteLink: (): void => {
         void this.openEditor(undefined, false, 'aiLinkExtract')
@@ -1052,8 +1063,8 @@ struct Index {
       onMore: (): void => {
         this.onHomeMoreTabPressed()
       },
-      onTodo: (): void => {
-        this.onHomeTodoTabPressed()
+      onVoice: (): void => {
+        this.onHomeVoiceTabPressed()
       },
       onNote: (): void => {
         this.onHomeNoteTabPressed()

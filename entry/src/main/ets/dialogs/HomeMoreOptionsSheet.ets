@@ -2,6 +2,7 @@ import { APP_LOCALE_REVISION_KEY, LocaleService } from '../services/LocaleServic
 
 export interface HomeMoreOptionsSheetParams {
   onClose: () => void
+  onTodoList: () => void
   onPasteLink: () => void
   onPhotoImage: () => void
   onKnowledgeGraph: () => void
@@ -12,6 +13,7 @@ export struct HomeMoreOptionsSheet {
   @StorageProp(APP_LOCALE_REVISION_KEY) localeRevision: number = 0
   @Prop params: HomeMoreOptionsSheetParams = {
     onClose: (): void => {},
+    onTodoList: (): void => {},
     onPasteLink: (): void => {},
     onPhotoImage: (): void => {},
     onKnowledgeGraph: (): void => {}
@@ -88,6 +90,19 @@ export struct HomeMoreOptionsSheet {
       .width('100%')
 
       Column() {
+        this.buildOptionRow(
+          $r('sys.symbol.list_bullet'),
+          LocaleService.loc('待办事项', 'To-do list', 'ToDoリスト'),
+          LocaleService.loc('把每天安排的更清楚', 'Plan your day more clearly', '毎日の予定をもっと明確に'),
+          (): void => {
+            this.params.onClose()
+            this.params.onTodoList()
+          }
+        )
+        Divider()
+          .color($r('app.color.divider'))
+          .strokeWidth(1)
+          .margin({ left: 68 })
         this.buildOptionRow(
           $r('sys.symbol.link'),
           LocaleService.loc('链接生成笔记', 'Create note from link'),

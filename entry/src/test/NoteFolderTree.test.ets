@@ -44,7 +44,8 @@ function note(id: string, parentId: string = '', title: string = ''): Note {
     rsa: 0,
     deletedTime: 0,
     type: 0,
-    imageRefs: []
+    imageRefs: [],
+    audioId: ''
   } as Note
 }
 
