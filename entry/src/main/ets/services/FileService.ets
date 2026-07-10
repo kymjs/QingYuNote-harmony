@@ -317,9 +317,11 @@ export class FileService {
 
   static fileExists(path: string): boolean {
     try {
-      fs.accessSync(path)
+      const stat = fs.statSync(path)
+      Logger.info('FileService', `fileExists yes: path=${path}, size=${stat.size}`)
       return true
-    } catch (_) {
+    } catch (e) {
+      Logger.info('FileService', `fileExists no:  path=${path}, err=${JSON.stringify(e)}`)
       return false
     }
   }
@@ -345,22 +347,21 @@ export class FileService {
   }
 
   static writeFile(path: string, data: ArrayBuffer): void {
+    const dir = path.substring(0, path.lastIndexOf('/'))
+    if (!FileService.fileExists(dir)) {
+      Logger.info('FileService', `writeFile mkdir: ${dir}`)
+      fs.mkdirSync(dir, true)
+    }
+    const file = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
     try {
-      const dir = path.substring(0, path.lastIndexOf('/'))
-      if (!fs.accessSync(dir)) {
-        fs.mkdirSync(dir, true)
-      }
-      const file = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
+      fs.writeSync(file.fd, data)
+      const stat = fs.statSync(file.fd)
+      Logger.info('FileService', `writeFile ok: path=${path}, bytes=${data.byteLength}, onDisk=${stat.size}`)
+    } finally {
       try {
-        fs.writeSync(file.fd, data)
-      } finally {
-        try {
-          fs.closeSync(file)
-        } catch (_) {
-        }
+        fs.closeSync(file)
+      } catch (_) {
       }
-    } catch (error) {
-      throw error instanceof Error ? error : new Error(`${error}`)
     }
   }
 

@@ -1,4 +1,5 @@
 import type { Note, NoteSyncState, SyncResult } from '../common/model/Note'
+import { NOTE_TYPE_FLOWCHART } from '../common/model/FlowchartGraph'
 import { DatabaseService } from './DatabaseService'
 import { NoteRepository } from './NoteRepository'
 import { PreferencesService } from './PreferencesService'
@@ -336,6 +337,10 @@ export class SyncService {
         await this.applyRemotePermanentDeleteIfNeeded(noteId, remoteWhenEqual, remoteStat.remoteModified)
       if (purgeWhenEqual !== null) {
         return purgeWhenEqual
+      }
+      // 知识图谱：.md 时间戳容差内一致但 .qy 边车可能仍存在差异，仍拉一次以防漏同步。
+      if (note.type_ === NOTE_TYPE_FLOWCHART) {
+        await this.downloadFlowchartSidecarIfRemote(noteId)
       }
       await this.downloadImagesForNote(noteId, remoteWhenEqual)
       await this.downloadAudioForNote(noteId, remoteWhenEqual)
@@ -1001,6 +1006,7 @@ export class SyncService {
       return remotePermanent
     }
     await NoteRepository.getInstance().overwriteFromRemote(noteId, remoteContent, remoteStat.remoteModified)
+    await this.downloadFlowchartSidecarIfRemote(noteId)
     await this.downloadImagesForNote(noteId, remoteContent)
     await this.downloadAudioForNote(noteId, remoteContent)
     return {
@@ -1038,6 +1044,12 @@ export class SyncService {
       Logger.warn('SyncService',
         `applyPermanentDeleteListedInIndex deleteNote failed: noteId=${noteId}, ${this.describeError(error as Object)}`)
     }
+    try {
+      await WebDAVClient.getInstance().deleteFlowchart(noteId)
+    } catch (error) {
+      Logger.warn('SyncService',
+        `applyPermanentDeleteListedInIndex deleteFlowchart failed: noteId=${noteId}, ${this.describeError(error as Object)}`)
+    }
     await this.deleteImagesForNote(content, noteId)
     const audioId = NoteStateCodec.parseNoteFile(content, noteId).state.audioId
     await this.deleteAudioForNote(audioId)
@@ -1061,6 +1073,12 @@ export class SyncService {
     }
     Logger.info('SyncService', `applyRemotePermanentDeleteIfNeeded: remote deleted_time=2, noteId=${noteId}`)
     await WebDAVClient.getInstance().deleteNote(noteId)
+    try {
+      await WebDAVClient.getInstance().deleteFlowchart(noteId)
+    } catch (error) {
+      Logger.warn('SyncService',
+        `applyRemotePermanentDeleteIfNeeded deleteFlowchart failed: noteId=${noteId}, ${this.describeError(error as Object)}`)
+    }
     await this.deleteImagesForNote(remoteContent, noteId)
     await this.deleteAudioForNote(payload.state.audioId)
     await NoteRepository.getInstance().purgeLocalNoteCompletely(noteId)

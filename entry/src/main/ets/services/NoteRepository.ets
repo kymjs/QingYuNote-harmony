@@ -599,6 +599,7 @@ export class NoteRepository {
       await this.deleteAudioForNote(note.audioId)
     }
     await FileService.getInstance().deleteNoteFile(noteId)
+    await FileService.getInstance().deleteFlowchartFile(noteId)
     await DatabaseService.getInstance().deleteSyncState(noteId)
     this.bumpVersion()
   }
@@ -765,9 +766,11 @@ export class NoteRepository {
     if (!isDefaultFlowchartTitle(note.title ?? '')) {
       return true
     }
+    // 标题为默认占位「编辑标题」时，需要 `.qy` 边车至少有非占位节点才展示。
+    // `.qy` 缺失只表明本地未同步完成（远端可能仍有），不应 purge 笔记，
+    // 否则 `syncRemoteOnlyNote` 拉 `.md` 之后没拉到 `.qy` 时会被这里一并清掉。
     const hasFlowchartFile = FileService.getInstance().flowchartFileExists(note.id)
     if (!hasFlowchartFile) {
-      await this.purgeLocalNoteCompletely(note.id)
       return false
     }
     const graph = await FlowchartService.getInstance().load(note.id)
