@@ -12,12 +12,23 @@ import { AppContextHolder } from '../services/AppContextHolder'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { FlowchartLayoutEngine } from '../common/utils/FlowchartLayoutEngine'
 import { FlowchartEdgeRouting } from '../common/utils/FlowchartEdgeRouting'
+import {
+  FlowchartMindMap,
+  type FlowchartBranchLabelLayout,
+  type FlowchartLabelSize,
+  FLOWCHART_MIND_MAP_BRANCH_FONT_SIZE,
+  FLOWCHART_MIND_MAP_BRANCH_LINE_HEIGHT,
+  FLOWCHART_MIND_MAP_BRANCH_SELECTION_PAD_H,
+  FLOWCHART_MIND_MAP_BRANCH_SELECTION_PAD_V
+} from '../common/utils/FlowchartMindMap'
 import { Logger } from '../common/utils/Logger'
 import { EditorUiStrings } from '../common/utils/EditorUiStrings'
 import { APP_LOCALE_REVISION_KEY } from '../services/LocaleService'
 import type {
   FlowchartAnchor,
   FlowchartAnchorHit,
+  FlowchartMindMapAddHit,
+  FlowchartMindMapButtonRect,
   FlowchartEdgeLineEndpoints,
   FlowchartEdgeModel,
   FlowchartGraphModel,
@@ -35,6 +46,15 @@ import {
   FLOWCHART_LINE_PROP_TYPE,
   FLOWCHART_LINE_TYPES,
   FLOWCHART_ORTHOGONAL_ROUTING_KEY,
+  FLOWCHART_MIND_MAP_ROLE_KEY,
+  FLOWCHART_MIND_MAP_ROLE_ROOT,
+  FLOWCHART_MIND_MAP_ROLE_BRANCH,
+  FLOWCHART_MIND_MAP_ROOT_COLOR,
+  FLOWCHART_MIND_MAP_LINE_COLOR,
+  FLOWCHART_MIND_MAP_BRANCH_TEXT_COLOR,
+  FLOWCHART_MIND_MAP_ROOT_TEXT_COLOR,
+  FLOWCHART_MIND_MAP_SIDE_LEFT,
+  FLOWCHART_MIND_MAP_SIDE_RIGHT,
   FLOWCHART_SHAPE_TYPES,
   createEmptyFlowchartGraph,
   createFlowchartPosition,
@@ -205,8 +225,19 @@ struct FlowchartPage {
     const loaded = note === null
       ? createEmptyFlowchartGraph()
       : await FlowchartService.getInstance().load(this.noteId)
+    let graph = loaded
+    if (FlowchartMindMap.isMindMapMode(graph)) {
+      const rootId = FlowchartMindMap.rootId(graph)
+      if (rootId.length > 0) {
+        graph = FlowchartLayoutEngine.applyMindMapLinearLayout(
+          graph,
+          this.isPhoneLayout(),
+          rootId
+        )
+      }
+    }
     if (this.lifecycle.isActive()) {
-      this.graph = loaded
+      this.graph = graph
       this.noteTitle = note?.title ?? FLOWCHART_DEFAULT_TITLE
       this.initialHadNodes = !isPlaceholderFlowchartGraph(loaded)
       this.loading = false
@@ -291,6 +322,145 @@ struct FlowchartPage {
     this.markDirty()
     this.scheduleCanvasRedraw()
     this.showUserMessage(EditorUiStrings.loc('已对齐布局', 'Layout aligned', 'レイアウトを整列しました'))
+  }
+
+  private isMindMapMode(): boolean {
+    return FlowchartMindMap.isMindMapMode(this.graph)
+  }
+
+  private mindMapBranchLabel(node: FlowchartNodeModel): FlowchartBranchLabelLayout {
+    return FlowchartMindMap.layoutBranchLabel(node.title)
+  }
+
+  private mindMapRootId(): string {
+    return FlowchartMindMap.rootId(this.graph)
+  }
+
+  private onMindMapPaletteTap(): void {
+    if (!this.isMindMapMode() || this.graph.nodes.length === 0) {
+      this.enterMindMapMode()
+    }
+  }
+
+  private enterMindMapMode(): void {
+    this.pushUndo()
+    let graph = this.graph
+    let rootId = FlowchartMindMap.rootId(graph)
+
+    if (graph.nodes.length === 0) {
+      graph = FlowchartMindMap.createDefaultTemplate(() => util.generateRandomUUID())
+      const inputText = EditorUiStrings.loc('输入文本', 'Enter text', 'テキストを入力')
+      const nodes = graph.nodes.map((node: FlowchartNodeModel): FlowchartNodeModel => ({
+        id: node.id,
+        title: inputText,
+        description: node.description,
+        color: node.color,
+        shape: node.shape,
+        position: node.position,
+        width: node.width,
+        height: node.height,
+        rotation: node.rotation,
+        properties: node.properties
+      }))
+      graph = {
+        version: graph.version,
+        metadata: graph.metadata,
+        nodes,
+        edges: [...graph.edges]
+      }
+      rootId = FlowchartMindMap.rootId(graph)
+    } else if (rootId.length === 0) {
+      rootId = this.selectedNodeId.length > 0 ? this.selectedNodeId : graph.nodes[0].id
+    }
+
+    graph = FlowchartMindMap.assignRoles(graph, rootId)
+    graph = FlowchartLayoutEngine.applyMindMapLinearLayout(graph, this.isPhoneLayout(), rootId)
+    this.graph = graph
+    this.selectedNodeId = rootId
+    this.graphRevision++
+    this.markDirty()
+    this.scheduleCanvasRedraw()
+    this.showUserMessage(EditorUiStrings.loc('已进入思维导图模式', 'Mind map mode enabled', 'マインドマップモードを開始しました'))
+  }
+
+  private addMindMapChildOnSide(parentId: string, side: string): void {
+    const parent = this.nodeById(parentId)
+    if (parent === undefined) {
+      return
+    }
+
+    this.pushUndo()
+    const childId = util.generateRandomUUID()
+    const childProperties: Record<string, Object> = {}
+    childProperties[FLOWCHART_MIND_MAP_ROLE_KEY] = FLOWCHART_MIND_MAP_ROLE_BRANCH
+    const child: FlowchartNodeModel = {
+      id: childId,
+      title: EditorUiStrings.loc('输入文本', 'Enter text', 'テキストを入力'),
+      description: '',
+      color: '',
+      shape: 'roundedRect',
+      position: parent.position,
+      width: 40,
+      height: 24,
+      rotation: 0,
+      properties: childProperties
+    }
+    let graph = FlowchartMindMap.addChildOnSide(
+      this.graph,
+      parentId,
+      side,
+      child,
+      util.generateRandomUUID()
+    )
+    const rootId = this.mindMapRootId().length > 0 ? this.mindMapRootId() : FlowchartMindMap.rootId(graph)
+    graph = FlowchartLayoutEngine.applyMindMapLinearLayout(graph, this.isPhoneLayout(), rootId)
+    this.graph = graph
+    this.selectedNodeId = childId
+    this.markNodeEdited(childId)
+    this.graphRevision++
+    this.markDirty()
+    this.scheduleCanvasRedraw()
+  }
+
+  private mindMapAddButtonRect(node: FlowchartNodeModel, side: string): FlowchartMindMapButtonRect {
+    const size = 24
+    const gap = 8
+    const display = this.nodeDisplaySize(node)
+    const top = node.position.y + display.h / 2 - size / 2
+    if (side === FLOWCHART_MIND_MAP_SIDE_LEFT) {
+      const rect: FlowchartMindMapButtonRect = { x: node.position.x - gap - size, y: top, w: size, h: size }
+      return rect
+    }
+    const rect: FlowchartMindMapButtonRect = { x: node.position.x + display.w + gap, y: top, w: size, h: size }
+    return rect
+  }
+
+  private hitTestMindMapAddButton(x: number, y: number): FlowchartMindMapAddHit | undefined {
+    if (!this.isMindMapMode() || this.selectedNodeId.length === 0) {
+      return undefined
+    }
+    const node = this.nodeById(this.selectedNodeId)
+    if (node === undefined) {
+      return undefined
+    }
+    if (!FlowchartMindMap.isRoot(this.graph, node) &&
+      !FlowchartMindMap.isBranch(this.graph, node)) {
+      return undefined
+    }
+    const sides = FlowchartMindMap.isRoot(this.graph, node)
+      ? [FLOWCHART_MIND_MAP_SIDE_LEFT, FLOWCHART_MIND_MAP_SIDE_RIGHT]
+      : [FlowchartMindMap.expansionSide(this.graph, node.id)]
+    for (const side of sides) {
+      if (side.length === 0) {
+        continue
+      }
+      const rect = this.mindMapAddButtonRect(node, side)
+      if (x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h) {
+        const hit: FlowchartMindMapAddHit = { parentId: node.id, side }
+        return hit
+      }
+    }
+    return undefined
   }
 
   private markNodeEdited(nodeId: string): void {
@@ -938,8 +1108,9 @@ struct FlowchartPage {
       const threshold = Math.max(padding, 12 / this.canvasScale)
       return this.distancePointToSegment(x, y, ep.from.x, ep.from.y, ep.to.x, ep.to.y) <= threshold
     }
-    return x >= pos.x - padding && x <= pos.x + node.width + padding &&
-      y >= pos.y - padding && y <= pos.y + node.height + padding
+    const size = this.nodeDisplaySize(node)
+    return x >= pos.x - padding && x <= pos.x + size.w + padding &&
+      y >= pos.y - padding && y <= pos.y + size.h + padding
   }
 
   private bestAnchorToward(node: FlowchartNodeModel, targetX: number, targetY: number): FlowchartAnchor {
@@ -1018,7 +1189,7 @@ struct FlowchartPage {
     }
     const node: FlowchartNodeModel = {
       id: util.generateRandomUUID(),
-      title: isArrow ? '' : '输入文本',
+      title: isArrow ? '' : '双击编辑',
       description: '',
       color: shape === 'diamond' ? '#FFF8E1' : '#E3F2FD',
       shape,
@@ -1189,6 +1360,43 @@ struct FlowchartPage {
     if (from === undefined || to === undefined) {
       return
     }
+    if (this.isMindMapMode() &&
+      FlowchartMindMap.isTreeNode(this.graph, from) &&
+      FlowchartMindMap.isTreeNode(this.graph, to)) {
+      if (!FlowchartMindMap.canInitiateConnection(this.graph, from)) {
+        return
+      }
+      if (FlowchartMindMap.isRoot(this.graph, to)) {
+        return
+      }
+      this.pushUndo()
+      const preferVertical = this.isPhoneLayout()
+      const resolvedSourceAnchor: FlowchartAnchor = sourceAnchor ?? (preferVertical ? 'bottom' : 'right')
+      const resolvedTargetAnchor: FlowchartAnchor = targetAnchor ?? (preferVertical ? 'top' : 'left')
+      let graph = FlowchartMindMap.addChildEdge(this.graph, fromId, toId, util.generateRandomUUID(),
+        resolvedSourceAnchor, resolvedTargetAnchor)
+      const nodes = graph.nodes.map((node: FlowchartNodeModel): FlowchartNodeModel => {
+        if (node.id === toId) {
+          return FlowchartMindMap.markBranch(node)
+        }
+        return node
+      })
+      graph = {
+        version: graph.version,
+        metadata: graph.metadata,
+        nodes,
+        edges: graph.edges
+      }
+      const rootId = this.mindMapRootId().length > 0 ? this.mindMapRootId() : fromId
+      graph = FlowchartMindMap.assignRoles(graph, rootId)
+      graph = FlowchartLayoutEngine.applyMindMapLinearLayout(graph, preferVertical, rootId)
+      this.graph = graph
+      this.graphRevision++
+      this.markDirty()
+      this.scheduleCanvasRedraw()
+      void this.persist(false)
+      return
+    }
     this.pushUndo()
     const tcx = to.position.x + to.width / 2
     const tcy = to.position.y + to.height / 2
@@ -1228,6 +1436,28 @@ struct FlowchartPage {
     }
     this.pushUndo()
     const id = this.selectedNodeId
+    const node = this.graph.nodes.find((n: FlowchartNodeModel) => n.id === id)
+    if (node !== undefined &&
+      this.isMindMapMode() &&
+      FlowchartMindMap.isTreeNode(this.graph, node)) {
+      let graph = FlowchartMindMap.removeSubtree(this.graph, id)
+      if (FlowchartMindMap.isMindMapMode(graph) && graph.nodes.length > 0) {
+        const rootId = FlowchartMindMap.rootId(graph)
+        if (rootId.length > 0) {
+          graph = FlowchartLayoutEngine.applyMindMapLinearLayout(
+            graph,
+            this.isPhoneLayout(),
+            rootId
+          )
+        }
+      }
+      this.graph = graph
+      this.selectedNodeId = ''
+      this.markDirty()
+      this.graphRevision++
+      this.scheduleCanvasRedraw()
+      return
+    }
     this.graph = {
       version: this.graph.version,
       metadata: this.graph.metadata,
@@ -1272,6 +1502,22 @@ struct FlowchartPage {
 
   private edgeRoutePoints(edge: FlowchartEdgeModel): FlowchartNodePosition[] {
     const endpoints = this.edgeLineEndpoints(edge)
+    if (FlowchartMindMap.isMindMapEdge(this.graph, edge)) {
+      if (FlowchartMindMap.siblingCountOnSide(this.graph.edges, edge) <= 1) {
+        return [endpoints.from, endpoints.to]
+      }
+      const source = this.nodeForRender(edge.source)
+      if (source === undefined) {
+        return [endpoints.from, endpoints.to]
+      }
+      return FlowchartEdgeRouting.mindMapTreePath(
+        endpoints.from.x, endpoints.from.y,
+        endpoints.to.x, endpoints.to.y,
+        source.position.x,
+        source.position.x + source.width,
+        edge.sourceAnchor
+      )
+    }
     if (!this.orthogonalRoutingEnabled() ||
       !FlowchartEdgeRouting.shouldUseOrthogonalEdge(edge.source, edge.target, this.nodeDegreeMap())) {
       return [endpoints.from, endpoints.to]
@@ -1369,6 +1615,58 @@ struct FlowchartPage {
     return `M${tipX.toFixed(1)} ${tipY.toFixed(1)} L${ax1.toFixed(1)} ${ay1.toFixed(1)} L${ax2.toFixed(1)} ${ay2.toFixed(1)} Z`
   }
 
+  private routeToPxPoints(points: FlowchartNodePosition[]): FlowchartNodePosition[] {
+    const pxPoints: FlowchartNodePosition[] = []
+    for (let i = 0; i < points.length; i++) {
+      pxPoints.push({
+        x: this.shapePathPx(points[i].x),
+        y: this.shapePathPx(points[i].y)
+      })
+    }
+    return pxPoints
+  }
+
+  private edgePolylineCommandsFromRoute(points: FlowchartNodePosition[]): string {
+    if (points.length < 2) {
+      return ''
+    }
+    return FlowchartEdgeRouting.pathCommandsFromPoints(this.routeToPxPoints(points))
+  }
+
+  private edgeArrowHeadCommandAt(route: FlowchartNodePosition[], end: 'start' | 'end'): string {
+    const pxPoints = this.routeToPxPoints(route)
+    if (pxPoints.length < 2) {
+      return ''
+    }
+    if (end === 'end') {
+      const last = pxPoints[pxPoints.length - 1]
+      const prev = pxPoints[pxPoints.length - 2]
+      return this.arrowHeadPathCommandsPx(last.x, last.y, prev.x, prev.y)
+    }
+    const first = pxPoints[0]
+    const second = pxPoints[1]
+    return this.arrowHeadPathCommandsPx(first.x, first.y, second.x, second.y)
+  }
+
+  private edgeStrokeColor(edge: FlowchartEdgeModel): string {
+    return FlowchartMindMap.isMindMapEdge(this.graph, edge) ?
+      FLOWCHART_MIND_MAP_LINE_COLOR : '#212121'
+  }
+
+  private edgeStrokeWidth(edge: FlowchartEdgeModel): number {
+    return FlowchartMindMap.isMindMapEdge(this.graph, edge) ? 2.4 : 1.8
+  }
+
+  private edgePolylineCommandsForEdge(edge: FlowchartEdgeModel): string {
+    const route = this.edgeRoutePoints(edge)
+    return this.edgePolylineCommandsFromRoute(route)
+  }
+
+  private edgeArrowHeadCommandsForEdge(edge: FlowchartEdgeModel, end: 'start' | 'end'): string {
+    const route = this.edgeRoutePoints(edge)
+    return this.edgeArrowHeadCommandAt(route, end)
+  }
+
   private edgePathCommandsFromRoute(points: FlowchartNodePosition[], lineType: string): string {
     if (points.length < 2) {
       return ''
@@ -1396,11 +1694,11 @@ struct FlowchartPage {
 
   private edgePathCommands(fromX: number, fromY: number, toX: number, toY: number,
     lineType: string): string {
+    let commands = this.edgeStraightCommands(fromX, fromY, toX, toY)
     const fx = this.shapePathPx(fromX)
     const fy = this.shapePathPx(fromY)
     const tx = this.shapePathPx(toX)
     const ty = this.shapePathPx(toY)
-    let commands = `M${fx.toFixed(1)} ${fy.toFixed(1)} L${tx.toFixed(1)} ${ty.toFixed(1)}`
     if (lineType === 'arrow' || lineType === 'doubleArrow') {
       commands += ` ${this.arrowHeadPathCommandsPx(tx, ty, fx, fy)}`
     }
@@ -1408,6 +1706,14 @@ struct FlowchartPage {
       commands += ` ${this.arrowHeadPathCommandsPx(fx, fy, tx, ty)}`
     }
     return commands
+  }
+
+  private edgeStraightCommands(fromX: number, fromY: number, toX: number, toY: number): string {
+    const fx = this.shapePathPx(fromX)
+    const fy = this.shapePathPx(fromY)
+    const tx = this.shapePathPx(toX)
+    const ty = this.shapePathPx(toY)
+    return `M${fx.toFixed(1)} ${fy.toFixed(1)} L${tx.toFixed(1)} ${ty.toFixed(1)}`
   }
 
   private edgePathCommandsForEdge(edge: FlowchartEdgeModel): string {
@@ -1487,6 +1793,9 @@ struct FlowchartPage {
   }
 
   private activateNodeDrag(node: FlowchartNodeModel): void {
+    if (this.isMindMapMode() && FlowchartMindMap.isTreeNode(this.graph, node)) {
+      return
+    }
     if (this.dragActivated) {
       return
     }
@@ -1669,6 +1978,9 @@ struct FlowchartPage {
     if (node === undefined) {
       return undefined
     }
+    if (!FlowchartMindMap.shouldShowConnectionAnchors(this.graph, node)) {
+      return undefined
+    }
     const displayNode: FlowchartNodeModel = {
       id: node.id,
       title: node.title,
@@ -1752,6 +2064,14 @@ struct FlowchartPage {
       this.lastTouchLocalY = localY
       this.touchMoved = false
       this.logTouch(`down canvas=(${canvasPt.x.toFixed(1)},${canvasPt.y.toFixed(1)})`)
+      if (this.isMindMapMode()) {
+        const addHit = this.hitTestMindMapAddButton(canvasPt.x, canvasPt.y)
+        if (addHit !== undefined) {
+          this.addMindMapChildOnSide(addHit.parentId, addHit.side)
+          this.logTouch(`hit mind map add side=${addHit.side}`)
+          return
+        }
+      }
       const endpointHit = this.hitTestEndpoint(canvasPt.x, canvasPt.y)
       if (endpointHit !== undefined) {
         const endpointNode = this.nodeById(endpointHit.nodeId)
@@ -1934,9 +2254,16 @@ struct FlowchartPage {
     this.markDirty()
   }
 
+  private mindMapDefaultTitle(): string {
+    return EditorUiStrings.loc('输入文本', 'Enter text', 'テキストを入力')
+  }
+
   private openEditDialog(node: FlowchartNodeModel): void {
     this.editingNodeId = node.id
-    this.editTitle = node.title
+    this.editTitle = FlowchartMindMap.mindMapTitleForEdit(
+      node.title,
+      this.mindMapDefaultTitle()
+    )
     this.editDescription = node.description
     this.markNodeEdited(node.id)
     this.showEditDialog = true
@@ -1949,20 +2276,81 @@ struct FlowchartPage {
       return
     }
     this.pushUndo()
-    this.updateNode({
-      id: node.id,
-      title: this.editTitle.trim().length > 0 ? this.editTitle.trim() : '输入文本',
-      description: this.editDescription.trim(),
-      color: node.color,
-      shape: node.shape,
-      position: node.position,
-      width: node.width,
-      height: node.height,
-      rotation: node.rotation,
-      properties: node.properties
-    })
+    const localizedDefault = this.mindMapDefaultTitle()
+    const trimmedTitle = this.editTitle.trim()
+    const savedTitle = FlowchartMindMap.normalizeSavedMindMapTitle(
+      trimmedTitle,
+      localizedDefault
+    )
+    let graph = this.graph
+    const nextNodes: FlowchartNodeModel[] = []
+    for (const n of graph.nodes) {
+      if (n.id !== node.id) {
+        nextNodes.push(n)
+        continue
+      }
+      nextNodes.push({
+        id: n.id,
+        title: savedTitle,
+        description: this.editDescription.trim(),
+        color: n.color,
+        shape: n.shape,
+        position: n.position,
+        width: n.width,
+        height: n.height,
+        rotation: n.rotation,
+        properties: n.properties
+      })
+    }
+    graph = {
+      version: graph.version,
+      metadata: graph.metadata,
+      nodes: nextNodes,
+      edges: [...graph.edges]
+    }
+    if (this.isMindMapMode()) {
+      const rootId = this.mindMapRootId().length > 0 ?
+        this.mindMapRootId() : FlowchartMindMap.rootId(graph)
+      if (rootId.length > 0) {
+        if (FlowchartMindMap.isBranch(graph, node)) {
+          const size = FlowchartMindMap.measureBranchLabel(savedTitle)
+          const sizedNodes = graph.nodes.map((n: FlowchartNodeModel): FlowchartNodeModel => {
+            if (n.id !== node.id) {
+              return n
+            }
+            return {
+              id: n.id,
+              title: n.title,
+              description: n.description,
+              color: n.color,
+              shape: n.shape,
+              position: n.position,
+              width: size.w,
+              height: size.h,
+              rotation: n.rotation,
+              properties: n.properties
+            }
+          })
+          graph = {
+            version: graph.version,
+            metadata: graph.metadata,
+            nodes: sizedNodes,
+            edges: [...graph.edges]
+          }
+        }
+        graph = FlowchartLayoutEngine.applyMindMapLinearLayout(
+          graph,
+          this.isPhoneLayout(),
+          rootId
+        )
+      }
+    }
+    this.graph = graph
+    this.graphRevision++
+    this.scheduleCanvasRedraw()
     this.markNodeEdited(node.id)
     this.showEditDialog = false
+    this.markDirty()
   }
 
   private openEdgeEditDialog(edge: FlowchartEdgeModel): void {
@@ -2009,6 +2397,41 @@ struct FlowchartPage {
     .padding({ bottom: 5 })
     .alignItems(HorizontalAlign.Center)
     .key(`history_${this.historyRevision}`)
+  }
+
+  @Builder
+  private buildMindMapAddButton(node: FlowchartNodeModel, side: string) {
+    Stack() {
+      Circle({ width: 24, height: 24 })
+        .fill(FLOWCHART_MIND_MAP_LINE_COLOR)
+      Text('+')
+        .fontSize(16)
+        .fontColor(Color.White)
+        .fontWeight(FontWeight.Medium)
+    }
+    .width(24)
+    .height(24)
+    .position({
+      x: (side === FLOWCHART_MIND_MAP_SIDE_LEFT
+        ? -8 - 24
+        : node.width + 8) + FlowchartPage.NODE_LAYER_PAD,
+      y: node.height / 2 - 12 + FlowchartPage.NODE_LAYER_PAD
+    })
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  private buildMindMapAddButtons(node: FlowchartNodeModel) {
+    if (!this.isMindMapMode() || this.selectedNodeId !== node.id) {
+      Blank()
+    } else if (FlowchartMindMap.isRoot(this.graph, node)) {
+      this.buildMindMapAddButton(node, FLOWCHART_MIND_MAP_SIDE_LEFT)
+      this.buildMindMapAddButton(node, FLOWCHART_MIND_MAP_SIDE_RIGHT)
+    } else if (FlowchartMindMap.isBranch(this.graph, node)) {
+      this.buildMindMapAddButton(node, FlowchartMindMap.expansionSide(this.graph, node.id))
+    } else {
+      Blank()
+    }
   }
 
   @Builder
@@ -2309,17 +2732,50 @@ struct FlowchartPage {
   }
 
   @Builder
-  private buildEdgeShape(edge: FlowchartEdgeModel) {
+  private buildEdgePolylineShape(edge: FlowchartEdgeModel) {
     Shape() {
       Path()
         .width(4000)
         .height(4000)
-        .commands(this.edgePathCommandsForEdge(edge))
-        .stroke('#212121')
-        .strokeWidth(1.8)
-        .fill('#212121')
+        .commands(this.edgePolylineCommandsForEdge(edge))
+        .stroke(this.edgeStrokeColor(edge))
+        .strokeWidth(this.edgeStrokeWidth(edge))
+        .fill(Color.Transparent)
     }
     .viewPort({ x: 0, y: 0, width: 4000, height: 4000 })
+    .width(4000)
+    .height(4000)
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  private buildEdgeArrowHeadShape(edge: FlowchartEdgeModel, end: 'start' | 'end') {
+    Shape() {
+      Path()
+        .width(4000)
+        .height(4000)
+        .commands(this.edgeArrowHeadCommandsForEdge(edge, end))
+        .stroke(this.edgeStrokeColor(edge))
+        .strokeWidth(this.edgeStrokeWidth(edge))
+        .fill(this.edgeStrokeColor(edge))
+    }
+    .viewPort({ x: 0, y: 0, width: 4000, height: 4000 })
+    .width(4000)
+    .height(4000)
+    .hitTestBehavior(HitTestMode.None)
+  }
+
+  @Builder
+  private buildEdgeShape(edge: FlowchartEdgeModel) {
+    Stack() {
+      this.buildEdgePolylineShape(edge)
+      if (edge.lineType === 'arrow' || edge.lineType === 'doubleArrow') {
+        this.buildEdgeArrowHeadShape(edge, 'end')
+      }
+      if (edge.lineType === 'doubleArrow') {
+        this.buildEdgeArrowHeadShape(edge, 'start')
+      }
+    }
     .width(4000)
     .height(4000)
     .hitTestBehavior(HitTestMode.None)
@@ -2369,23 +2825,67 @@ struct FlowchartPage {
   @Builder
   private buildConnectDraftShape() {
     if (this.connectDraftActive) {
-      Shape() {
-        Path()
-          .width(4000)
-          .height(4000)
-          .commands(this.edgePathCommands(
-            this.connectDraftFromX, this.connectDraftFromY,
-            this.connectDraftToX, this.connectDraftToY, 'arrow'))
-          .stroke('#212121')
-          .strokeWidth(1.8)
-          .fill('#212121')
+      Stack() {
+        Shape() {
+          Path()
+            .width(4000)
+            .height(4000)
+            .commands(this.edgeStraightCommands(
+              this.connectDraftFromX, this.connectDraftFromY,
+              this.connectDraftToX, this.connectDraftToY))
+            .stroke('#212121')
+            .strokeWidth(1.8)
+            .fill(Color.Transparent)
+        }
+        .viewPort({ x: 0, y: 0, width: 4000, height: 4000 })
+        .width(4000)
+        .height(4000)
+        Shape() {
+          Path()
+            .width(4000)
+            .height(4000)
+            .commands(this.arrowHeadPathCommandsPx(
+              this.shapePathPx(this.connectDraftToX),
+              this.shapePathPx(this.connectDraftToY),
+              this.shapePathPx(this.connectDraftFromX),
+              this.shapePathPx(this.connectDraftFromY)))
+            .stroke('#212121')
+            .strokeWidth(1.8)
+            .fill('#212121')
+        }
+        .viewPort({ x: 0, y: 0, width: 4000, height: 4000 })
+        .width(4000)
+        .height(4000)
       }
-      .viewPort({ x: 0, y: 0, width: 4000, height: 4000 })
       .width(4000)
       .height(4000)
       .opacity(0.65)
       .hitTestBehavior(HitTestMode.None)
     }
+  }
+
+  private mindMapBranchSize(node: FlowchartNodeModel): FlowchartLabelSize {
+    return FlowchartMindMap.effectiveBranchDisplaySize(this.graph, node)
+  }
+
+  private nodeDisplaySize(node: FlowchartNodeModel): FlowchartLabelSize {
+    return FlowchartMindMap.effectiveBranchDisplaySize(this.graph, node)
+  }
+
+  @Builder
+  private buildMindMapBranchLines(node: FlowchartNodeModel) {
+    Column({ space: 0 }) {
+      ForEach(this.mindMapBranchLabel(node).lines, (line: string, index: number) => {
+        Text(line)
+          .fontSize(FLOWCHART_MIND_MAP_BRANCH_FONT_SIZE)
+          .lineHeight(FLOWCHART_MIND_MAP_BRANCH_LINE_HEIGHT)
+          .fontColor(FLOWCHART_MIND_MAP_BRANCH_TEXT_COLOR)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Start)
+      }, (_line: string, index: number) => `${index}`)
+    }
+    .alignItems(HorizontalAlign.Start)
   }
 
   @Builder
@@ -2395,18 +2895,68 @@ struct FlowchartPage {
         Blank()
           .width(node.width)
           .height(node.height)
+      } else if (FlowchartMindMap.isTextOnlyBranch(this.graph, node)) {
+        if (this.selectedNodeId === node.id) {
+          Row() {
+            this.buildMindMapBranchLines(node)
+          }
+          .width(this.mindMapBranchSize(node).w)
+          .height(this.mindMapBranchSize(node).h)
+          .padding({
+            left: FLOWCHART_MIND_MAP_BRANCH_SELECTION_PAD_H,
+            right: FLOWCHART_MIND_MAP_BRANCH_SELECTION_PAD_H,
+            top: FLOWCHART_MIND_MAP_BRANCH_SELECTION_PAD_V,
+            bottom: FLOWCHART_MIND_MAP_BRANCH_SELECTION_PAD_V
+          })
+          .borderRadius(4)
+          .backgroundColor(Color.White)
+          .border({ width: 1.5, color: FLOWCHART_MIND_MAP_LINE_COLOR })
+          .justifyContent(FlexAlign.Start)
+          .alignItems(VerticalAlign.Center)
+        } else {
+          Row() {
+            this.buildMindMapBranchLines(node)
+          }
+          .width(this.mindMapBranchSize(node).w)
+          .height(this.mindMapBranchSize(node).h)
+          .padding({
+            left: FLOWCHART_MIND_MAP_BRANCH_SELECTION_PAD_H,
+            right: FLOWCHART_MIND_MAP_BRANCH_SELECTION_PAD_H,
+            top: FLOWCHART_MIND_MAP_BRANCH_SELECTION_PAD_V,
+            bottom: FLOWCHART_MIND_MAP_BRANCH_SELECTION_PAD_V
+          })
+          .justifyContent(FlexAlign.Start)
+          .alignItems(VerticalAlign.Center)
+        }
+      } else if (FlowchartMindMap.isRoot(this.graph, node) && this.isMindMapMode()) {
+        Row()
+          .width(node.width)
+          .height(node.height)
+          .borderRadius(12)
+          .backgroundColor(FLOWCHART_MIND_MAP_ROOT_COLOR)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
+        Text(node.title.length > 0 ? node.title : '输入文本')
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(FLOWCHART_MIND_MAP_ROOT_TEXT_COLOR)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Center)
+          .width(node.width - 24)
       } else if (FlowchartShapePath.isPathShape(node.shape)) {
         this.buildNodePathShape(node)
       } else {
         this.buildNodeShapeUi(node)
-      }
-
-      if (!this.isLineNode(node) && node.shape !== 'arrowRight' && node.shape !== 'arrowLeft' &&
-        node.title.length > 0) {
+        // 普通图形（非 line / 非箭头）的标题栏。
+        // 挪进 first-chain 的 else 里执行，避免被 mind-map 分支 / 根节点重复渲染
+        // （分支 / 根节点各自的分支里已经渲染过文本；path 形状走的是 buildNodePathShape，
+        //  自己处理文本）。
         Column() {
-          Text(node.title)
+          Text(FlowchartMindMap.isDefaultMindMapNodeTitle(node.title) ? '双击编辑' : node.title)
             .fontSize(13)
-            .fontColor('#616161')
+            .fontColor(FlowchartMindMap.isDefaultMindMapNodeTitle(node.title) ? '#B0B6BE' : '#616161')
+            .fontStyle(FlowchartMindMap.isDefaultMindMapNodeTitle(node.title) ? FontStyle.Italic : FontStyle.Normal)
             .maxLines(3)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .textAlign(TextAlign.Center)
@@ -2419,8 +2969,8 @@ struct FlowchartPage {
         .hitTestBehavior(HitTestMode.None)
       }
     }
-    .width(node.width)
-    .height(node.height)
+    .width(this.nodeDisplaySize(node).w)
+    .height(this.nodeDisplaySize(node).h)
   }
 
   @Builder
@@ -2450,6 +3000,7 @@ struct FlowchartPage {
         this.buildAnchor(node, 'bottom')
         this.buildAnchor(node, 'left')
       }
+      this.buildMindMapAddButtons(node)
       this.buildNodeDeleteButton(node)
     }
     .width(node.width + FlowchartPage.NODE_LAYER_PAD * 2)
@@ -2465,7 +3016,8 @@ struct FlowchartPage {
 
   @Builder
   private buildAnchor(node: FlowchartNodeModel, anchor: FlowchartAnchor) {
-    if (this.selectedNodeId !== node.id) {
+    if (this.selectedNodeId !== node.id ||
+      !FlowchartMindMap.shouldShowConnectionAnchors(this.graph, node)) {
       Blank()
     } else {
       Circle({ width: 16, height: 16 })
@@ -2556,6 +3108,18 @@ struct FlowchartPage {
                       .alignItems(HorizontalAlign.Center)
                       .onClick(() => this.addLineNode(line as FlowchartLineType))
                     }, (line: string) => line)
+                    Column() {
+                      Image($r('app.media.ic_flowchart_mindmap_linear'))
+                        .width(36)
+                        .height(36)
+                        .objectFit(ImageFit.Contain)
+                        .fillColor($r('app.color.primary_text'))
+                    }
+                    .width('100%')
+                    .padding({ top: 4, bottom: 4 })
+                    .justifyContent(FlexAlign.Center)
+                    .alignItems(HorizontalAlign.Center)
+                    .onClick(() => this.onMindMapPaletteTap())
                   }
                   .width('100%')
                   .alignItems(HorizontalAlign.Center)
@@ -2721,7 +3285,11 @@ struct FlowchartPage {
             Text(EditorUiStrings.loc('编辑节点', 'Edit node', 'ノードを編集'))
               .fontSize(18)
               .fontWeight(FontWeight.Bold)
-            TextInput({ text: this.editTitle, placeholder: EditorUiStrings.loc('标题', 'Title', 'タイトル') })
+            TextArea({ text: this.editTitle, placeholder: EditorUiStrings.loc('标题', 'Title', 'タイトル') })
+              .fontSize(14)
+              .borderRadius(8)
+              .maxLines(4)
+              .height(96)
               .onChange((v: string) => {
                 this.editTitle = v
               })

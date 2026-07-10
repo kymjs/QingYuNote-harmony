@@ -49,11 +49,42 @@ export const FLOWCHART_ORTHOGONAL_ROUTING_KEY = 'orthogonalRouting'
 /** 节点连接数超过该值视为思维导图中心，保留直线连接。 */
 export const FLOWCHART_MIND_MAP_DEGREE_THRESHOLD = 4
 
+/** 思维导图（线性树）模式 metadata / 节点属性键。 */
+export const FLOWCHART_LAYOUT_MODE_KEY = 'layoutMode'
+export const FLOWCHART_LAYOUT_MODE_MIND_MAP_LINEAR = 'mindMapLinear'
+export const FLOWCHART_MIND_MAP_ROOT_ID_KEY = 'mindMapRootId'
+export const FLOWCHART_MIND_MAP_ROLE_KEY = 'mindMapRole'
+export const FLOWCHART_MIND_MAP_ROLE_ROOT = 'root'
+export const FLOWCHART_MIND_MAP_ROLE_BRANCH = 'branch'
+
+export const FLOWCHART_MIND_MAP_ROOT_COLOR = '#5B8DEF'
+export const FLOWCHART_MIND_MAP_LINE_COLOR = '#5B8DEF'
+export const FLOWCHART_MIND_MAP_BRANCH_TEXT_COLOR = '#95A3B8'
+export const FLOWCHART_MIND_MAP_ROOT_TEXT_COLOR = '#EAF1FF'
+export const FLOWCHART_MIND_MAP_BUS_GAP = 28
+
+export const FLOWCHART_MIND_MAP_DEFAULT_CHILD_COUNT = 3
+export const FLOWCHART_MIND_MAP_SIDE_LEFT = 'left'
+export const FLOWCHART_MIND_MAP_SIDE_RIGHT = 'right'
+export const FLOWCHART_MIND_MAP_BLOCK_PROXY_ID = '__flowchartMindMapBlock__'
+
 export type FlowchartAnchor = 'top' | 'right' | 'bottom' | 'left'
 
 export interface FlowchartAnchorHit {
   nodeId: string
   anchor: FlowchartAnchor
+}
+
+export interface FlowchartMindMapButtonRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export interface FlowchartMindMapAddHit {
+  parentId: string
+  side: string
 }
 
 export interface FlowchartNodePosition {
@@ -134,6 +165,14 @@ export function createFlowchartPosition(x: number, y: number): FlowchartNodePosi
 export function emptyFlowchartProperties(): Record<string, Object> {
   const properties: Record<string, Object> = {}
   return properties
+}
+
+export function cloneFlowchartRecord(source: Record<string, Object>): Record<string, Object> {
+  const target: Record<string, Object> = {}
+  for (const key of Object.keys(source)) {
+    target[key] = source[key]
+  }
+  return target
 }
 
 export function flowchartFirstMatchingNodeId(graph: FlowchartGraphModel, query: string): string {

@@ -17,7 +17,25 @@ export class LinkExtractClient {
     return LinkExtractClient.instance
   }
 
-  async extractLink(url: string, prompt: string): Promise<LinkExtractResult> {
+  static isVideoPlatformUrl(url: string): boolean {
+    const lower = url.trim().toLowerCase()
+    const hosts = [
+      'douyin.com',
+      'iesdouyin.com',
+      'bilibili.com',
+      'b23.tv',
+      'xiaohongshu.com',
+      'xhslink.com'
+    ]
+    for (let i = 0; i < hosts.length; i++) {
+      if (lower.includes(hosts[i])) {
+        return true
+      }
+    }
+    return false
+  }
+
+  async extractLink(url: string, prompt: string, summarize: number = 0): Promise<LinkExtractResult> {
     const token = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (token === null || token.trim().length === 0) {
       console.error(`${TAG} no access token`)
@@ -26,7 +44,7 @@ export class LinkExtractClient {
 
     const base = LinkExtractConstants.baseUrl.replace(/\/+$/, '')
     const fullUrl = `${base}/api/v1/extract`
-    console.info(`${TAG} request url=${fullUrl} tokenLen=${token.trim().length} target=${url.trim()}`)
+    console.info(`${TAG} request url=${fullUrl} tokenLen=${token.trim().length} target=${url.trim()} summarize=${summarize}`)
     const req = http.createHttp()
     try {
       const resp = await req.request(fullUrl, {
@@ -38,11 +56,12 @@ export class LinkExtractClient {
         },
         extraData: JSON.stringify({
           url: url.trim(),
-          prompt: prompt.trim()
+          prompt: prompt.trim(),
+          summarize: summarize
         }),
         expectDataType: http.HttpDataType.STRING,
         connectTimeout: 20000,
-        readTimeout: 150000
+        readTimeout: 600000
       })
       const text = (resp.result as string) ?? ''
       console.info(`${TAG} responseCode=${resp.responseCode} bodyLen=${text.length}`)
@@ -65,6 +84,10 @@ export class LinkExtractClient {
       if (title.length === 0 && content.length === 0) {
         console.error(`${TAG} empty title & content`)
         throw new Error('AI 未返回有效内容')
+      }
+      if (content.length === 0 && LinkExtractClient.isVideoPlatformUrl(url)) {
+        console.error(`${TAG} video platform returned empty content`)
+        throw new Error('AI 提取链接失败，请稍后重试')
       }
       console.info(`${TAG} success titleLen=${title.length} contentLen=${content.length}`)
       return { title, content }

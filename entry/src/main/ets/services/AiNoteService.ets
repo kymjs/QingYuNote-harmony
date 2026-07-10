@@ -12,6 +12,28 @@ export interface AiLinkSummaryResult {
   body: string
 }
 
+/** 链接提取后笔记标题：占位标题可被 API/正文解析结果覆盖。 */
+export class AiLinkExtractTitle {
+  static isPlaceholderNoteTitle(title: string): boolean {
+    const trimmed = title.trim()
+    return trimmed.length === 0 || trimmed === '未命名笔记'
+  }
+
+  static resolve(apiTitle: string, body: string): string {
+    let title = apiTitle.trim()
+    if (title.length === 0) {
+      title = MarkdownUtils.splitLinkSummary(body).title.trim()
+    }
+    if (title.length === 0 && body.trim().length > 0) {
+      title = MarkdownUtils.extractTitle(body)
+    }
+    if (title.length === 0 || title === '未命名笔记') {
+      return '链接笔记'
+    }
+    return title
+  }
+}
+
 interface MiniMaxAssistantPayload {
   content: string
   reasoningContent: string
@@ -84,18 +106,21 @@ export class AiNoteService {
     return NoteStateCodec.mergeOptimizedWithTrailingImages(content, optimized)
   }
 
-  async summarizeLink(url: string): Promise<AiLinkSummaryResult> {
+  async summarizeLink(url: string, summarize: number = 0): Promise<AiLinkSummaryResult> {
     const link = url.trim()
     if (link.length === 0) {
       throw new Error('请输入有效链接')
     }
     try {
       const prompt = AiNotePrompt.buildLinkSummaryUserMessage(link, '')
-      const extracted = await LinkExtractClient.getInstance().extractLink(link, prompt)
+      const extracted = await LinkExtractClient.getInstance().extractLink(link, prompt, summarize)
       console.info(`LinkExtract summarizeLink via server2 ok`)
+      if (extracted.content.length === 0) {
+        throw new Error('AI 未返回有效内容')
+      }
       return {
         title: extracted.title,
-        body: extracted.content.length > 0 ? extracted.content : extracted.title
+        body: extracted.content
       }
     } catch (e) {
       const msg = (e instanceof Error) ? e.message : `${e}`
@@ -103,13 +128,22 @@ export class AiNoteService {
         console.error(`LinkExtract summarizeLink unauthorized, NOT falling back`)
         throw e
       }
+      if (LinkExtractClient.isVideoPlatformUrl(link)) {
+        console.error(`LinkExtract summarizeLink video platform failed, NOT falling back. reason=${msg}`)
+        throw e instanceof Error ? e : new Error(msg)
+      }
       console.error(`LinkExtract summarizeLink server2 failed, fallback to LOCAL. reason=${msg}`)
-      return AiNoteService.summarizeLinkLocally(link)
+      return AiNoteService.summarizeLinkLocally(link, summarize)
     }
   }
 
-  private static async summarizeLinkLocally(link: string): Promise<AiLinkSummaryResult> {
+  private static async summarizeLinkLocally(link: string, summarize: number = 0): Promise<AiLinkSummaryResult> {
     const excerpt = await AiNoteService.fetchPageExcerpt(link)
+    if (summarize === 0) {
+      const title = AiNoteService.titleFromExcerpt(excerpt) ?? '链接笔记'
+      const body = excerpt.trim().length > 0 ? excerpt.trim() : link
+      return { title, body }
+    }
     const raw = await AiNoteService.chatPlainText(
       AiNotePrompt.LINK_SUMMARY_SYSTEM,
       AiNotePrompt.buildLinkSummaryUserMessage(link, excerpt),
@@ -122,6 +156,25 @@ export class AiNoteService {
       title: parts.title,
       body: parts.body.length > 0 ? parts.body : raw.trim()
     }
+  }
+
+  private static titleFromExcerpt(excerpt: string): string | null {
+    const lines = excerpt.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      let cleaned = lines[i].trim()
+      if (cleaned.startsWith('#')) {
+        cleaned = cleaned.replace(/^#+\s*/, '')
+      }
+      if (cleaned.length === 0) {
+        continue
+      }
+      const runes = Array.from(cleaned)
+      if (runes.length <= 40) {
+        return cleaned
+      }
+      return runes.slice(0, 40).join('')
+    }
+    return null
   }
 
   private static async chatPlainText(

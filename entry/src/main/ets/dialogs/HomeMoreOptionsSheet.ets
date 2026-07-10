@@ -106,7 +106,7 @@ export struct HomeMoreOptionsSheet {
         this.buildOptionRow(
           $r('sys.symbol.link'),
           LocaleService.loc('链接生成笔记', 'Create note from link'),
-          LocaleService.loc('微信/小红书/其他笔记链接，秒变笔记', 'WeChat, RED & other note links — notes in seconds'),
+          LocaleService.loc('抖音/B站/公众号/小红书链接，秒变笔记', 'Douyin, Bilibili, WeChat & RedNote links — notes in seconds'),
           (): void => {
             this.params.onClose()
             this.params.onPasteLink()

@@ -8,12 +8,24 @@ import type {
 import {
   FLOWCHART_LINE_NODE_SHAPE,
   FLOWCHART_ORTHOGONAL_ROUTING_KEY,
+  FLOWCHART_LAYOUT_MODE_KEY,
+  FLOWCHART_LAYOUT_MODE_MIND_MAP_LINEAR,
+  FLOWCHART_MIND_MAP_ROOT_ID_KEY,
+  FLOWCHART_MIND_MAP_SIDE_LEFT,
+  FLOWCHART_MIND_MAP_SIDE_RIGHT,
+  FLOWCHART_MIND_MAP_BLOCK_PROXY_ID,
   createFlowchartPosition
 } from '../model/FlowchartGraph'
+import { FlowchartMindMap } from './FlowchartMindMap'
 
 interface LayoutEdge {
   source: string
   target: string
+}
+
+interface FlowchartSubtreeSize {
+  w: number
+  h: number
 }
 
 export class FlowchartLayoutEngine {
@@ -33,6 +45,243 @@ export class FlowchartLayoutEngine {
    * @param preferVertical 手机纵向（自上而下）；平板/PC 横向（自左而右）。
    */
   static applyAlignedLayout(graph: FlowchartGraphModel, preferVertical: boolean = false): FlowchartGraphModel {
+    if (graph.nodes.length === 0) {
+      return graph
+    }
+    if (FlowchartMindMap.isMindMapMode(graph)) {
+      const rootId = FlowchartMindMap.rootId(graph)
+      if (rootId.length > 0 && graph.nodes.some((n) => n.id === rootId)) {
+        return FlowchartLayoutEngine.applyAlignedLayoutPreservingMindMap(graph, preferVertical, rootId)
+      }
+    }
+    return FlowchartLayoutEngine.applyAlignedLayoutCore(graph, preferVertical)
+  }
+
+  static applyAlignedLayoutPreservingMindMap(
+    graph: FlowchartGraphModel,
+    preferVertical: boolean,
+    rootId: string
+  ): FlowchartGraphModel {
+    const mindMapIds = FlowchartMindMap.collectSubtreeIds(graph, rootId)
+    graph = FlowchartLayoutEngine.applyMindMapLinearLayout(graph, false, rootId)
+
+    let minX = Number.MAX_VALUE
+    let minY = Number.MAX_VALUE
+    let maxX = Number.MIN_VALUE
+    let maxY = Number.MIN_VALUE
+    for (const node of graph.nodes) {
+      if (!mindMapIds.has(node.id)) {
+        continue
+      }
+      minX = Math.min(minX, node.position.x)
+      minY = Math.min(minY, node.position.y)
+      maxX = Math.max(maxX, node.position.x + node.width)
+      maxY = Math.max(maxY, node.position.y + node.height)
+    }
+    const bboxOrigin = createFlowchartPosition(minX, minY)
+    const blockW = Math.max(1, maxX - minX)
+    const blockH = Math.max(1, maxY - minY)
+    const proxyId = FLOWCHART_MIND_MAP_BLOCK_PROXY_ID
+    const proxy: FlowchartNodeModel = {
+      id: proxyId,
+      title: '',
+      description: '',
+      color: '',
+      shape: 'roundedRect',
+      position: bboxOrigin,
+      width: blockW,
+      height: blockH,
+      rotation: 0,
+      properties: {}
+    }
+
+    const lineNodes: FlowchartNodeModel[] = []
+    const layoutShapeNodes: FlowchartNodeModel[] = [proxy]
+    for (const node of graph.nodes) {
+      if (node.shape === FLOWCHART_LINE_NODE_SHAPE) {
+        lineNodes.push(node)
+      } else if (!mindMapIds.has(node.id)) {
+        layoutShapeNodes.push(node)
+      }
+    }
+
+    const layoutEdgeKeys = new Set<string>()
+    const layoutEdges: LayoutEdge[] = []
+    const addLayoutEdge = (source: string, target: string): void => {
+      const key = source <= target ? `${source}|${target}` : `${target}|${source}`
+      if (!layoutEdgeKeys.has(key)) {
+        layoutEdgeKeys.add(key)
+        layoutEdges.push({ source, target })
+      }
+    }
+    const layoutShapeIds: Record<string, boolean> = {}
+    for (const node of layoutShapeNodes) {
+      layoutShapeIds[node.id] = true
+    }
+    for (const edge of graph.edges) {
+      const srcInMind = mindMapIds.has(edge.source)
+      const tgtInMind = mindMapIds.has(edge.target)
+      if (srcInMind && tgtInMind) {
+        continue
+      }
+      if (!srcInMind && !tgtInMind) {
+        if (layoutShapeIds[edge.source] && layoutShapeIds[edge.target]) {
+          addLayoutEdge(edge.source, edge.target)
+        }
+        continue
+      }
+      const externalId = srcInMind ? edge.target : edge.source
+      if (layoutShapeIds[externalId]) {
+        addLayoutEdge(proxyId, externalId)
+      }
+    }
+
+    const positions = FlowchartLayoutEngine.layoutShapeNodes(
+      layoutShapeNodes, layoutEdges, preferVertical
+    )
+    const proxyPos = positions[proxyId] ?? bboxOrigin
+    const deltaX = proxyPos.x - bboxOrigin.x
+    const deltaY = proxyPos.y - bboxOrigin.y
+
+    const nodes = graph.nodes.map((node: FlowchartNodeModel): FlowchartNodeModel => {
+      if (mindMapIds.has(node.id)) {
+        return {
+          id: node.id,
+          title: node.title,
+          description: node.description,
+          color: node.color,
+          shape: node.shape,
+          position: createFlowchartPosition(node.position.x + deltaX, node.position.y + deltaY),
+          width: node.width,
+          height: node.height,
+          rotation: node.rotation,
+          properties: node.properties
+        }
+      }
+      const pos = positions[node.id]
+      if (pos !== undefined) {
+        return {
+          id: node.id,
+          title: node.title,
+          description: node.description,
+          color: node.color,
+          shape: node.shape,
+          position: pos,
+          width: node.width,
+          height: node.height,
+          rotation: node.rotation,
+          properties: node.properties
+        }
+      }
+      return node
+    })
+
+    const nodeById: Record<string, FlowchartNodeModel> = {}
+    for (const node of nodes) {
+      nodeById[node.id] = node
+    }
+    const rootForAnchors = nodeById[rootId]
+    const edges = graph.edges.map((edge: FlowchartEdgeModel): FlowchartEdgeModel => {
+      if (mindMapIds.has(edge.source) && mindMapIds.has(edge.target)) {
+        return edge
+      }
+      const source = nodeById[edge.source]
+      const target = nodeById[edge.target]
+      if (source === undefined || target === undefined || rootForAnchors === undefined) {
+        return edge
+      }
+      const layoutSource = mindMapIds.has(edge.source) ? rootForAnchors : source
+      const layoutTarget = mindMapIds.has(edge.target) ? rootForAnchors : target
+      const anchors = FlowchartLayoutEngine.layoutAnchors(layoutSource, layoutTarget, preferVertical)
+      return {
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        label: edge.label,
+        directed: edge.directed,
+        lineType: edge.lineType,
+        sourceAnchor: anchors[0],
+        targetAnchor: anchors[1],
+        properties: edge.properties
+      }
+    })
+
+    const metadata: Record<string, Object> = {}
+    for (const key of Object.keys(graph.metadata)) {
+      metadata[key] = graph.metadata[key]
+    }
+    metadata[FLOWCHART_ORTHOGONAL_ROUTING_KEY] = true
+    return {
+      version: graph.version,
+      metadata,
+      nodes,
+      edges
+    }
+  }
+
+  static layoutShapeNodes(
+    shapeNodes: FlowchartNodeModel[],
+    layoutEdges: LayoutEdge[],
+    preferVertical: boolean
+  ): Record<string, FlowchartNodePosition> {
+    if (shapeNodes.length === 0) {
+      return {}
+    }
+    let maxW = FlowchartLayoutEngine.DEFAULT_NODE_W
+    let maxH = FlowchartLayoutEngine.DEFAULT_NODE_H
+    for (const node of shapeNodes) {
+      if (node.width > maxW) {
+        maxW = node.width
+      }
+      if (node.height > maxH) {
+        maxH = node.height
+      }
+    }
+    const cellW = maxW + FlowchartLayoutEngine.GRID_GAP_X
+    const cellH = maxH + FlowchartLayoutEngine.GRID_GAP_Y
+    const positions: Record<string, FlowchartNodePosition> = {}
+    if (layoutEdges.length === 0) {
+      FlowchartLayoutEngine.applyGridPositions(shapeNodes, positions, preferVertical, cellW, cellH, 0, 0)
+      return positions
+    }
+    const components = FlowchartLayoutEngine.findComponents(shapeNodes, layoutEdges)
+    let offsetX = FlowchartLayoutEngine.GRID_ORIGIN
+    let offsetY = FlowchartLayoutEngine.GRID_ORIGIN
+    for (let ci = 0; ci < components.length; ci++) {
+      const comp = components[ci]
+      const compNodes: FlowchartNodeModel[] = []
+      for (const id of comp) {
+        const node = FlowchartLayoutEngine.nodeById(shapeNodes, id)
+        if (node !== undefined) {
+          compNodes.push(node)
+        }
+      }
+      const compEdges = FlowchartLayoutEngine.edgesForComponent(layoutEdges, comp)
+      const compPos = FlowchartLayoutEngine.layoutComponent(
+        compNodes, compEdges, preferVertical, cellW, cellH
+      )
+      let compW = 0
+      let compH = 0
+      for (const id of comp) {
+        const p = compPos[id]
+        const node = FlowchartLayoutEngine.nodeById(compNodes, id)
+        if (p === undefined || node === undefined) {
+          continue
+        }
+        positions[id] = createFlowchartPosition(p.x + offsetX, p.y + offsetY)
+        compW = Math.max(compW, p.x + node.width)
+        compH = Math.max(compH, p.y + node.height)
+      }
+      if (preferVertical) {
+        offsetY += compH + FlowchartLayoutEngine.COMPONENT_GAP
+      } else {
+        offsetX += compW + FlowchartLayoutEngine.COMPONENT_GAP
+      }
+    }
+    return positions
+  }
+
+  static applyAlignedLayoutCore(graph: FlowchartGraphModel, preferVertical: boolean = false): FlowchartGraphModel {
     if (graph.nodes.length === 0) {
       return graph
     }
@@ -151,6 +400,173 @@ export class FlowchartLayoutEngine {
       metadata,
       nodes,
       edges
+    }
+  }
+
+  static applyMindMapLinearLayout(graph: FlowchartGraphModel, preferVertical: boolean = false,
+    rootId?: string): FlowchartGraphModel {
+    if (graph.nodes.length === 0) {
+      return graph
+    }
+    const metadataRoot = graph.metadata[FLOWCHART_MIND_MAP_ROOT_ID_KEY]
+    let resolvedRootId = rootId ?? (typeof metadataRoot === 'string' ? metadataRoot : '')
+    if (resolvedRootId.length === 0) {
+      resolvedRootId = graph.nodes[0].id
+    }
+    graph = FlowchartMindMap.normalizeMindMapNodeSizes(graph, resolvedRootId)
+    const nodeById: Record<string, FlowchartNodeModel> = {}
+    for (const node of graph.nodes) {
+      nodeById[node.id] = node
+    }
+    if (nodeById[resolvedRootId] === undefined) {
+      return graph
+    }
+
+    const siblingGap = 32
+    const levelGap = 80
+    const origin = 48
+    const positions: Record<string, FlowchartNodePosition> = {}
+    const subtreeSizes: Record<string, FlowchartSubtreeSize> = {}
+
+    const measureOnSide = (id: string, side: string): FlowchartSubtreeSize => {
+      const cacheKey = `${id}:${side}`
+      const cached = subtreeSizes[cacheKey]
+      if (cached !== undefined) {
+        return cached
+      }
+      const node = nodeById[id]
+      const kids = FlowchartMindMap.childrenOnSide(graph, id, side)
+      if (kids.length === 0) {
+        const size: FlowchartSubtreeSize = { w: node.width, h: node.height }
+        subtreeSizes[cacheKey] = size
+        return size
+      }
+      let totalH = 0
+      let maxChildW = 0
+      for (let i = 0; i < kids.length; i++) {
+        const childSize = measureOnSide(kids[i], side)
+        totalH += childSize.h
+        if (i < kids.length - 1) {
+          totalH += siblingGap
+        }
+        maxChildW = Math.max(maxChildW, childSize.w)
+      }
+      const size: FlowchartSubtreeSize = {
+        w: node.width + levelGap + maxChildW,
+        h: Math.max(node.height, totalH)
+      }
+      subtreeSizes[cacheKey] = size
+      return size
+    }
+
+    const measureSideExtent = (parentId: string, side: string): FlowchartSubtreeSize => {
+      const kids = FlowchartMindMap.childrenOnSide(graph, parentId, side)
+      if (kids.length === 0) {
+        return { w: 0, h: 0 }
+      }
+      let totalH = 0
+      let maxW = 0
+      for (let i = 0; i < kids.length; i++) {
+        const childSize = measureOnSide(kids[i], side)
+        totalH += childSize.h
+        if (i < kids.length - 1) {
+          totalH += siblingGap
+        }
+        maxW = Math.max(maxW, childSize.w)
+      }
+      return { w: maxW, h: totalH }
+    }
+
+    const placeOnSide = (id: string, side: string, anchorX: number, anchorY: number): void => {
+      const node = nodeById[id]
+      const kids = FlowchartMindMap.childrenOnSide(graph, id, side)
+      const box = measureOnSide(id, side)
+      if (side === FLOWCHART_MIND_MAP_SIDE_RIGHT) {
+        positions[id] = createFlowchartPosition(anchorX, anchorY + (box.h - node.height) / 2)
+        if (kids.length === 0) {
+          return
+        }
+        let cursorY = anchorY
+        const childX = anchorX + node.width + levelGap
+        for (const childId of kids) {
+          const childBox = measureOnSide(childId, side)
+          placeOnSide(childId, side, childX, cursorY)
+          cursorY += childBox.h + siblingGap
+        }
+      } else {
+        const nodeX = anchorX - node.width
+        positions[id] = createFlowchartPosition(nodeX, anchorY + (box.h - node.height) / 2)
+        if (kids.length === 0) {
+          return
+        }
+        let cursorY = anchorY
+        for (const childId of kids) {
+          const childBox = measureOnSide(childId, side)
+          const childAnchorX = nodeX - levelGap
+          placeOnSide(childId, side, childAnchorX, cursorY)
+          cursorY += childBox.h + siblingGap
+        }
+      }
+    }
+
+    const root = nodeById[resolvedRootId]
+    const leftExtent = measureSideExtent(resolvedRootId, FLOWCHART_MIND_MAP_SIDE_LEFT)
+    const rightExtent = measureSideExtent(resolvedRootId, FLOWCHART_MIND_MAP_SIDE_RIGHT)
+    const rootBoxRight = measureOnSide(resolvedRootId, FLOWCHART_MIND_MAP_SIDE_RIGHT)
+    const rootBoxLeft = measureOnSide(resolvedRootId, FLOWCHART_MIND_MAP_SIDE_LEFT)
+    const sideBlockH = Math.max(leftExtent.h, rightExtent.h)
+    const rootH = Math.max(
+      root.height,
+      Math.max(sideBlockH, Math.max(rootBoxRight.h, rootBoxLeft.h))
+    )
+    const rootX = origin + leftExtent.w
+    const rootY = origin + (rootH - root.height) / 2
+    positions[resolvedRootId] = createFlowchartPosition(rootX, rootY)
+
+    if (leftExtent.w > 0) {
+      let cursorY = origin + (sideBlockH - leftExtent.h) / 2
+      for (const childId of FlowchartMindMap.childrenOnSide(graph, resolvedRootId, FLOWCHART_MIND_MAP_SIDE_LEFT)) {
+        const childBox = measureOnSide(childId, FLOWCHART_MIND_MAP_SIDE_LEFT)
+        placeOnSide(childId, FLOWCHART_MIND_MAP_SIDE_LEFT, rootX - levelGap, cursorY)
+        cursorY += childBox.h + siblingGap
+      }
+    }
+    if (rightExtent.w > 0) {
+      let cursorY = origin + (sideBlockH - rightExtent.h) / 2
+      for (const childId of FlowchartMindMap.childrenOnSide(graph, resolvedRootId, FLOWCHART_MIND_MAP_SIDE_RIGHT)) {
+        const childBox = measureOnSide(childId, FLOWCHART_MIND_MAP_SIDE_RIGHT)
+        placeOnSide(childId, FLOWCHART_MIND_MAP_SIDE_RIGHT, rootX + root.width + levelGap, cursorY)
+        cursorY += childBox.h + siblingGap
+      }
+    }
+
+    const nodes = graph.nodes.map((node: FlowchartNodeModel): FlowchartNodeModel => {
+      const pos = positions[node.id]
+      return {
+        id: node.id,
+        title: node.title,
+        description: node.description,
+        color: node.color,
+        shape: node.shape,
+        position: pos ?? node.position,
+        width: node.width,
+        height: node.height,
+        rotation: node.rotation,
+        properties: node.properties
+      }
+    })
+    const metadata: Record<string, Object> = {}
+    for (const key of Object.keys(graph.metadata)) {
+      metadata[key] = graph.metadata[key]
+    }
+    metadata[FLOWCHART_LAYOUT_MODE_KEY] = FLOWCHART_LAYOUT_MODE_MIND_MAP_LINEAR
+    metadata[FLOWCHART_MIND_MAP_ROOT_ID_KEY] = resolvedRootId
+    metadata[FLOWCHART_ORTHOGONAL_ROUTING_KEY] = true
+    return {
+      version: graph.version,
+      metadata,
+      nodes,
+      edges: [...graph.edges]
     }
   }
 

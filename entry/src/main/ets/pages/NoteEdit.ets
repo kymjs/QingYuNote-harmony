@@ -36,7 +36,6 @@ import { NoteEditTagChip, NoteEditTagDropdown } from '../components/NoteEditTagD
 import { NoteEditPreviewPane } from './NoteEditPreviewPane'
 import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
 import { AiTagService } from '../services/AiTagService'
-import { AiNoteService } from '../services/AiNoteService'
 import { AiNotePrompt } from '../services/AiNotePrompt'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
@@ -86,9 +85,10 @@ import {
   type VoiceRecordingSheetParams
 } from '../components/VoiceRecordingSheet'
 import { NoteAudioPlayerBar } from '../components/NoteAudioPlayerBar'
-import { AudioConstants } from '../common/constants/AudioConstants'
-import { VoiceTranscribeClient } from '../services/VoiceTranscribeClient'
-import { SyncService } from '../services/SyncService'
+import {
+  AiNoteBackgroundTaskService,
+  type AiNoteBackgroundTaskResult
+} from '../services/AiNoteBackgroundTaskService'
 
 interface NoteEditParams {
   noteId?: string
@@ -123,6 +123,10 @@ struct NoteEdit {
   @State aiMenuVisible: boolean = false
   @State aiNoteWorking: boolean = false
   @State aiWorkingOverlayMessage: string = 'AI 处理中…'
+  private lastAppliedAiBgResult: AiNoteBackgroundTaskResult | null = null
+  private readonly onAiBackgroundTaskChanged = (): void => {
+    this.handleAiBackgroundTaskChanged()
+  }
   @State aiUndoAvailable: boolean = false
   private aiUndoBaselineContent: string | null = null
   @State parentId: string = ''
@@ -136,6 +140,13 @@ struct NoteEdit {
   @State tagBarHeight: number = 32
   @State lastPanOffsetX: number = 0
   @State lastPanOffsetY: number = 0
+  /** 页面 Stack 窗口坐标，用于把工具栏 AI 按钮换算成菜单锚点。 */
+  @State pageStackGlobalX: number = 0
+  @State pageStackGlobalY: number = 0
+  @State aiButtonX: number = 0
+  @State aiButtonY: number = 0
+  @State aiButtonWidth: number = 30
+  @State aiButtonHeight: number = 30
   /** 标题输入框是否处于焦点（编辑）状态。 */
   @State titleFieldFocused: boolean = false
   /** 笔记设置：是否展示输入法上方快捷操作栏。 */
@@ -255,6 +266,7 @@ struct NoteEdit {
   aboutToAppear(): void {
     this.lifecycle.appear()
     this.closeGuard.reset()
+    AppContextHolder.setLastUiContext(this.getUIContext())
     const ctx = this.obtainUiAbilityContext()
     if (ctx !== undefined) {
       this.filesDirCache = ctx.filesDir
@@ -264,12 +276,14 @@ struct NoteEdit {
     this.preferPreviewOnOpen = params?.openWithPreview === true
     this.pendingInitialAction = params?.initialAction ?? null
     this.initialActionHandled = false
+    AiNoteBackgroundTaskService.getInstance().addListener(this.onAiBackgroundTaskChanged)
     void this.loadNote()
     void this.refreshAllNotes()
     void this.loadQuickActionBarPref()
     void this.loadFolderModePref()
     void this.loadAiFeatureConfig()
     void this.initKeyboardAvoidArea()
+    this.syncAiWorkingFromBackgroundTask()
     try {
       AppContextHolder.getContext().eventHub.on(SyncConstants.noteImagesChangedEvent, this.onNoteImagesChanged)
       AppContextHolder.getContext().eventHub.on(SyncConstants.noteSettingsChangedEvent, this.onNoteSettingsChanged)
@@ -306,6 +320,7 @@ struct NoteEdit {
 
   aboutToDisappear(): void {
     this.lifecycle.disappear()
+    AiNoteBackgroundTaskService.getInstance().removeListener(this.onAiBackgroundTaskChanged)
     if (this.keyboardWindow !== undefined) {
       try {
         this.keyboardWindow.off('keyboardHeightChange', this.onKeyboardHeightChange)
@@ -365,20 +380,22 @@ struct NoteEdit {
     }
   }
 
-  private shouldShowMobileAiBar(): boolean {
+  private shouldShowMobileToolbarAi(): boolean {
     return !this.isSplitMode() &&
-      this.previewMode === 'edit' &&
       this.aiFeatureEnabled &&
       hasEditorTitleOrBody(this.title, this.content)
   }
 
+  private shouldShowMobileTagBar(): boolean {
+    return !this.isSplitMode() && hasEditorTitleOrBody(this.title, this.content)
+  }
+
   private static readonly FLOAT_MENU_WIDTH: number = 154
   private static readonly FLOAT_MENU_GAP: number = 8
-  private static readonly AI_MENU_HEIGHT: number = 96
   private static readonly TAG_MENU_ITEM_HEIGHT: number = 44
   private static readonly TAG_MENU_MAX_VISIBLE_ITEMS: number = 5
 
-  /** 悬浮按钮在屏幕上半部时菜单向下展开，否则向上展开。 */
+  /** 标签悬浮按钮在屏幕上半部时菜单向下展开，否则向上展开。 */
   private floatMenuShowBelow(): boolean {
     const buttonCenterY = this.tagBarY + this.tagBarHeight / 2
     const screenHeight = this.pageHeight > 0 ? this.pageHeight : 780
@@ -413,15 +430,32 @@ struct NoteEdit {
     return this.tagBarY - menuHeight - NoteEdit.FLOAT_MENU_GAP
   }
 
-  private aiMenuPosY(): number {
-    let menuHeight = NoteEdit.AI_MENU_HEIGHT
-    if (this.aiUndoAvailable) {
-      menuHeight += 44
+  /** 工具栏 AI 菜单：固定在按钮正下方，右对齐按钮。 */
+  private aiToolbarMenuPosX(): number {
+    let x = this.aiButtonX + this.aiButtonWidth - NoteEdit.FLOAT_MENU_WIDTH
+    if (x < 8) {
+      x = 8
     }
-    if (this.floatMenuShowBelow()) {
-      return this.tagBarY + this.tagBarHeight + NoteEdit.FLOAT_MENU_GAP
+    const maxX = this.pageWidth - NoteEdit.FLOAT_MENU_WIDTH - 8
+    if (x > maxX) {
+      x = maxX
     }
-    return this.tagBarY - menuHeight - NoteEdit.FLOAT_MENU_GAP
+    return x
+  }
+
+  private aiToolbarMenuPosY(): number {
+    return this.aiButtonY + this.aiButtonHeight + NoteEdit.FLOAT_MENU_GAP
+  }
+
+  private recordAiButtonArea(area: Area): void {
+    this.aiButtonWidth = Number.parseFloat(`${area.width}`) || 30
+    this.aiButtonHeight = Number.parseFloat(`${area.height}`) || 30
+    const globalX = Number.parseFloat(`${area.globalPosition?.x ?? -1}`)
+    const globalY = Number.parseFloat(`${area.globalPosition?.y ?? -1}`)
+    if (globalX >= 0 && globalY >= 0) {
+      this.aiButtonX = globalX - this.pageStackGlobalX
+      this.aiButtonY = globalY - this.pageStackGlobalY
+    }
   }
 
   private captureAiUndoBaseline(contentBeforeChange: string): void {
@@ -810,74 +844,39 @@ struct NoteEdit {
     }
   }
 
-  private async abandonVoicePlaceholderNote(): Promise<void> {
-    const id = this.noteId
-    if (id.length === 0) {
+  private async abandonVoicePlaceholderIfNeeded(): Promise<void> {
+    if (!this.isVoicePlaceholderNote() || this.noteId.length === 0) {
       return
     }
+    const id = this.noteId
+    this.noteId = ''
     await NoteRepository.getInstance().purgeLocalNoteCompletely(id)
+  }
+
+  private async abandonVoicePlaceholderNote(): Promise<void> {
+    await this.abandonVoicePlaceholderIfNeeded()
     if (!this.lifecycle.isActive()) {
       return
     }
     this.getUIContext().getRouter().back()
   }
 
-  private fileExistsAtPath(path: string): boolean {
-    try {
-      fileIo.accessSync(path)
-      return true
-    } catch (_) {
-      return false
-    }
-  }
-
   private async onVoiceRecordingComplete(outputPath: string): Promise<void> {
     if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
       return
     }
-    if (!this.lifecycle.isActive() || this.noteId.length === 0) {
+    if (this.noteId.length === 0) {
+      return
+    }
+    const svc = AiNoteBackgroundTaskService.getInstance()
+    if (!svc.ensureIdleOrNotifyBusy()) {
       return
     }
     this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
     this.aiNoteWorking = true
-    try {
-      if (!this.fileExistsAtPath(outputPath)) {
-        throw new Error(EditorUiStrings.loc('录音文件未找到，请稍后重试', 'Recording not found; try again', '録音ファイルが見つかりません。後でもう一度お試しください'))
-      }
-      const audioId = AudioConstants.audioFileNameForNote(this.noteId)
-      const note = await NoteRepository.getInstance().saveDraft(this.noteId, {
-        audioId: audioId
-      })
-      if (!this.lifecycle.isActive()) {
-        return
-      }
-      this.audioId = note.audioId
-      const syncResult = await SyncService.getInstance().syncNote(this.noteId)
-      if (!syncResult.success) {
-        throw new Error(EditorUiStrings.loc('同步失败，请稍后重试', 'Sync failed; try again', '同期に失敗しました。後でもう一度お試しください'))
-      }
-      await SyncService.getInstance().uploadAudioForNoteOrThrow(this.noteId)
-      const text = await VoiceTranscribeClient.getInstance().transcribeLocalFile(outputPath)
-      if (!this.lifecycle.isActive()) {
-        return
-      }
-      this.content = text
-      this.previousContent = text
-      this.contentCaretIndex = text.length
-      this.handleContentChange()
-      await this.handleAutoSave()
-    } catch (e) {
-      const message = e instanceof Error
-        ? e.message
-        : EditorUiStrings.loc('语音转文字失败，请稍后重试', 'Speech-to-text failed; try again', '音声認識に失敗しました。後でもう一度お試しください')
-      this.showPreviewMessage(
-        UserFacingMessage.forAi(
-          e instanceof Error ? e.message : undefined,
-          message
-        )
-      )
-      Logger.error('NoteEdit', `onVoiceRecordingComplete failed: ${JSON.stringify(e)}`)
-    } finally {
+    this.aiMenuVisible = false
+    const started = await svc.runVoiceTranscribe(this.noteId, outputPath)
+    if (!started && !svc.isBusy) {
       this.aiNoteWorking = false
     }
   }
@@ -1101,6 +1100,7 @@ struct NoteEdit {
     this.preparePreviewForCurrentMode(note.content)
     void this.refreshAllNotes()
     this.schedulePathCaptionMarquee()
+    this.syncAiWorkingFromBackgroundTask()
     this.runInitialActionIfNeeded()
     this.scheduleMembershipExpiryReminderIfNeeded()
   }
@@ -1149,7 +1149,7 @@ struct NoteEdit {
   }
 
   private scheduleSave(): void {
-    if (shouldSkipAutoSaveSchedule(
+    if (this.isVoicePlaceholderNote() || shouldSkipAutoSaveSchedule(
       this.title,
       this.content,
       this.noteTagsSafe().includes('Todo'),
@@ -1201,6 +1201,12 @@ struct NoteEdit {
 
   private async handleAutoSave(): Promise<void> {
     try {
+      if (AiNoteBackgroundTaskService.getInstance().shouldSkipEditorAutoSave(
+        this.noteId,
+        this.content
+      )) {
+        return
+      }
       Logger.info('NoteEdit',
         `handleAutoSave start: noteId=${this.noteId || 'new'}, titleLength=${this.title.length}, contentLength=${this.content.length}`)
       const rawTitle = this.title
@@ -1208,6 +1214,12 @@ struct NoteEdit {
         await this.abandonPlaceholderTodoIfNeeded()
         this.saveStatus = '未保存'
         Logger.info('NoteEdit', 'handleAutoSave skipped: placeholder todo note')
+        return
+      }
+      if (this.isVoicePlaceholderNote()) {
+        await this.abandonVoicePlaceholderIfNeeded()
+        this.saveStatus = '未保存'
+        Logger.info('NoteEdit', 'handleAutoSave skipped: voice placeholder note')
         return
       }
       if (rawTitle.trim().length === 0 && this.content.trim().length === 0) {
@@ -1275,11 +1287,31 @@ struct NoteEdit {
 
   private async flushAndAutoSaveAfterLeave(): Promise<void> {
     await new Promise<void>((resolve: () => void) => setTimeout(() => resolve(), 0))
+    if (AiNoteBackgroundTaskService.getInstance().shouldSkipEditorAutoSave(
+      this.noteId,
+      this.content
+    )) {
+      return
+    }
     try {
       await this.handleAutoSave()
     } catch (error) {
       Logger.warn('NoteEdit', `flushAndAutoSaveAfterLeave failed: ${JSON.stringify(error)}`)
     }
+  }
+
+  private async ensureNoteIdForAiTask(): Promise<void> {
+    if (this.noteId.length > 0) {
+      return
+    }
+    const note = await NoteRepository.getInstance().createNote({
+      title: '',
+      content: '',
+      tags: []
+    })
+    this.noteId = note.id
+    this.lastSavedAt = note.updatedAt
+    this.saveStatus = '已保存'
   }
 
   private mobileFullPreviewChrome(): boolean {
@@ -1577,8 +1609,13 @@ struct NoteEdit {
     thenOptimize: boolean = false,
     switchToPreviewOnSuccess: boolean = false
   ): Promise<void> {
-    if (thenOptimize && !(await ensureAiMembershipAccess(this.getUIContext()))) {
-      return
+    if (thenOptimize) {
+      if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+        return
+      }
+      if (!AiNoteBackgroundTaskService.getInstance().ensureIdleOrNotifyBusy()) {
+        return
+      }
     }
     try {
       const photoSelectOptions: photoAccessHelper.PhotoSelectOptions = new photoAccessHelper.PhotoSelectOptions()
@@ -1588,6 +1625,9 @@ struct NoteEdit {
       const result: photoAccessHelper.PhotoSelectResult = await photoPicker.select(photoSelectOptions)
       const uri: string = result.photoUris[0] ?? ''
       if (uri.length === 0) {
+        return
+      }
+      if (thenOptimize && !AiNoteBackgroundTaskService.getInstance().ensureIdleOrNotifyBusy()) {
         return
       }
       const base =
@@ -2425,11 +2465,71 @@ struct NoteEdit {
     })
   }
 
-  private async onAiOptimizeContent(switchToPreviewOnSuccess: boolean = false): Promise<void> {
+  private syncAiWorkingFromBackgroundTask(): void {
+    const svc = AiNoteBackgroundTaskService.getInstance()
+    const busyHere = svc.isBusyForNote(this.noteId)
+    if (busyHere) {
+      this.aiNoteWorking = true
+      this.aiWorkingOverlayMessage = svc.overlayMessage
+      this.aiMenuVisible = false
+      return
+    }
     if (this.aiNoteWorking) {
+      this.aiNoteWorking = false
+    }
+  }
+
+  private handleAiBackgroundTaskChanged(): void {
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    const svc = AiNoteBackgroundTaskService.getInstance()
+    const result = svc.lastResult
+    if (result !== null &&
+      result.noteId === this.noteId &&
+      result !== this.lastAppliedAiBgResult) {
+      this.lastAppliedAiBgResult = result
+      if (result.success) {
+        this.applyAiBackgroundTaskResult(result)
+      }
+    }
+    this.syncAiWorkingFromBackgroundTask()
+  }
+
+  private applyAiBackgroundTaskResult(result: AiNoteBackgroundTaskResult): void {
+    if (!this.lifecycle.isActive() || result.noteId !== this.noteId || !result.success) {
+      return
+    }
+    if (result.contentBefore !== undefined) {
+      this.captureAiUndoBaseline(result.contentBefore)
+    }
+    if (result.title !== undefined) {
+      this.title = result.title
+    }
+    if (result.content !== undefined) {
+      this.content = result.content
+      this.previousContent = result.content
+      this.contentCaretIndex = result.content.length
+    }
+    if (result.audioId !== undefined && result.audioId.trim().length > 0) {
+      this.audioId = result.audioId
+    }
+    this.saveStatus = '已保存'
+    this.lastSavedAt = Date.now()
+    this.handleContentChange()
+    this.maybeSwitchToPreviewAfterAiSuccess(result.switchToPreviewOnSuccess)
+  }
+
+  private async onAiOptimizeContent(switchToPreviewOnSuccess: boolean = false): Promise<void> {
+    const svc = AiNoteBackgroundTaskService.getInstance()
+    if (this.aiNoteWorking || svc.isBusy) {
+      svc.ensureIdleOrNotifyBusy()
       return
     }
     if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+      return
+    }
+    if (this.noteId.length === 0) {
       return
     }
     const trimmed = this.content.trim()
@@ -2443,44 +2543,39 @@ struct NoteEdit {
       this.showPreviewMessage(EditorUiStrings.loc('内容过少，无需AI优化', 'Too little content to optimize', '内容が少なすぎるため最適化不要です'))
       return
     }
-    this.aiWorkingOverlayMessage = EditorUiStrings.loc(
+    if (!svc.ensureIdleOrNotifyBusy()) {
+      return
+    }
+    const optimizeMessage = EditorUiStrings.loc(
       !noteHasText && hasImageRefs ? 'AI 生成笔记中…' : 'AI 处理中…',
       !noteHasText && hasImageRefs ? 'AI writing note…' : 'AI working…',
       !noteHasText && hasImageRefs ? 'AIがノートを生成中…' : 'AI処理中…'
     )
+    this.aiWorkingOverlayMessage = optimizeMessage
     this.aiNoteWorking = true
     this.aiMenuVisible = false
-    const before = this.content
     const filesDir = this.filesDirCache.length > 0
       ? this.filesDirCache
       : (this.obtainUiAbilityContext()?.filesDir ?? '')
-    try {
-      const optimized = await AiNoteService.getInstance().optimizeContent(this.content, filesDir)
-      const parts = MarkdownUtils.splitLinkSummary(optimized)
-      this.captureAiUndoBaseline(before)
-      if (hasImageRefs && parts.title.trim().length > 0) {
-        this.title = parts.title.trim()
-        this.content = parts.body
-      } else {
-        this.content = optimized
-      }
-      this.handleContentChange()
-      this.maybeSwitchToPreviewAfterAiSuccess(switchToPreviewOnSuccess)
-      this.showPreviewMessage(EditorUiStrings.loc(noteHasText ? 'AI 已优化笔记正文' : 'AI 已根据图片生成笔记', noteHasText ? 'AI polished the note' : 'AI generated note from image', noteHasText ? 'AIが本文を最適化しました' : 'AIが画像からノートを生成しました'))
-    } catch (e) {
-      const msg = UserFacingMessage.forAi(
-        e instanceof Error ? e.message : undefined,
-        EditorUiStrings.loc('AI 优化失败，请稍后重试', 'AI optimization failed; try again', 'AI最適化に失敗しました。後でもう一度お試しください')
-      )
-      this.showPreviewMessage(msg)
-      Logger.error('NoteEdit', `onAiOptimizeContent failed: ${e instanceof Error ? e.message : JSON.stringify(e)}`)
-    } finally {
+    const started = await svc.runOptimize(
+      this.noteId,
+      this.content,
+      this.title,
+      filesDir,
+      optimizeMessage,
+      switchToPreviewOnSuccess
+    )
+    if (!started && !svc.isBusy) {
       this.aiNoteWorking = false
     }
   }
 
   private async openAiLinkExtractDialog(switchToPreviewOnSuccess: boolean = false): Promise<void> {
     if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+      return
+    }
+    const svc = AiNoteBackgroundTaskService.getInstance()
+    if (!svc.ensureIdleOrNotifyBusy()) {
       return
     }
     const ui = this.getUIContext()
@@ -2495,7 +2590,7 @@ struct NoteEdit {
           }
         }
       },
-      onConfirm: (url: string): void => {
+      onConfirm: (url: string, summarize: number): void => {
         if (holder !== undefined) {
           try {
             ui.getPromptAction().closeCustomDialog(holder)
@@ -2503,7 +2598,7 @@ struct NoteEdit {
             // ignore
           }
         }
-        void this.onAiExtractLink(url, switchToPreviewOnSuccess)
+        void this.onAiExtractLink(url, switchToPreviewOnSuccess, summarize)
       }
     }
     holder = new ComponentContent(ui, wrapBuilder(buildEditorAiLinkExtractDialogContent), params)
@@ -2519,42 +2614,47 @@ struct NoteEdit {
 
   private async onAiExtractLink(
     url: string,
-    switchToPreviewOnSuccess: boolean = false
+    switchToPreviewOnSuccess: boolean = false,
+    summarize: number = 1
   ): Promise<void> {
-    if (this.aiNoteWorking || url.trim().length === 0) {
+    const svc = AiNoteBackgroundTaskService.getInstance()
+    if (this.aiNoteWorking || svc.isBusy || url.trim().length === 0) {
+      if (svc.isBusy) {
+        svc.ensureIdleOrNotifyBusy()
+      }
       return
     }
+    await this.ensureNoteIdForAiTask()
+    if (this.noteId.length === 0) {
+      return
+    }
+    if (!svc.ensureIdleOrNotifyBusy()) {
+      return
+    }
+    if (this.saveTimer !== -1) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = -1
+    }
+    this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
     this.aiNoteWorking = true
     this.aiMenuVisible = false
-    const before = this.content
-    try {
-      const result = await AiNoteService.getInstance().summarizeLink(url.trim())
-      this.captureAiUndoBaseline(before)
-      const existing = this.content
-      const separator = existing.trim().length === 0 ? '' : '\n\n'
-      const trimmedUrl = url.trim()
-      const linkLine = `完整文章链接为：[${trimmedUrl}](${trimmedUrl})`
-      this.content = `${existing}${separator}${result.body}\n\n${linkLine}`
-      if (this.title.trim().length === 0 && result.title.trim().length > 0) {
-        this.title = result.title.trim()
-      }
-      this.handleContentChange()
-      this.maybeSwitchToPreviewAfterAiSuccess(switchToPreviewOnSuccess)
-      this.showPreviewMessage(EditorUiStrings.loc('AI 已生成链接摘要并写入正文', 'AI added link summary to note', 'AIがリンク要約を本文に追加しました'))
-    } catch (e) {
-      const msg = UserFacingMessage.forAi(
-        e instanceof Error ? e.message : undefined,
-        EditorUiStrings.loc('AI 提取链接失败，请稍后重试', 'AI link extract failed; try again', 'AIリンク抽出に失敗しました。後でもう一度お試しください')
-      )
-      this.showPreviewMessage(msg)
-      Logger.error('NoteEdit', `onAiExtractLink failed: ${e instanceof Error ? e.message : JSON.stringify(e)}`)
-    } finally {
+    const started = await svc.runExtractLink(
+      this.noteId,
+      url.trim(),
+      summarize,
+      this.title,
+      this.content,
+      switchToPreviewOnSuccess
+    )
+    if (!started && !svc.isBusy) {
       this.aiNoteWorking = false
     }
   }
 
   private async onMobileAiButtonPressed(): Promise<void> {
-    if (this.aiNoteWorking) {
+    const svc = AiNoteBackgroundTaskService.getInstance()
+    if (this.aiNoteWorking || svc.isBusy) {
+      svc.ensureIdleOrNotifyBusy()
       return
     }
     if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
@@ -2587,102 +2687,6 @@ struct NoteEdit {
     .width('100%')
     .height('100%')
     .zIndex(10005)
-  }
-
-  @Builder
-  buildDraggableAiBar() {
-    Stack() {
-      Row({ space: 4 }) {
-        Row() {
-          Stack({ alignContent: Alignment.Center }) {
-            if (this.aiNoteWorking) {
-              LoadingProgress()
-                .width(22)
-                .height(22)
-                .color($r('app.color.accent'))
-            } else {
-              Image($r('app.media.ic_ai_float'))
-                .width(24)
-                .height(24)
-                .objectFit(ImageFit.Contain)
-            }
-          }
-        }
-        .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-        .backgroundColor($r('app.color.surface_muted'))
-        .borderRadius(18)
-        .onClick(() => {
-          if (this.aiNoteWorking) {
-            return
-          }
-          void this.onMobileAiButtonPressed()
-        })
-        .shadow({
-          radius: 18,
-          color: '#2A000000',
-          offsetX: 0,
-          offsetY: 3
-        })
-      }
-      .onAreaChange((_, currentArea: Area) => {
-        this.tagBarWidth = Number.parseFloat(`${currentArea.width}`) || 120
-        this.tagBarHeight = Number.parseFloat(`${currentArea.height}`) || 32
-        if (!this.tagBarInitialized) {
-          const cardPadding = 18
-          const toolbarHeight = 69
-          const safeAreaTop = 44
-          const defaultRight = 8
-          this.tagBarX = this.pageWidth - this.tagBarWidth - cardPadding - defaultRight
-          this.tagBarY = toolbarHeight + safeAreaTop - 1.5 * this.tagBarHeight
-          this.tagBarInitialized = true
-        }
-      })
-      .position({ x: this.tagBarX, y: this.tagBarY })
-      .gesture(
-        PanGesture()
-          .onActionStart((event: GestureEvent) => {
-            this.lastPanOffsetX = event.offsetX
-            this.lastPanOffsetY = event.offsetY
-          })
-          .onActionUpdate((event: GestureEvent) => {
-            const safeAreaTop = 44
-            const safeAreaBottom = 34
-            const screenHeight = this.pageHeight > 0 ? this.pageHeight : 780
-            const deltaX = event.offsetX - this.lastPanOffsetX
-            const deltaY = event.offsetY - this.lastPanOffsetY
-            this.lastPanOffsetX = event.offsetX
-            this.lastPanOffsetY = event.offsetY
-            let newX = this.tagBarX + deltaX
-            let newY = this.tagBarY + deltaY
-            if (newX < 0) {
-              newX = 0
-            }
-            if (newX > this.pageWidth - this.tagBarWidth) {
-              newX = this.pageWidth - this.tagBarWidth
-            }
-            if (newY < safeAreaTop) {
-              newY = safeAreaTop
-            }
-            if (newY > screenHeight - this.tagBarHeight - safeAreaBottom) {
-              newY = screenHeight - this.tagBarHeight - safeAreaBottom
-            }
-            this.tagBarX = newX
-            this.tagBarY = newY
-          })
-          .onActionEnd((_: GestureEvent) => {
-            this.lastPanOffsetX = 0
-            this.lastPanOffsetY = 0
-          })
-      )
-
-      if (this.aiMenuVisible) {
-        Column() {
-          this.buildAiDropdown()
-        }
-        .position({ x: this.floatMenuPosX(), y: this.aiMenuPosY() })
-        .zIndex(999)
-      }
-    }
   }
 
   /**
@@ -2988,6 +2992,33 @@ struct NoteEdit {
 
           if (!this.isSplitMode()) {
             Row({ space: 6 }) {
+              if (this.shouldShowMobileToolbarAi()) {
+                Stack({ alignContent: Alignment.Center }) {
+                  if (this.aiNoteWorking) {
+                    LoadingProgress()
+                      .width(30)
+                      .height(30)
+                      .color($r('app.color.accent'))
+                  } else {
+                    Image($r('app.media.ic_ai_float'))
+                      .width(30)
+                      .height(30)
+                      .objectFit(ImageFit.Contain)
+                  }
+                }
+                .width(30)
+                .height(30)
+                .opacity(this.aiNoteWorking ? 0.6 : 1)
+                .onAreaChange((_: Area, area: Area) => {
+                  this.recordAiButtonArea(area)
+                })
+                .onClick(() => {
+                  if (this.aiNoteWorking) {
+                    return
+                  }
+                  void this.onMobileAiButtonPressed()
+                })
+              }
               if (this.previewMode === 'preview') {
                 Button(EditorUiStrings.loc('编辑', 'Edit', '編集'))
                   .fontSize($r('app.float.caption_font_size'))
@@ -3227,8 +3258,8 @@ struct NoteEdit {
         .zIndex(1000)
       }
 
-      // 移动端预览模式下的可拖动悬浮标签栏（编辑模式隐藏）
-      if (!this.isSplitMode() && this.previewMode === 'preview' && hasEditorTitleOrBody(this.title, this.content)) {
+      // 移动端预览/编辑模式均可拖动的悬浮标签栏
+      if (this.shouldShowMobileTagBar()) {
         Stack() {
           this.buildDraggableTagBar()
         }
@@ -3237,14 +3268,16 @@ struct NoteEdit {
           .hitTestBehavior(HitTestMode.Transparent)
       }
 
-      // 移动端编辑模式下的可拖动悬浮 AI 按钮（预览模式隐藏）
-      if (this.shouldShowMobileAiBar()) {
-        Stack() {
-          this.buildDraggableAiBar()
+      // 工具栏 AI 菜单：锚在 AI 按钮正下方
+      if (this.aiMenuVisible && this.shouldShowMobileToolbarAi()) {
+        Column() {
+          this.buildAiDropdown()
         }
-          .position({ x: 0, y: 0 })
-          .zIndex(998)
-          .hitTestBehavior(HitTestMode.Transparent)
+        .position({ x: this.aiToolbarMenuPosX(), y: this.aiToolbarMenuPosY() })
+        .zIndex(999)
+        .onClick(() => {
+          // 吃掉菜单区域点击，避免冒泡到页面根节点立刻关闭菜单。
+        })
       }
 
       if (this.aiNoteWorking) {
@@ -3301,6 +3334,14 @@ struct NoteEdit {
     .onAreaChange((_, value) => {
       const nextWidth = Number.parseFloat(`${value.width}`) || 360
       const nextHeight = Number.parseFloat(`${value.height}`) || 780
+      const nextGlobalX = Number.parseFloat(`${value.globalPosition?.x ?? 0}`)
+      const nextGlobalY = Number.parseFloat(`${value.globalPosition?.y ?? 0}`)
+      if (Math.abs(this.pageStackGlobalX - nextGlobalX) >= 0.5) {
+        this.pageStackGlobalX = nextGlobalX
+      }
+      if (Math.abs(this.pageStackGlobalY - nextGlobalY) >= 0.5) {
+        this.pageStackGlobalY = nextGlobalY
+      }
       const wasSplitMode = this.isSplitMode()
       if (Math.abs(this.pageWidth - nextWidth) >= 1) {
         this.pageWidth = nextWidth

@@ -1,29 +1,102 @@
 import { EditorUiStrings } from '../common/utils/EditorUiStrings'
+import { PreferencesService } from '../services/PreferencesService'
 
 export interface EditorAiLinkExtractDialogParams {
   onCancel: () => void
-  onConfirm: (url: string) => void
+  onConfirm: (url: string, summarize: number) => void
 }
 
 @Component
 export struct EditorAiLinkExtractDialog {
   @Prop params: EditorAiLinkExtractDialogParams = {
     onCancel: (): void => {},
-    onConfirm: (_: string): void => {}
+    onConfirm: (_: string, __: number): void => {}
   }
   @State urlDraft: string = ''
+  @State summaryEnabled: boolean = true
+  @State prefLoaded: boolean = false
+
+  aboutToAppear(): void {
+    void this.loadPref()
+  }
+
+  private async loadPref(): Promise<void> {
+    const enabled = await PreferencesService.getInstance().isAiLinkExtractSummaryEnabled()
+    this.summaryEnabled = enabled
+    this.prefLoaded = true
+  }
 
   private canConfirm(): boolean {
     return this.urlDraft.trim().length > 0
   }
 
+  private async onSummaryChanged(value: boolean): Promise<void> {
+    this.summaryEnabled = value
+    await PreferencesService.getInstance().setAiLinkExtractSummaryEnabled(value)
+  }
+
+  @Builder
+  private labeledTrackSwitch() {
+    Row() {
+      if (this.summaryEnabled) {
+        Text(EditorUiStrings.loc('摘要提取', 'Summary', '要約抽出'))
+          .fontSize(9)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Color.White)
+          .margin({ left: 4 })
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Clip })
+        Circle({ width: 22, height: 22 })
+          .fill(Color.White)
+          .margin({ right: 2 })
+      } else {
+        Circle({ width: 22, height: 22 })
+          .fill(Color.White)
+          .margin({ left: 2 })
+        Text(EditorUiStrings.loc('全文提取', 'Full text', '全文抽出'))
+          .fontSize(9)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(Color.White)
+          .margin({ right: 4 })
+          .layoutWeight(1)
+          .textAlign(TextAlign.End)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Clip })
+      }
+    }
+    .width(65)
+    .height(28)
+    .justifyContent(FlexAlign.SpaceBetween)
+    .alignItems(VerticalAlign.Center)
+    .borderRadius(14)
+    .backgroundColor(this.summaryEnabled ? $r('app.color.accent') : $r('app.color.secondary_text'))
+    .onClick(() => {
+      void this.onSummaryChanged(!this.summaryEnabled)
+    })
+  }
+
   build() {
     Column({ space: 16 }) {
-      Text(EditorUiStrings.loc('AI提取链接', 'AI extract link', 'AIでリンク抽出'))
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.primary_text'))
-        .width('100%')
+      Row() {
+        Text(EditorUiStrings.loc('AI提取链接', 'AI extract link', 'AIでリンク抽出'))
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.primary_text'))
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        if (this.prefLoaded) {
+          this.labeledTrackSwitch()
+        } else {
+          Row()
+            .width(65)
+            .height(28)
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
       TextInput({ text: this.urlDraft, placeholder: EditorUiStrings.loc('链接', 'Link', 'リンク') })
         .fontSize($r('app.float.body_font_size'))
         .width('100%')
@@ -52,7 +125,7 @@ export struct EditorAiLinkExtractDialog {
           .enabled(this.canConfirm())
           .onClick(() => {
             if (this.canConfirm()) {
-              this.params.onConfirm(this.urlDraft.trim())
+              this.params.onConfirm(this.urlDraft.trim(), this.summaryEnabled ? 1 : 0)
             }
           })
       }

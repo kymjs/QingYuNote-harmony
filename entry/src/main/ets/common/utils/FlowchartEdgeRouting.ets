@@ -1,5 +1,5 @@
 import type { FlowchartAnchor, FlowchartNodePosition } from '../model/FlowchartGraph'
-import { FLOWCHART_MIND_MAP_DEGREE_THRESHOLD } from '../model/FlowchartGraph'
+import { FLOWCHART_MIND_MAP_BUS_GAP, FLOWCHART_MIND_MAP_DEGREE_THRESHOLD } from '../model/FlowchartGraph'
 
 export class FlowchartEdgeRouting {
   static isHorizontalAnchor(anchor: FlowchartAnchor): boolean {
@@ -43,6 +43,19 @@ export class FlowchartEdgeRouting {
       points.push({ x: toX, y: toY })
     }
     return FlowchartEdgeRouting.simplifyPolyline(points)
+  }
+
+  static mindMapTreePath(fromX: number, fromY: number, toX: number, toY: number,
+    sourceLeft: number, sourceRight: number, sourceAnchor: FlowchartAnchor): FlowchartNodePosition[] {
+    const spineX = sourceAnchor === 'left'
+      ? sourceLeft - FLOWCHART_MIND_MAP_BUS_GAP
+      : sourceRight + FLOWCHART_MIND_MAP_BUS_GAP
+    return FlowchartEdgeRouting.simplifyPolyline([
+      { x: fromX, y: fromY },
+      { x: spineX, y: fromY },
+      { x: spineX, y: toY },
+      { x: toX, y: toY }
+    ])
   }
 
   static simplifyPolyline(points: FlowchartNodePosition[]): FlowchartNodePosition[] {
