@@ -1,4 +1,5 @@
 import type { Note, SyncResult, SyncStatus } from '../common/model/Note'
+import { isExtractStatusPending } from '../common/model/Note'
 import { DrawerModel } from '../common/model/DrawerModel'
 import { HomeDrawerLayer } from './HomeDrawerLayer'
 import { IndexNotesDataSource } from './IndexNotesDataSource'
@@ -14,6 +15,7 @@ import {
 import { SyncSettingsRemoteReport } from '../services/SyncSettingsRemoteReport'
 import { WebDAVClient } from '../services/WebDAVClient'
 import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
+import { LinkExtractClient } from '../services/LinkExtractClient'
 import { Logger } from '../common/utils/Logger'
 import {
   NoteFolderTree,
@@ -203,8 +205,11 @@ struct Index {
     const now = Date.now()
     if (this.lastPageShowNotesReloadAtMs > 0 &&
       now - this.lastPageShowNotesReloadAtMs < MIN_HOME_PAGE_SHOW_RELOAD_INTERVAL_MS) {
+      // 节流窗口内仍允许拉一次 extract status（轻量，不打列表接口）。
+      void this.refreshExtractStatuses()
       return
     }
+    await this.refreshExtractStatuses()
     await this.loadNotes(false)
     if (this.lifecycle.isActive()) {
       this.lastPageShowNotesReloadAtMs = Date.now()
@@ -485,6 +490,7 @@ struct Index {
       return
     }
     try {
+      await this.refreshExtractStatuses()
       await this.loadNotes(false)
       await tryAutoProvisionQingyuCloudOnHomeEntry()
       await SyncSettingsRemoteReport.getInstance().reportCurrentIfPossible()
@@ -1348,12 +1354,18 @@ struct Index {
           .width('100%')
           .alignItems(VerticalAlign.Center)
 
-          Text(note.summary.length > 0 ? note.summary : '暂无内容')
-            .fontSize(13)
-            .fontColor(note.summary.length > 0 ? $r('app.color.secondary_text') : $r('app.color.tertiary_text'))
-            .lineHeight(18)
-            .maxLines(2)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (isExtractStatusPending(note.extractStatus)) {
+            this.buildExtractPendingLine(note)
+          } else if (note.extractStatus === 'failed') {
+            this.buildExtractFailedLine(note)
+          } else {
+            Text(note.summary.length > 0 ? note.summary : '暂无内容')
+              .fontSize(13)
+              .fontColor(note.summary.length > 0 ? $r('app.color.secondary_text') : $r('app.color.tertiary_text'))
+              .lineHeight(18)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
@@ -1372,6 +1384,154 @@ struct Index {
       void this.openNoteFromList(note)
     })
     .width('100%')
+  }
+
+  @Builder
+  private buildExtractPendingLine(note: Note) {
+    Row({ space: 6 }) {
+      LoadingProgress()
+        .width(14)
+        .height(14)
+        .color($r('app.color.primary'))
+      Text(`AI 提取链接中… · ${note.sourceUrl.length > 0 ? note.sourceUrl : note.title}`)
+        .fontSize(13)
+        .fontColor($r('app.color.secondary_text'))
+        .lineHeight(18)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  private buildExtractFailedLine(note: Note) {
+    Row({ space: 6 }) {
+      Text('⚠')
+        .fontSize(13)
+        .fontColor($r('app.color.error'))
+      Text(this.formatExtractFailure(note.extractError))
+        .fontSize(13)
+        .fontColor($r('app.color.error'))
+        .lineHeight(18)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+      Text('重试')
+        .fontSize(12)
+        .fontColor($r('app.color.primary'))
+        .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+        .borderRadius(4)
+        .border({ width: 1, color: $r('app.color.primary') })
+        .onClick(() => {
+          void this.retryExtract(note)
+        })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+  }
+
+  private formatExtractFailure(code: string): string {
+    const c = (code ?? '').trim()
+    if (c.length === 0) {
+      return 'AI 提取失败'
+    }
+    switch (c) {
+      case 'video_parse_failed': return '无法解析视频链接'
+      case 'video_download_failed': return '视频下载失败'
+      case 'audio_extract_failed': return '音频提取失败'
+      case 'asr_failed': return '语音识别失败'
+      case 'asr_timeout': return '语音识别超时'
+      case 'scrape_failed': return '页面抓取失败'
+      case 'minimax_failed': return 'AI 摘要失败'
+      case 'timeout': return 'AI 摘要超时'
+      case 'minimax_not_configured': return 'AI 摘要未配置'
+      case 'invalid_url': return '链接无效'
+      default: return `AI 提取失败 · ${c}`
+    }
+  }
+
+  private async retryExtract(note: Note): Promise<void> {
+    const url = (note.sourceUrl ?? '').trim().length > 0
+      ? note.sourceUrl.trim()
+      : note.title.trim()
+    if (url.length === 0) {
+      return
+    }
+    await NoteRepository.getInstance().updateExtractInfo({
+      noteId: note.id,
+      jobId: '',
+      status: 'queued',
+      error: ''
+    })
+    try {
+      await LinkExtractClient.getInstance().submitJob(url, '', 0, note.id)
+    } catch (_) {
+      // ignore; status flips to failed on next poll
+    }
+    await this.refreshExtractStatuses()
+  }
+
+  private async refreshExtractStatuses(): Promise<void> {
+    try {
+      const pending = await NoteRepository.getInstance().listNotesNeedingExtract()
+      if (pending.length === 0) {
+        return
+      }
+      // 不节流，一次性并发。
+      const results = await Promise.all(pending.map(async (n) => {
+        try {
+          const job = await LinkExtractClient.getInstance().getJob(n.extractJobId)
+          return { note: n, job }
+        } catch (_) {
+          return null
+        }
+      }))
+      let mutated = false
+      for (const entry of results) {
+        if (!entry) continue
+        const n = entry.note
+        const j = entry.job
+        if (j.status === 'succeeded' && j.result) {
+          await NoteRepository.getInstance().updateExtractInfo({
+            noteId: n.id,
+            jobId: j.jobId,
+            status: 'succeeded',
+            title: j.result.title.length > 0 ? j.result.title : n.title,
+            content: j.result.content.length > 0 ? j.result.content : n.content,
+            extractedAt: j.finishedAt ?? j.updatedAt,
+            progress: 1.0
+          })
+          mutated = true
+        } else if (j.status === 'partial' && j.result) {
+          await NoteRepository.getInstance().updateExtractInfo({
+            noteId: n.id,
+            jobId: j.jobId,
+            status: 'partial',
+            title: j.result.title.length > 0 ? j.result.title : n.title,
+            content: j.result.content.length > 0 ? j.result.content : n.content,
+            extractedAt: j.finishedAt ?? j.updatedAt,
+            progress: 1.0,
+            error: j.error?.code ?? ''
+          })
+          mutated = true
+        } else if (j.status === 'failed') {
+          await NoteRepository.getInstance().updateExtractInfo({
+            noteId: n.id,
+            jobId: j.jobId,
+            status: 'failed',
+            error: j.error?.code ?? 'extract_failed'
+          })
+          mutated = true
+        }
+      }
+      if (mutated) {
+        await this.loadNotes()
+      }
+    } catch (e) {
+      Logger.warn('Index', `refreshExtractStatuses failed: ${JSON.stringify(e)}`)
+    }
   }
 
   @Builder

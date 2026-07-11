@@ -74,7 +74,12 @@ export class NoteStateCodec {
       imageRefs: [...note.imageRefs],
       audioId: note.audioId ?? '',
       deletedTime: note.deletedTime,
-      type_: note.type_
+      type_: note.type_,
+      extractStatus: note.extractStatus ?? 'none',
+      extractJobId: note.extractJobId ?? '',
+      extractError: note.extractError ?? '',
+      extractedAt: note.extractedAt ?? 0,
+      extractProgress: note.extractProgress ?? 0
     }
   }
 
@@ -111,6 +116,21 @@ export class NoteStateCodec {
     lines.push(`image_refs: ${NoteStateCodec.serializeTags(state.imageRefs)}`)
     lines.push(`deleted_time: ${state.deletedTime}`)
     lines.push(`type_: ${state.type_}`)
+    if (state.extractStatus && state.extractStatus !== 'none') {
+      lines.push(`extract_status: ${state.extractStatus}`)
+    }
+    if (state.extractJobId && state.extractJobId.length > 0) {
+      lines.push(`extract_job_id: ${state.extractJobId}`)
+    }
+    if (state.extractError && state.extractError.length > 0) {
+      lines.push(`extract_error: ${state.extractError}`)
+    }
+    if (state.extractedAt && state.extractedAt > 0) {
+      lines.push(`extracted_at: ${NoteStateCodec.formatTimestamp(state.extractedAt)}`)
+    }
+    if (state.extractProgress && state.extractProgress > 0 && state.extractProgress < 1) {
+      lines.push(`extract_progress: ${state.extractProgress.toFixed(2)}`)
+    }
     lines.push('-->')
     return lines.join('\n')
   }
@@ -160,6 +180,11 @@ export class NoteStateCodec {
       audioId: '',
       deletedTime: 1,
       type_: state.type_,
+      extractStatus: state.extractStatus,
+      extractJobId: state.extractJobId,
+      extractError: state.extractError,
+      extractedAt: state.extractedAt,
+      extractProgress: state.extractProgress
     }
     return NoteStateCodec.serializeNoteFile(note)
   }
@@ -188,7 +213,12 @@ export class NoteStateCodec {
       imageRefs: [],
       audioId: '',
       deletedTime: 0,
-      type_: type
+      type_: type,
+      extractStatus: 'none',
+      extractJobId: '',
+      extractError: '',
+      extractedAt: 0,
+      extractProgress: 0
     }
   }
 
@@ -272,6 +302,23 @@ export class NoteStateCodec {
           break
         case 'type_':
           parsed.type_ = NoteStateCodec.parseInteger(value, parsed.type_)
+          break
+        case 'extract_status': {
+          const v = value as ExtractStatus
+          parsed.extractStatus = EXTRACT_STATUS_VALUES.includes(v) ? v : 'none'
+          break
+        }
+        case 'extract_job_id':
+          parsed.extractJobId = value
+          break
+        case 'extract_error':
+          parsed.extractError = value
+          break
+        case 'extracted_at':
+          parsed.extractedAt = NoteStateCodec.parseTimestamp(value, parsed.extractedAt)
+          break
+        case 'extract_progress':
+          parsed.extractProgress = NoteStateCodec.parseNumber(value, parsed.extractProgress)
           break
         default:
           break

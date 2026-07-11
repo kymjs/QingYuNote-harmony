@@ -495,6 +495,73 @@ export class NoteRepository {
   }
 
   /**
+   * Update the async link-extract fields for a note without rewriting the
+   * note body (unless [UpdateExtractInfo.title/content] are provided). Used
+   * by the background link-extract flow to flip status / persist job id after
+   * submitting the async job, and to overwrite title + content when the
+   * server2 job completes.
+   */
+  async updateExtractInfo(patch: UpdateExtractInfo): Promise<Note> {
+    await this.init()
+    const existing = await this.getNote(patch.noteId)
+    if (!existing) {
+      throw new Error(`Note ${patch.noteId} does not exist`)
+    }
+    const now = Date.now()
+    const nextTitle = patch.title ?? existing.title
+    const nextContent = patch.content ?? existing.content
+    let nextSummary = existing.summary
+    let nextImageRefs = existing.imageRefs
+    if (patch.content !== undefined) {
+      nextSummary = MarkdownUtils.summary(nextContent)
+      nextImageRefs = NoteStateCodec.extractImageRefs(nextContent)
+    }
+    const updated: Note = {
+      ...existing,
+      title: nextTitle,
+      content: nextContent,
+      summary: nextSummary,
+      imageRefs: nextImageRefs,
+      extractStatus: patch.status ?? existing.extractStatus,
+      extractJobId: patch.jobId ?? existing.extractJobId,
+      extractError: patch.error ?? existing.extractError,
+      extractedAt: patch.extractedAt ?? existing.extractedAt,
+      extractProgress: patch.progress ?? existing.extractProgress,
+      localModified: now,
+      lastOperationAt: now,
+      syncStatus: 'pending',
+      updatedAt: now,
+      userUpdatedTime: existing.userUpdatedTime > 0 ? existing.userUpdatedTime : now
+    }
+    await FileService.getInstance().writeNoteFile(updated)
+    await DatabaseService.getInstance().upsertSyncState(this.toSyncState(updated))
+    this.bumpVersion()
+    if (this.scheduleSyncHandler) {
+      await this.scheduleSyncHandler(updated.id)
+    }
+    return updated
+  }
+
+  /**
+   * Notes whose link-extract job is still in flight (queued / running). The
+   * caller (e.g. home page pull-to-refresh / onPageShow) should poll server2
+   * for these to refresh their state.
+   */
+  async listNotesNeedingExtract(): Promise<Note[]> {
+    await this.init()
+    const notes = await this.loadAllNotes()
+    return notes.filter((n) => {
+      if (n.deleted || n.deletedTime !== 0) {
+        return false
+      }
+      if (!n.extractJobId || n.extractJobId.length === 0) {
+        return false
+      }
+      return isExtractStatusPending(n.extractStatus)
+    })
+  }
+
+  /**
    * 回收站侧滑「还原」：`deleted_time` 设为 0，并清除本地删除同步状态。
    */
   async restoreRecycleBinNote(id: string): Promise<void> {

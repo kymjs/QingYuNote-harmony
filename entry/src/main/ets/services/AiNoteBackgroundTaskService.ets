@@ -1,5 +1,6 @@
 import { AppContextHolder } from './AppContextHolder'
 import { AiNoteService, type AiLinkSummaryResult, AiLinkExtractTitle } from './AiNoteService'
+import { LinkExtractClient } from './LinkExtractClient'
 import { NoteRepository } from './NoteRepository'
 import { SyncService } from './SyncService'
 import { VoiceTranscribeClient } from './VoiceTranscribeClient'
@@ -183,63 +184,74 @@ export class AiNoteBackgroundTaskService {
     summarize: number,
     currentTitle: string = '',
     currentContent: string = '',
-    switchToPreviewOnSuccess: boolean = false
+    switchToPreviewOnSuccess: boolean = false,
+    prompt: string = ''
   ): Promise<boolean> {
-    const id = noteId.trim()
     const trimmedUrl = url.trim()
-    if (id.length === 0 || trimmedUrl.length === 0) {
+    if (trimmedUrl.length === 0) {
       return false
     }
     return this.runLocked(
-      id,
-      EditorUiStrings.loc('AI 处理中…', 'AI processing…', 'AI処理中…'),
+      noteId,
+      EditorUiStrings.loc('AI 提交中…', 'Submitting…', '送信中…'),
       async (): Promise<AiNoteBackgroundTaskResult> => {
-        const extracted: AiLinkSummaryResult =
-          await AiNoteService.getInstance().summarizeLink(trimmedUrl, summarize)
-        if (extracted.body.trim().length === 0) {
-          throw new Error('AI 未返回有效内容')
+        let id = noteId.trim()
+        if (id.length === 0) {
+          // No note bound yet — create a placeholder note so server2 has a
+          // stable note_id to write back into.
+          const placeholderContent = `🔗 ${EditorUiStrings.loc('AI 提取链接中…', 'AI is extracting the link…', 'AIリンク抽出中…')}\n\n${trimmedUrl}`
+          const placeholder = await NoteRepository.getInstance().createNote({
+            title: trimmedUrl,
+            content: placeholderContent,
+            tags: [],
+            skipTitleAutoFill: true
+          })
+          id = placeholder.id
+        } else {
+          // Flip the local status so the home list immediately shows the
+          // extracting placeholder card.
+          await NoteRepository.getInstance().updateExtractInfo({
+            noteId: id,
+            status: 'queued'
+          })
         }
-        const existing = await NoteRepository.getInstance().getNote(id)
-        const existingContent = currentContent.length > 0
-          ? currentContent
-          : (existing?.content ?? '')
-        const contentBefore = existingContent
-        const separator = existingContent.trim().length === 0 ? '' : '\n\n'
-        const linkLine = EditorUiStrings.loc(
-          `完整文章链接为：[${trimmedUrl}](${trimmedUrl})`,
-          `Full article link: [${trimmedUrl}](${trimmedUrl})`,
-          `全文リンク：[${trimmedUrl}](${trimmedUrl})`
+
+        const finalPrompt = prompt.length > 0
+          ? prompt
+          : EditorUiStrings.loc(
+            '请根据链接内容生成结构化的 Markdown 笔记摘要。',
+            'Generate a structured Markdown note summary from the link.',
+            'リンク内容から構造化されたMarkdownノート要約を生成してください。'
+          )
+
+        const job = await LinkExtractClient.getInstance().submitJob(
+          trimmedUrl,
+          finalPrompt,
+          summarize,
+          id
         )
-        const nextContent = `${existingContent}${separator}${extracted.body}\n\n${linkLine}`
-        let nextTitle = (existing?.title ?? currentTitle).trim()
-        const extractedTitle = AiLinkExtractTitle.resolve(extracted.title, extracted.body)
-        if (AiLinkExtractTitle.isPlaceholderNoteTitle(nextTitle) &&
-          extractedTitle.trim().length > 0) {
-          nextTitle = extractedTitle.trim()
-        }
-        await NoteRepository.getInstance().saveDraft(id, {
-          title: nextTitle,
-          content: nextContent,
-          skipTitleAutoFill: nextTitle.length === 0
+
+        await NoteRepository.getInstance().updateExtractInfo({
+          noteId: id,
+          jobId: job.jobId,
+          status: 'running'
         })
+
         const result = new AiNoteBackgroundTaskResult()
         result.noteId = id
         result.kind = 'extractLink'
         result.success = true
         result.message = EditorUiStrings.loc(
-          summarize !== 0 ? 'AI 已生成链接摘要并写入正文' : 'AI 已提取全文并写入正文',
-          summarize !== 0 ? 'AI added link summary to the note' : 'AI extracted full text into the note',
-          summarize !== 0 ? 'AIがリンク要約を本文に追加しました' : 'AIが全文を本文に追加しました'
+          summarize !== 0 ? '已提交链接摘要，提取完成后会自动更新笔记' : '已提交链接提取，提取完成后会自动更新笔记',
+          summarize !== 0 ? 'Submitted; the note will update when extraction finishes.' : 'Submitted; the note will update when extraction finishes.',
+          '送信しました。抽出が完了するとノートが自動的に更新されます。'
         )
-        result.title = nextTitle
-        result.content = nextContent
-        result.contentBefore = contentBefore
         result.switchToPreviewOnSuccess = switchToPreviewOnSuccess
         return result
       },
       (e: Object): AiNoteBackgroundTaskResult => {
         const result = new AiNoteBackgroundTaskResult()
-        result.noteId = id
+        result.noteId = noteId
         result.kind = 'extractLink'
         result.success = false
         result.message = UserFacingMessage.forAi(
