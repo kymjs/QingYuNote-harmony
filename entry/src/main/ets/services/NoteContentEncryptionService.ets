@@ -180,7 +180,12 @@ export class NoteContentEncryptionService {
       userData: note.userData,
       rsa: note.rsa,
       deletedTime: note.deletedTime,
-      type_: note.type_
+      type_: note.type_,
+      extractStatus: note.extractStatus,
+      extractJobId: note.extractJobId,
+      extractError: note.extractError,
+      extractedAt: note.extractedAt,
+      extractProgress: note.extractProgress
     }
   }
 }

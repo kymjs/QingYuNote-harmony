@@ -129,7 +129,7 @@ export class FileService {
     try {
       const filePath = this.getNotePath(noteId)
       if (!fs.accessSync(filePath)) {
-        Logger.warn('FileService', `readParsedNote missing file: noteId=${noteId}, path=${filePath}`)
+        Logger.warn('LinkExtractDebug', `readParsedNote missing file: noteId=${noteId}, path=${filePath}`)
         return null
       }
       const rawContent = await this.readNoteFile(noteId)
@@ -137,13 +137,18 @@ export class FileService {
       const payload = NoteStateCodec.parseNoteFile(rawContent, noteId, modifiedAt)
       payload.filePath = filePath
       payload.modifiedAt = modifiedAt
+      Logger.info('LinkExtractDebug',
+        `readParsedNote noteId=${noteId} extractStatus=${payload.state.extractStatus} ` +
+        `extractJobId=${payload.state.extractJobId} rawHasExtractStatus=${rawContent.includes('extract_status:')} ` +
+        `rawHasExtractJobId=${rawContent.includes('extract_job_id:')}`
+      )
       const userId = await NoteContentEncryptionService.getInstance().resolveUserId()
       if (userId === null) {
         return payload
       }
       return NoteContentEncryptionService.getInstance().decryptPayloadForDisplay(payload, userId)
     } catch (error) {
-      Logger.warn('FileService', `readParsedNote failed: noteId=${noteId}, error=${this.describeError(error as Object)}`)
+      Logger.warn('LinkExtractDebug', `readParsedNote failed: noteId=${noteId}, error=${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)
     }
   }
@@ -158,21 +163,42 @@ export class FileService {
       const filePath = this.getNotePath(note.id)
       let storageNote = note
       const userId = await NoteContentEncryptionService.getInstance().resolveUserId()
+      Logger.info('LinkExtractDebug',
+        `writeNoteFile pre-serialize noteId=${note.id} extractStatus=${note.extractStatus} ` +
+        `extractJobId=${note.extractJobId} extractProgress=${note.extractProgress} ` +
+        `titleLen=${note.title.length} contentLen=${note.content.length} userId=${userId ?? 'null'}`
+      )
       if (userId !== null) {
         storageNote = await NoteContentEncryptionService.getInstance().encryptNoteForStorage(note, userId)
+        Logger.info('LinkExtractDebug',
+          `writeNoteFile post-encrypt noteId=${note.id} extractStatus=${storageNote.extractStatus} ` +
+          `extractJobId=${storageNote.extractJobId}`
+        )
       }
       const serialized = NoteStateCodec.serializeNoteFile(storageNote)
-      const file = fs.openSync(filePath, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
+      // 原子写：写到 .tmp 后 rename 覆盖目标文件。避免「OPEN+TRUNC 已把文件清空，
+      // 但 await fs.write 还没完成」导致的并发读 readParsedNote 看到文件 missing。
+      const tmpPath = `${filePath}.tmp`
+      const file = fs.openSync(tmpPath, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
       try {
-        Logger.info('FileService',
-          `writeNoteFile start: noteId=${note.id}, path=${filePath}, contentLength=${serialized.length}`)
+        Logger.info('LinkExtractDebug',
+          `writeNoteFile start: noteId=${note.id}, path=${filePath}, contentLength=${serialized.length} ` +
+          `serializedHasExtractStatus=${serialized.includes('extract_status:')} ` +
+          `serializedHasExtractJobId=${serialized.includes('extract_job_id:')}`
+        )
         await fs.write(file.fd, serialized, { encoding: 'utf-8' })
+        await fs.fsync(file.fd)
       } finally {
         fs.closeSync(file)
       }
+      // 原子替换。rename 在同一文件系统下是原子操作，读端要么看到旧内容要么看到新内容，看不到 0 字节中间态。
+      fs.renameSync(tmpPath, filePath)
       const persisted = await fs.readText(filePath, { encoding: 'utf-8' })
-      Logger.info('FileService',
-        `writeNoteFile finish: noteId=${note.id}, path=${filePath}, persistedLength=${persisted.length}`)
+      Logger.info('LinkExtractDebug',
+        `writeNoteFile finish: noteId=${note.id}, path=${filePath}, persistedLength=${persisted.length} ` +
+        `persistedHasExtractStatus=${persisted.includes('extract_status:')} ` +
+        `persistedHasExtractJobId=${persisted.includes('extract_job_id:')}`
+      )
     } catch (error) {
       Logger.warn('FileService', `writeNoteFile failed: noteId=${note.id}, error=${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)
@@ -219,7 +245,12 @@ export class FileService {
       userData: state.userData,
       rsa: state.rsa,
       deletedTime: state.deletedTime,
-      type_: state.type_
+      type_: state.type_,
+      extractStatus: state.extractStatus,
+      extractJobId: state.extractJobId,
+      extractError: state.extractError,
+      extractedAt: state.extractedAt,
+      extractProgress: state.extractProgress
     })
   }
 

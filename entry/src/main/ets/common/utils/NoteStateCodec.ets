@@ -1,4 +1,5 @@
 import type { Note, NoteFilePayload, NoteStateBlock } from '../model/Note'
+import { EXTRACT_STATUS_VALUES, ExtractStatus } from '../model/Note'
 import { MarkdownUtils } from './MarkdownUtils'
 
 const NOTE_STATE_START = '<!-- NOTE_STATE'

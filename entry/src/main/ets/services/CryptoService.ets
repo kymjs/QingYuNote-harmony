@@ -51,7 +51,7 @@ export class CryptoService {
       const key = await this.deriveNoteEncryptionKey(trimmedUserId)
       return await this.decryptTextWithKey(cipherText, key, NOTE_AAD_SEED)
     } catch (error) {
-      Logger.warn('CryptoService', `decryptNoteText failed: ${this.describeError(error)}`)
+      Logger.warn('LinkExtractDebug', `decryptNoteText failed: ${this.describeError(error)}, returning empty`)
       return ''
     }
   }

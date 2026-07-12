@@ -1,7 +1,8 @@
 import fs from '@ohos.file.fs'
 import type common from '@ohos.app.ability.common'
 import type { CreateNoteInput, Note, NoteFilePayload, NoteStateBlock, NoteSyncState, RecycleBinLoadResult,
-  UpdateNoteInput } from '../common/model/Note'
+  UpdateExtractInfo, UpdateNoteInput } from '../common/model/Note'
+import { isExtractStatusPending } from '../common/model/Note'
 import { Logger } from '../common/utils/Logger'
 import { MarkdownUtils, shouldShowTodoNoteInHomeList } from '../common/utils/MarkdownUtils'
 import { NoteFolderTree } from '../common/utils/NoteFolderTree'
@@ -86,7 +87,14 @@ export class NoteRepository {
     if (userId === null) {
       return note
     }
-    return NoteContentEncryptionService.getInstance().decryptNoteForDisplay(note, userId)
+    const out = await NoteContentEncryptionService.getInstance().decryptNoteForDisplay(note, userId)
+    if (note.extractJobId.length > 0 && out.extractJobId.length === 0) {
+      Logger.warn('LinkExtractDebug',
+        `noteForDisplay DROPPED extractJobId noteId=${note.id} in=${note.extractJobId} out=${out.extractJobId} ` +
+        `extractStatus=${out.extractStatus}`
+      )
+    }
+    return out
   }
 
   beginBulkNotification(): void {
@@ -117,6 +125,10 @@ export class NoteRepository {
     const userData = (input.userData ?? '').trim()
     if (userData.length > 0) {
       state.userData = userData
+    }
+    const sourceUrl = (input.sourceUrl ?? '').trim()
+    if (sourceUrl.length > 0) {
+      state.sourceUrl = sourceUrl
     }
     const note = this.createNoteFromState(state, trimmedContent, {
       noteId: id,
@@ -433,7 +445,9 @@ export class NoteRepository {
     const parentIdChanged = nextParentId !== existing.parentId
     const nextAudioId = patch.audioId !== undefined ? patch.audioId : existing.audioId
     const audioIdChanged = nextAudioId !== existing.audioId
-    if (!contentChanged && !titleChanged && !summaryChanged && !tagsChanged && !parentIdChanged && !audioIdChanged) {
+    const nextSourceUrl = patch.sourceUrl !== undefined ? patch.sourceUrl : existing.sourceUrl
+    const sourceUrlChanged = nextSourceUrl !== existing.sourceUrl
+    if (!contentChanged && !titleChanged && !summaryChanged && !tagsChanged && !parentIdChanged && !audioIdChanged && !sourceUrlChanged) {
       return this.cloneNote(existing)
     }
 
@@ -445,6 +459,7 @@ export class NoteRepository {
     updated.parentId = nextParentId
     updated.summary = nextSummary
     updated.audioId = nextAudioId
+    updated.sourceUrl = nextSourceUrl
     updated.localModified = now
     updated.deleted = false
     updated.deletedAt = 0
@@ -505,11 +520,19 @@ export class NoteRepository {
     await this.init()
     const existing = await this.getNote(patch.noteId)
     if (!existing) {
+      Logger.warn('LinkExtractDebug', `updateExtractInfo note not found noteId=${patch.noteId}`)
       throw new Error(`Note ${patch.noteId} does not exist`)
     }
+    Logger.info('LinkExtractDebug',
+      `updateExtractInfo begin noteId=${patch.noteId} ` +
+      `oldStatus=${existing.extractStatus} oldJobId=${existing.extractJobId} ` +
+      `oldTitleLen=${existing.title.length} oldContentLen=${existing.content.length} ` +
+      `patch.status=${patch.status ?? 'null'} patch.jobId=${patch.jobId ?? 'null'} ` +
+      `patch.titleLen=${patch.title?.length ?? 'null'} patch.contentLen=${patch.content?.length ?? 'null'}`
+    )
     const now = Date.now()
-    const nextTitle = patch.title ?? existing.title
-    const nextContent = patch.content ?? existing.content
+    const nextTitle: string = patch.title ?? existing.title
+    const nextContent: string = patch.content ?? existing.content
     let nextSummary = existing.summary
     let nextImageRefs = existing.imageRefs
     if (patch.content !== undefined) {
@@ -517,25 +540,53 @@ export class NoteRepository {
       nextImageRefs = NoteStateCodec.extractImageRefs(nextContent)
     }
     const updated: Note = {
-      ...existing,
+      id: existing.id,
       title: nextTitle,
       content: nextContent,
+      tags: existing.tags,
       summary: nextSummary,
+      localModified: now,
+      remoteModified: existing.remoteModified,
+      deleted: existing.deleted,
+      deletedAt: existing.deletedAt,
+      lastOperationAt: now,
+      syncStatus: 'pending',
+      filePath: existing.filePath,
+      createdAt: existing.createdAt,
+      updatedAt: now,
+      parentId: existing.parentId,
+      isConflict: existing.isConflict,
+      latitude: existing.latitude,
+      longitude: existing.longitude,
+      altitude: existing.altitude,
+      author: existing.author,
+      sourceUrl: existing.sourceUrl,
+      isTodo: existing.isTodo,
+      todoDue: existing.todoDue,
+      todoCompleted: existing.todoCompleted,
+      source: existing.source,
+      order: existing.order,
+      userData: existing.userData,
+      rsa: existing.rsa,
       imageRefs: nextImageRefs,
+      audioId: existing.audioId,
+      deletedTime: existing.deletedTime,
+      type_: existing.type_,
       extractStatus: patch.status ?? existing.extractStatus,
       extractJobId: patch.jobId ?? existing.extractJobId,
       extractError: patch.error ?? existing.extractError,
       extractedAt: patch.extractedAt ?? existing.extractedAt,
-      extractProgress: patch.progress ?? existing.extractProgress,
-      localModified: now,
-      lastOperationAt: now,
-      syncStatus: 'pending',
-      updatedAt: now,
-      userUpdatedTime: existing.userUpdatedTime > 0 ? existing.userUpdatedTime : now
+      extractProgress: patch.progress ?? existing.extractProgress
     }
     await FileService.getInstance().writeNoteFile(updated)
     await DatabaseService.getInstance().upsertSyncState(this.toSyncState(updated))
     this.bumpVersion()
+    Logger.info('LinkExtractDebug',
+      `updateExtractInfo done noteId=${patch.noteId} ` +
+      `newStatus=${updated.extractStatus} newJobId=${updated.extractJobId} ` +
+      `newTitleLen=${updated.title.length} newContentLen=${updated.content.length} ` +
+      `syncStatus=${updated.syncStatus}`
+    )
     if (this.scheduleSyncHandler) {
       await this.scheduleSyncHandler(updated.id)
     }
@@ -550,7 +601,7 @@ export class NoteRepository {
   async listNotesNeedingExtract(): Promise<Note[]> {
     await this.init()
     const notes = await this.loadAllNotes()
-    return notes.filter((n) => {
+    const candidates = notes.filter((n): boolean => {
       if (n.deleted || n.deletedTime !== 0) {
         return false
       }
@@ -559,6 +610,22 @@ export class NoteRepository {
       }
       return isExtractStatusPending(n.extractStatus)
     })
+    // Sample some loaded notes so we can see what's actually in memory.
+    const sample = notes.slice(0, 3).map((n): string =>
+      `id=${n.id.substring(0, 8)} extractStatus=${n.extractStatus} extractJobId=${n.extractJobId} deleted=${n.deleted} deletedTime=${n.deletedTime}`
+    )
+    const sampleHasJob = notes.filter(n => !!n.extractJobId).slice(0, 3).map((n): string =>
+      `hit id=${n.id.substring(0, 8)} extractStatus=${n.extractStatus} extractJobId=${n.extractJobId}`
+    )
+    Logger.info('LinkExtractDebug',
+      `listNotesNeedingExtract totalLoaded=${notes.length} ` +
+      `candidates=${candidates.length} ` +
+      `withExtractJobId=${notes.filter(n => !!n.extractJobId).length} ` +
+      `pending=${notes.filter(n => isExtractStatusPending(n.extractStatus)).length} ` +
+      `sample=[${sample.join(' | ')}] ` +
+      `sampleHasJob=[${sampleHasJob.join(' | ')}]`
+    )
+    return candidates
   }
 
   /**
@@ -864,11 +931,26 @@ export class NoteRepository {
           const currentIndex = nextIndex
           nextIndex += 1
           const noteId = noteIds[currentIndex]
-          await NoteRepository.getInstance().migrateNoteEncryptionIfNeeded(noteId)
-          const payload = await FileService.getInstance().readParsedNote(noteId)
-          if (payload) {
-            slots[currentIndex] = await this.noteForDisplay(
-              this.createNoteFromPayload(payload, syncStateMap.get(noteId)))
+          try {
+            await NoteRepository.getInstance().migrateNoteEncryptionIfNeeded(noteId)
+            let payload = await FileService.getInstance().readParsedNote(noteId)
+            // 极少数情况下文件在 listNoteIds 后被并发删除/截断（writeNoteFile 用 TRUNC），
+            // 短暂等待后重试一次。这能避免「pending 笔记彻底从 listNotesNeedingExtract 视野消失」。
+            if (!payload) {
+              await new Promise<void>(resolve => setTimeout(resolve, 30))
+              payload = await FileService.getInstance().readParsedNote(noteId)
+              if (!payload) {
+                Logger.warn('LinkExtractDebug',
+                  `loadAllNotes readParsedNote returned null after retry for noteId=${noteId}`)
+              }
+            }
+            if (payload) {
+              slots[currentIndex] = await this.noteForDisplay(
+                this.createNoteFromPayload(payload, syncStateMap.get(noteId)))
+            }
+          } catch (e) {
+            Logger.warn('LinkExtractDebug',
+              `loadAllNotes worker failed for noteId=${noteId}: ${JSON.stringify(e)}`)
           }
         }
       })())
@@ -881,6 +963,23 @@ export class NoteRepository {
         notes.push(n)
       }
     }
+    const withJob = notes.filter(n => !!n.extractJobId)
+    const withStatusRunning = notes.filter(n => n.extractStatus === 'running' || n.extractStatus === 'queued')
+    const slotFilled = slots.filter(s => s !== null).length
+    const slotNull = slots.filter(s => s === null).length
+    const nullIds: string[] = []
+    for (let i = 0; i < slots.length; i += 1) {
+      if (slots[i] === null) {
+        nullIds.push(noteIds[i].substring(0, 8))
+        if (nullIds.length >= 10) break
+      }
+    }
+    Logger.info('LinkExtractDebug',
+      `loadAllNotes slots=${slots.length} filled=${slotFilled} null=${slotNull} ` +
+      `notes=${notes.length} withJob=${withJob.length} withStatus=${withStatusRunning.length} ` +
+      `nullIds=[${nullIds.join(',')}] firstWithJob=${withJob.slice(0, 3).map(n => `id=${n.id.substring(0, 8)} jobId=${n.extractJobId.substring(0, 16)}`).join(' | ')} ` +
+      `anyJobInNotes=${withJob.length > 0} anyJobIds=${notes.filter(n => !!n.extractJobId).map(n => n.id.substring(0, 8)).slice(0, 5).join(',')}`
+    )
     return notes
   }
 
@@ -951,7 +1050,12 @@ export class NoteRepository {
       userData: base.userData,
       rsa: base.rsa,
       deletedTime: 0,
-      type_: base.type_
+      type_: base.type_,
+      extractStatus: base.extractStatus,
+      extractJobId: base.extractJobId,
+      extractError: base.extractError,
+      extractedAt: base.extractedAt,
+      extractProgress: base.extractProgress
     }
   }
 
@@ -975,7 +1079,7 @@ export class NoteRepository {
     }
     const resolvedTags = tags ?? state.tags ?? []
     const resolvedImageRefs: string[] = state.imageRefs ?? []
-    return {
+    const note: Note = {
       id: state.id,
       title: resolvedTitle,
       content,
@@ -1007,8 +1111,19 @@ export class NoteRepository {
       userData: state.userData,
       rsa: state.rsa,
       deletedTime: state.deletedTime,
-      type_: state.type_
+      type_: state.type_,
+      extractStatus: state.extractStatus,
+      extractJobId: state.extractJobId,
+      extractError: state.extractError,
+      extractedAt: state.extractedAt,
+      extractProgress: state.extractProgress
     }
+    if (state.extractJobId.length > 0 && note.extractJobId.length === 0) {
+      Logger.warn('LinkExtractDebug',
+        `createNoteFromState DROPPED extractJobId noteId=${state.id} in=${state.extractJobId} out=${note.extractJobId}`
+      )
+    }
+    return note
   }
 
   private toSyncState(note: Note): NoteSyncState {
@@ -1079,7 +1194,12 @@ export class NoteRepository {
       userData: note.userData,
       rsa: note.rsa,
       deletedTime: note.deletedTime,
-      type_: note.type_
+      type_: note.type_,
+      extractStatus: note.extractStatus,
+      extractJobId: note.extractJobId,
+      extractError: note.extractError,
+      extractedAt: note.extractedAt,
+      extractProgress: note.extractProgress
     }
   }
 

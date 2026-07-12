@@ -2,8 +2,9 @@ import { http } from '@kit.NetworkKit'
 import { BusinessError } from '@kit.BasicServicesKit'
 import { LinkExtractConstants } from '../common/constants/LinkExtractConstants'
 import { PreferencesService } from './PreferencesService'
+import { Logger } from '../common/utils/Logger'
 
-const TAG = 'LinkExtract'
+const TAG = 'LinkExtractDebug'
 
 export interface LinkExtractResult {
   title: string
@@ -125,6 +126,7 @@ export class LinkExtractClient {
     const fullUrl = `${base}/api/v1/extract/jobs`
     const req = http.createHttp()
     try {
+      Logger.info(TAG, `submitJob begin url=${fullUrl} noteId=${noteId} summarize=${summarize}`)
       const resp = await req.request(fullUrl, {
         method: http.RequestMethod.POST,
         header: this.headers(token),
@@ -139,20 +141,23 @@ export class LinkExtractClient {
         readTimeout: 15000
       })
       const code = resp.responseCode
+      Logger.info(TAG, `submitJob resp code=${code} body=${(resp.result as string ?? '').substring(0, 800)}`)
       if (code === 401) {
         throw new Error('未登录或服务不可用')
       }
       if (code < 200 || code >= 300) {
-        console.error(`${TAG} submitJob status=${code} body=${(resp.result as string ?? '').substring(0, 500)}`)
+        Logger.error(TAG, `submitJob status=${code} body=${(resp.result as string ?? '').substring(0, 500)}`)
         throw new Error('AI 提取链接失败，请稍后重试')
       }
       const obj = this.parseJson(resp.result as string)
-      return {
+      const out: SubmitJobResult = {
         jobId: `${obj['job_id'] ?? ''}`,
         noteId: `${obj['note_id'] ?? noteId}`,
-        status: (obj['status'] as SubmitJobResult['status']) ?? 'queued',
+        status: (obj['status'] as 'queued' | 'running' | 'succeeded' | 'failed' | 'partial') ?? 'queued',
         deduped: obj['deduped'] === true
       }
+      Logger.info(TAG, `submitJob parsed jobId=${out.jobId} status=${out.status} deduped=${out.deduped}`)
+      return out
     } finally {
       req.destroy()
     }
@@ -164,6 +169,7 @@ export class LinkExtractClient {
     const fullUrl = `${base}/api/v1/extract/jobs/${jobId}`
     const req = http.createHttp()
     try {
+      Logger.info(TAG, `getJob begin url=${fullUrl}`)
       const resp = await req.request(fullUrl, {
         method: http.RequestMethod.GET,
         header: this.headers(token),
@@ -172,6 +178,8 @@ export class LinkExtractClient {
         readTimeout: 15000
       })
       const code = resp.responseCode
+      const bodyPreview = (resp.result as string ?? '').substring(0, 1200)
+      Logger.info(TAG, `getJob resp code=${code} body=${bodyPreview}`)
       if (code === 401) {
         throw new Error('未登录或服务不可用')
       }
@@ -204,11 +212,20 @@ export class LinkExtractClient {
         }
       }
       const numOr = (v: Object, fallback: number) => (typeof v === 'number') ? v : fallback
+      const status = (obj['status'] as 'queued' | 'running' | 'succeeded' | 'failed' | 'partial') ?? 'queued'
+      Logger.info(TAG,
+        `getJob parsed jobId=${jobId} status=${status} ` +
+        `stage=${obj['stage']} progress=${obj['progress']} ` +
+        `hasResult=${result !== null} ` +
+        `titleLen=${result?.title?.length ?? 0} ` +
+        `contentLen=${result?.content?.length ?? 0} ` +
+        `errorCode=${error?.code ?? '-'}`
+      )
       return {
         jobId: `${obj['job_id'] ?? ''}`,
         noteId: `${obj['note_id'] ?? ''}`,
         url: `${obj['url'] ?? ''}`,
-        status: (obj['status'] as JobStatusResult['status']) ?? 'queued',
+        status,
         stage: `${obj['stage'] ?? ''}`,
         progress: numOr(obj['progress'] as Object, 0),
         result,

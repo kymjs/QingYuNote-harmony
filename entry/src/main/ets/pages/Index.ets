@@ -15,7 +15,7 @@ import {
 import { SyncSettingsRemoteReport } from '../services/SyncSettingsRemoteReport'
 import { WebDAVClient } from '../services/WebDAVClient'
 import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
-import { LinkExtractClient } from '../services/LinkExtractClient'
+import { LinkExtractClient, type JobStatusResult } from '../services/LinkExtractClient'
 import { Logger } from '../common/utils/Logger'
 import {
   NoteFolderTree,
@@ -123,6 +123,7 @@ struct Index {
   private lifecycle = new PageLifecycle()
 
   aboutToAppear(): void {
+    Logger.info('LinkExtractDebug', `trigger=aboutToAppear`)
     this.lifecycle.appear()
     AppContextHolder.setLastUiContext(this.getUIContext())
     try {
@@ -183,6 +184,7 @@ struct Index {
   }
 
   onPageShow(): void {
+    Logger.info('LinkExtractDebug', `trigger=onPageShow`)
     void this.handleIndexPageShow()
   }
 
@@ -206,9 +208,11 @@ struct Index {
     if (this.lastPageShowNotesReloadAtMs > 0 &&
       now - this.lastPageShowNotesReloadAtMs < MIN_HOME_PAGE_SHOW_RELOAD_INTERVAL_MS) {
       // 节流窗口内仍允许拉一次 extract status（轻量，不打列表接口）。
+      Logger.info('LinkExtractDebug', `trigger=onPageShow throttled, calling refreshExtractStatuses`)
       void this.refreshExtractStatuses()
       return
     }
+    Logger.info('LinkExtractDebug', `trigger=onPageShow full, calling refreshExtractStatuses+loadNotes`)
     await this.refreshExtractStatuses()
     await this.loadNotes(false)
     if (this.lifecycle.isActive()) {
@@ -484,12 +488,14 @@ struct Index {
   }
 
   private async handlePullToRefresh(): Promise<void> {
+    Logger.info('LinkExtractDebug', `trigger=pullToRefresh start`)
     if (this.syncing) {
       /** 后台已在同步：不重复拉列表/请求同步，仅保持下拉刷新动画表示「仍在同步」。动画在 `releaseSyncProgressUi` 时收起。 */
       this.refreshing = true
       return
     }
     try {
+      Logger.info('LinkExtractDebug', `trigger=pullToRefresh calling refreshExtractStatuses`)
       await this.refreshExtractStatuses()
       await this.loadNotes(false)
       await tryAutoProvisionQingyuCloudOnHomeEntry()
@@ -1392,7 +1398,7 @@ struct Index {
       LoadingProgress()
         .width(14)
         .height(14)
-        .color($r('app.color.primary'))
+        .color($r('app.color.accent'))
       Text(`AI 提取链接中… · ${note.sourceUrl.length > 0 ? note.sourceUrl : note.title}`)
         .fontSize(13)
         .fontColor($r('app.color.secondary_text'))
@@ -1410,20 +1416,20 @@ struct Index {
     Row({ space: 6 }) {
       Text('⚠')
         .fontSize(13)
-        .fontColor($r('app.color.error'))
+        .fontColor($r('app.color.danger'))
       Text(this.formatExtractFailure(note.extractError))
         .fontSize(13)
-        .fontColor($r('app.color.error'))
+        .fontColor($r('app.color.danger'))
         .lineHeight(18)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
       Text('重试')
         .fontSize(12)
-        .fontColor($r('app.color.primary'))
+        .fontColor($r('app.color.accent'))
         .padding({ left: 8, right: 8, top: 2, bottom: 2 })
         .borderRadius(4)
-        .border({ width: 1, color: $r('app.color.primary') })
+        .border({ width: 1, color: $r('app.color.accent') })
         .onClick(() => {
           void this.retryExtract(note)
         })
@@ -1453,6 +1459,7 @@ struct Index {
   }
 
   private async retryExtract(note: Note): Promise<void> {
+    Logger.info('LinkExtractDebug', `trigger=retryExtract noteId=${note.id}`)
     const url = (note.sourceUrl ?? '').trim().length > 0
       ? note.sourceUrl.trim()
       : note.title.trim()
@@ -1476,15 +1483,23 @@ struct Index {
   private async refreshExtractStatuses(): Promise<void> {
     try {
       const pending = await NoteRepository.getInstance().listNotesNeedingExtract()
+      Logger.info('LinkExtractDebug', `FLOW refreshExtractStatuses step=LIST_DONE pendingCount=${pending.length}`)
       if (pending.length === 0) {
         return
       }
+      for (const n of pending) {
+        Logger.info('LinkExtractDebug', `FLOW step=PENDING noteId=${n.id} jobId=${n.extractJobId} extractStatus=${n.extractStatus} titleLen=${n.title.length} contentLen=${n.content.length}`)
+      }
       // 不节流，一次性并发。
-      const results = await Promise.all(pending.map(async (n) => {
+      const results = await Promise.all(pending.map(async (n): Promise<ExtractRefreshEntry | null> => {
         try {
+          Logger.info('LinkExtractDebug', `FLOW step=GETJOB_START noteId=${n.id} jobId=${n.extractJobId}`)
           const job = await LinkExtractClient.getInstance().getJob(n.extractJobId)
-          return { note: n, job }
-        } catch (_) {
+          Logger.info('LinkExtractDebug', `FLOW step=GETJOB_DONE noteId=${n.id} jobStatus=${job.status} hasResult=${job.result !== null} titleLen=${job.result?.title?.length ?? 0} contentLen=${job.result?.content?.length ?? 0} errorCode=${job.error?.code ?? '-'}`)
+          const entry: ExtractRefreshEntry = { note: n, job }
+          return entry
+        } catch (e) {
+          Logger.warn('LinkExtractDebug', `FLOW step=GETJOB_THREW noteId=${n.id} jobId=${n.extractJobId}: ${JSON.stringify(e)}`)
           return null
         }
       }))
@@ -1493,7 +1508,9 @@ struct Index {
         if (!entry) continue
         const n = entry.note
         const j = entry.job
+        Logger.info('LinkExtractDebug', `FLOW step=PROCESS_ENTRY noteId=${n.id} jobStatus=${j.status} hasResult=${j.result !== null} titleLen=${j.result?.title?.length ?? 0} contentLen=${j.result?.content?.length ?? 0} errorCode=${j.error?.code ?? '-'}`)
         if (j.status === 'succeeded' && j.result) {
+          Logger.info('LinkExtractDebug', `FLOW step=UPDATE_SUCCEEDED noteId=${n.id} newTitleLen=${j.result.title.length} newContentLen=${j.result.content.length}`)
           await NoteRepository.getInstance().updateExtractInfo({
             noteId: n.id,
             jobId: j.jobId,
@@ -1504,7 +1521,9 @@ struct Index {
             progress: 1.0
           })
           mutated = true
+          Logger.info('LinkExtractDebug', `FLOW step=UPDATE_DONE noteId=${n.id} status=succeeded`)
         } else if (j.status === 'partial' && j.result) {
+          Logger.info('LinkExtractDebug', `FLOW step=UPDATE_PARTIAL noteId=${n.id}`)
           await NoteRepository.getInstance().updateExtractInfo({
             noteId: n.id,
             jobId: j.jobId,
@@ -1516,7 +1535,9 @@ struct Index {
             error: j.error?.code ?? ''
           })
           mutated = true
+          Logger.info('LinkExtractDebug', `FLOW step=UPDATE_DONE noteId=${n.id} status=partial`)
         } else if (j.status === 'failed') {
+          Logger.info('LinkExtractDebug', `FLOW step=UPDATE_FAILED noteId=${n.id} errorCode=${j.error?.code ?? 'extract_failed'}`)
           await NoteRepository.getInstance().updateExtractInfo({
             noteId: n.id,
             jobId: j.jobId,
@@ -1524,13 +1545,18 @@ struct Index {
             error: j.error?.code ?? 'extract_failed'
           })
           mutated = true
+          Logger.info('LinkExtractDebug', `FLOW step=UPDATE_DONE noteId=${n.id} status=failed`)
+        } else {
+          Logger.info('LinkExtractDebug', `FLOW step=NO_UPDATE_NEEDED noteId=${n.id} jobStatus=${j.status} hasResult=${j.result !== null}`)
         }
       }
+      Logger.info('LinkExtractDebug', `FLOW step=REFRESH_DONE mutated=${mutated} processedJobs=${results.filter(r => r !== null).length}/${pending.length}`)
       if (mutated) {
         await this.loadNotes()
+        Logger.info('LinkExtractDebug', `FLOW step=LOADNOTES_AFTER_REFRESH done`)
       }
     } catch (e) {
-      Logger.warn('Index', `refreshExtractStatuses failed: ${JSON.stringify(e)}`)
+      Logger.warn('LinkExtractDebug', `FLOW step=REFRESH_FAILED: ${JSON.stringify(e)}`)
     }
   }
 
@@ -1733,4 +1759,9 @@ struct Index {
       }
     })
   }
+}
+
+interface ExtractRefreshEntry {
+  note: Note
+  job: JobStatusResult
 }

@@ -1203,7 +1203,8 @@ struct NoteEdit {
     try {
       if (AiNoteBackgroundTaskService.getInstance().shouldSkipEditorAutoSave(
         this.noteId,
-        this.content
+        this.content,
+        this.title
       )) {
         return
       }
@@ -1289,7 +1290,8 @@ struct NoteEdit {
     await new Promise<void>((resolve: () => void) => setTimeout(() => resolve(), 0))
     if (AiNoteBackgroundTaskService.getInstance().shouldSkipEditorAutoSave(
       this.noteId,
-      this.content
+      this.content,
+      this.title
     )) {
       return
     }
@@ -2497,16 +2499,21 @@ struct NoteEdit {
   }
 
   private applyAiBackgroundTaskResult(result: AiNoteBackgroundTaskResult): void {
-    if (!this.lifecycle.isActive() || result.noteId !== this.noteId || !result.success) {
+    if (!this.lifecycle.isActive() || !result.success) {
+      return
+    }
+    // 当 result.noteId 与 this.noteId 不一致时仍然尝试同步 title/content（占位提取任务结果），
+    // 但 noteId 校验失败说明 listener 时机异常，仍在 onAiExtractLink 中做了磁盘重读兜底。
+    if (result.noteId !== this.noteId && result.noteId.length > 0 && this.noteId.length > 0) {
       return
     }
     if (result.contentBefore !== undefined) {
       this.captureAiUndoBaseline(result.contentBefore)
     }
-    if (result.title !== undefined) {
+    if (result.title !== undefined && result.title !== this.title) {
       this.title = result.title
     }
-    if (result.content !== undefined) {
+    if (result.content !== undefined && result.content !== this.content) {
       this.content = result.content
       this.previousContent = result.content
       this.contentCaretIndex = result.content.length
@@ -2638,6 +2645,10 @@ struct NoteEdit {
     this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
     this.aiNoteWorking = true
     this.aiMenuVisible = false
+    // 记录跑 AI 前的原始 title/content：若用户原本就有内容，必须保留，绝不能被占位文本覆盖。
+    const originalTitle = this.title
+    const originalContent = this.content
+    const editorHadContentBeforeAi = originalTitle.trim().length > 0 || originalContent.trim().length > 0
     const started = await svc.runExtractLink(
       this.noteId,
       url.trim(),
@@ -2646,6 +2657,24 @@ struct NoteEdit {
       this.content,
       switchToPreviewOnSuccess
     )
+    if (started && this.lifecycle.isActive()) {
+      // 不依赖磁盘读取，直接用代码里已知的占位文本同步控制器。
+      // 这样无论 listener 是否触发、磁盘读取是否返回正确值，编辑器都能立即展示占位卡片。
+      if (!editorHadContentBeforeAi) {
+        this.title = EditorUiStrings.loc('AI提取链接中', 'AI is extracting the link', 'AIリンク抽出中')
+        this.content = EditorUiStrings.loc(
+          '已提交链接摘要，提取完成后会自动更新笔记',
+          'Submitted; the note will update when extraction finishes.',
+          '送信しました。抽出が完了するとノートが自動的に更新されます。'
+        )
+        this.previousContent = this.content
+        this.contentCaretIndex = this.content.length
+        this.saveStatus = '已保存'
+        this.lastSavedAt = Date.now()
+      } else if (this.title === originalTitle && this.content === originalContent) {
+        // 编辑器原本有内容但 listener 这次漏写控制器；disk 上保留了用户内容，无需覆盖。
+      }
+    }
     if (!started && !svc.isBusy) {
       this.aiNoteWorking = false
     }

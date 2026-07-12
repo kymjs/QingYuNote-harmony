@@ -164,6 +164,8 @@ export interface CreateNoteInput {
   skipTitleAutoFill?: boolean
   /** 写入笔记 state 的 userData JSON 字符串。 */
   userData?: string
+  /** 链接来源 URL；写入 state `source_url`，用于 AI 链接提取等需要回溯链接的场景。 */
+  sourceUrl?: string
 }
 
 export interface UpdateNoteInput {
@@ -176,6 +178,8 @@ export interface UpdateNoteInput {
   skipTitleAutoFill?: boolean
   /** 关联录音文件名（如 `{noteId}.m4a`）；undefined 时不修改。 */
   audioId?: string
+  /** 链接来源 URL；undefined 时不修改。 */
+  sourceUrl?: string
 }
 
 /** 仅更新异步链接提取相关字段的 patch。 */

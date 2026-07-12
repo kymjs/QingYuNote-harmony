@@ -1,5 +1,5 @@
 import { AppContextHolder } from './AppContextHolder'
-import { AiNoteService, type AiLinkSummaryResult, AiLinkExtractTitle } from './AiNoteService'
+import { AiNoteService } from './AiNoteService'
 import { LinkExtractClient } from './LinkExtractClient'
 import { NoteRepository } from './NoteRepository'
 import { SyncService } from './SyncService'
@@ -70,7 +70,7 @@ export class AiNoteBackgroundTaskService {
   }
 
   /** 后台 AI 已写入草稿且编辑区尚未同步时，跳过自动保存以防旧内容覆盖。 */
-  shouldSkipEditorAutoSave(noteId: string, editorContent: string): boolean {
+  shouldSkipEditorAutoSave(noteId: string, editorContent: string, editorTitle?: string): boolean {
     const id = noteId.trim()
     if (id.length === 0) {
       return false
@@ -79,10 +79,16 @@ export class AiNoteBackgroundTaskService {
       return true
     }
     const result = this.lastResultInternal
-    if (result === null || result.noteId !== id || !result.success || result.content === undefined) {
+    if (result === null || result.noteId !== id || !result.success) {
       return false
     }
-    return result.content !== editorContent
+    if (result.content !== undefined && result.content !== editorContent) {
+      return true
+    }
+    if (editorTitle !== undefined && result.title !== undefined && result.title !== editorTitle) {
+      return true
+    }
+    return false
   }
 
   addListener(listener: AiTaskListener): void {
@@ -195,21 +201,64 @@ export class AiNoteBackgroundTaskService {
       noteId,
       EditorUiStrings.loc('AI 提交中…', 'Submitting…', '送信中…'),
       async (): Promise<AiNoteBackgroundTaskResult> => {
+        // 占位笔记的标题与正文统一固定为「AI提取链接中」/「已提交链接摘要，提取完成后会自动更新笔记」，
+        // 让首页列表以可识别的占位卡片呈现，提取完成后由 updateExtractInfo 覆盖 title/content。
+        //
+        // 如果当前笔记已经有用户编辑过的标题或正文，则只更新 sourceUrl + 提取状态，
+        // 保留用户的标题/正文，避免覆盖用户已写的内容。
+        const placeholderTitleZh = 'AI提取链接中'
+        const placeholderTitleEn = 'AI is extracting the link'
+        const placeholderTitleJa = 'AIリンク抽出中'
+        const placeholderContentZh = '已提交链接摘要，提取完成后会自动更新笔记'
+        const placeholderContentEn = 'Submitted; the note will update when extraction finishes.'
+        const placeholderContentJa = '送信しました。抽出が完了するとノートが自動的に更新されます。'
+
+        let appliedTitle: string | undefined = undefined
+        let appliedContent: string | undefined = undefined
+        let contentBefore: string | undefined = undefined
+
         let id = noteId.trim()
         if (id.length === 0) {
-          // No note bound yet — create a placeholder note so server2 has a
-          // stable note_id to write back into.
-          const placeholderContent = `🔗 ${EditorUiStrings.loc('AI 提取链接中…', 'AI is extracting the link…', 'AIリンク抽出中…')}\n\n${trimmedUrl}`
+          // 从首页「更多方式」发起：先建占位笔记。
           const placeholder = await NoteRepository.getInstance().createNote({
-            title: trimmedUrl,
-            content: placeholderContent,
+            title: EditorUiStrings.loc(placeholderTitleZh, placeholderTitleEn, placeholderTitleJa),
+            content: EditorUiStrings.loc(placeholderContentZh, placeholderContentEn, placeholderContentJa),
             tags: [],
-            skipTitleAutoFill: true
+            skipTitleAutoFill: true,
+            sourceUrl: trimmedUrl
           })
           id = placeholder.id
+          appliedTitle = EditorUiStrings.loc(placeholderTitleZh, placeholderTitleEn, placeholderTitleJa)
+          appliedContent = EditorUiStrings.loc(placeholderContentZh, placeholderContentEn, placeholderContentJa)
+          contentBefore = ''
         } else {
-          // Flip the local status so the home list immediately shows the
-          // extracting placeholder card.
+          // 从编辑器内发起：只有原笔记处于空状态才覆写为占位，否则保留用户内容。
+          const existing = await NoteRepository.getInstance().getNote(id)
+          if (existing !== null &&
+            (existing.extractStatus === 'none' ||
+              existing.extractStatus === 'failed' ||
+              existing.extractStatus === 'partial')) {
+            const hasUserContent = existing.title.trim().length > 0 ||
+              existing.content.trim().length > 0
+            contentBefore = existing.content
+            if (hasUserContent) {
+              // 已有编辑内容：保留 title/content，只补 sourceUrl 让 retry 与首页状态行可用。
+              await NoteRepository.getInstance().saveDraft(id, {
+                sourceUrl: trimmedUrl
+              })
+            } else {
+              // 编辑器为空：写入占位标题/正文。
+              await NoteRepository.getInstance().saveDraft(id, {
+                title: EditorUiStrings.loc(placeholderTitleZh, placeholderTitleEn, placeholderTitleJa),
+                content: EditorUiStrings.loc(placeholderContentZh, placeholderContentEn, placeholderContentJa),
+                sourceUrl: trimmedUrl,
+                skipTitleAutoFill: true
+              })
+              appliedTitle = EditorUiStrings.loc(placeholderTitleZh, placeholderTitleEn, placeholderTitleJa)
+              appliedContent = EditorUiStrings.loc(placeholderContentZh, placeholderContentEn, placeholderContentJa)
+            }
+          }
+          // 标记为 queued（首页列表立即可见「提取中」卡片）
           await NoteRepository.getInstance().updateExtractInfo({
             noteId: id,
             status: 'queued'
@@ -230,12 +279,14 @@ export class AiNoteBackgroundTaskService {
           summarize,
           id
         )
+        Logger.info('LinkExtractDebug', `FLOW step=SUBMITJOB_OK noteId=${id} jobId=${job.jobId} status=${job.status} deduped=${job.deduped}`)
 
         await NoteRepository.getInstance().updateExtractInfo({
           noteId: id,
           jobId: job.jobId,
           status: 'running'
         })
+        Logger.info('LinkExtractDebug', `FLOW step=SUBMITJOB_FLIPPED noteId=${id} status=running jobId=${job.jobId}`)
 
         const result = new AiNoteBackgroundTaskResult()
         result.noteId = id
@@ -246,6 +297,9 @@ export class AiNoteBackgroundTaskService {
           summarize !== 0 ? 'Submitted; the note will update when extraction finishes.' : 'Submitted; the note will update when extraction finishes.',
           '送信しました。抽出が完了するとノートが自動的に更新されます。'
         )
+        result.title = appliedTitle
+        result.content = appliedContent
+        result.contentBefore = contentBefore
         result.switchToPreviewOnSuccess = switchToPreviewOnSuccess
         return result
       },
