@@ -26,6 +26,7 @@ import { WebDAVClient } from './WebDAVClient'
 import { NoteContentEncryptionService } from './NoteContentEncryptionService'
 import { WereadImportService } from './WereadImportService'
 import { YinxiangImportService } from './YinxiangImportService'
+import { LinkExtractClient } from './LinkExtractClient'
 
 export class NoteRepository {
   private static instance: NoteRepository = new NoteRepository()
@@ -628,6 +629,85 @@ export class NoteRepository {
     return candidates
   }
 
+  async refreshExtractJobForNote(noteId: string): Promise<Note | null> {
+    await this.init()
+    const id = noteId.trim()
+    if (id.length === 0) {
+      return null
+    }
+    let note = await this.getNote(id)
+    if (note === null || note.deleted || !isExtractStatusPending(note.extractStatus)) {
+      return note
+    }
+    const jobId = note.extractJobId.trim()
+    if (jobId.length === 0) {
+      return note
+    }
+    try {
+      const job = await LinkExtractClient.getInstance().getJob(jobId)
+      if (job.status === 'succeeded' && job.result !== null) {
+        return await this.updateExtractInfo({
+          noteId: id,
+          jobId: job.jobId,
+          status: 'succeeded',
+          title: job.result.title.length > 0 ? job.result.title : note.title,
+          content: job.result.content.length > 0 ? job.result.content : note.content,
+          extractedAt: job.finishedAt ?? job.updatedAt,
+          progress: 1.0
+        })
+      }
+      if (job.status === 'partial' && job.result !== null) {
+        return await this.updateExtractInfo({
+          noteId: id,
+          jobId: job.jobId,
+          status: 'partial',
+          title: job.result.title.length > 0 ? job.result.title : note.title,
+          content: job.result.content.length > 0 ? job.result.content : note.content,
+          extractedAt: job.finishedAt ?? job.updatedAt,
+          progress: 1.0,
+          error: job.error?.code ?? ''
+        })
+      }
+      if (job.status === 'failed') {
+        return await this.updateExtractInfo({
+          noteId: id,
+          jobId: job.jobId,
+          status: 'failed',
+          error: job.error?.code ?? 'extract_failed'
+        })
+      }
+    } catch (_) {
+      return note
+    }
+    return await this.getNote(id)
+  }
+
+  async hasAnyPendingExtract(): Promise<boolean> {
+    await this.init()
+    const notes = await this.loadAllNotes()
+    return notes.some((note: Note): boolean => {
+      if (note.deleted || note.deletedTime !== 0) {
+        return false
+      }
+      return isExtractStatusPending(note.extractStatus)
+    })
+  }
+
+  async cancelPendingExtractJob(note: Note): Promise<void> {
+    if (!isExtractStatusPending(note.extractStatus)) {
+      return
+    }
+    const jobId = note.extractJobId.trim()
+    if (jobId.length === 0) {
+      return
+    }
+    try {
+      await LinkExtractClient.getInstance().cancelJob(jobId)
+    } catch (_) {
+      // Best-effort; local delete should proceed even if server is unreachable.
+    }
+  }
+
   /**
    * 回收站侧滑「还原」：`deleted_time` 设为 0，并清除本地删除同步状态。
    */
@@ -663,6 +743,7 @@ export class NoteRepository {
       this.scheduleSyncHandler?.(id)
       return
     }
+    await this.cancelPendingExtractJob(existing)
     const updated = this.cloneNote(existing)
     updated.deletedTime = 1
     updated.updatedAt = operationTime

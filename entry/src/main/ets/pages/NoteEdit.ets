@@ -17,6 +17,7 @@ import {
   type EditorAiLinkExtractDialogParams
 } from '../dialogs/EditorAiLinkExtractDialog'
 import type { Note } from '../common/model/Note'
+import { isExtractStatusPending } from '../common/model/Note'
 import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
@@ -123,6 +124,8 @@ struct NoteEdit {
   @State aiMenuVisible: boolean = false
   @State aiNoteWorking: boolean = false
   @State aiWorkingOverlayMessage: string = 'AI 处理中…'
+  private extractPollTimer: number = -1
+  private extractPollingActive: boolean = false
   private lastAppliedAiBgResult: AiNoteBackgroundTaskResult | null = null
   private readonly onAiBackgroundTaskChanged = (): void => {
     this.handleAiBackgroundTaskChanged()
@@ -337,6 +340,7 @@ struct NoteEdit {
       clearTimeout(this.previewTimer)
       this.previewTimer = -1
     }
+    this.stopExtractPolling()
     this.stopPathCaptionMarquee()
     try {
       AppContextHolder.getContext().eventHub.off(SyncConstants.noteImagesChangedEvent, this.onNoteImagesChanged)
@@ -1103,6 +1107,14 @@ struct NoteEdit {
     this.syncAiWorkingFromBackgroundTask()
     this.runInitialActionIfNeeded()
     this.scheduleMembershipExpiryReminderIfNeeded()
+    if (isExtractStatusPending(note.extractStatus)) {
+      setTimeout((): void => {
+        if (!this.lifecycle.isActive()) {
+          return
+        }
+        void this.maybeStartExtractPolling()
+      }, 0)
+    }
   }
 
   private scheduleMembershipExpiryReminderIfNeeded(): void {
@@ -2470,15 +2482,101 @@ struct NoteEdit {
   private syncAiWorkingFromBackgroundTask(): void {
     const svc = AiNoteBackgroundTaskService.getInstance()
     const busyHere = svc.isBusyForNote(this.noteId)
-    if (busyHere) {
+    if (busyHere || this.extractPollingActive) {
       this.aiNoteWorking = true
-      this.aiWorkingOverlayMessage = svc.overlayMessage
+      this.aiWorkingOverlayMessage = busyHere
+        ? svc.overlayMessage
+        : EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
       this.aiMenuVisible = false
       return
     }
     if (this.aiNoteWorking) {
       this.aiNoteWorking = false
     }
+  }
+
+  private stopExtractPolling(): void {
+    if (this.extractPollTimer !== -1) {
+      clearInterval(this.extractPollTimer)
+      this.extractPollTimer = -1
+    }
+    this.extractPollingActive = false
+  }
+
+  private async maybeStartExtractPolling(): Promise<void> {
+    if (!this.lifecycle.isActive() || this.noteId.length === 0) {
+      return
+    }
+    const note = await NoteRepository.getInstance().getNote(this.noteId)
+    if (!this.lifecycle.isActive() || note === null || !isExtractStatusPending(note.extractStatus)) {
+      this.stopExtractPolling()
+      if (this.lifecycle.isActive() &&
+        this.aiNoteWorking &&
+        !AiNoteBackgroundTaskService.getInstance().isBusyForNote(this.noteId)) {
+        this.aiNoteWorking = false
+      }
+      return
+    }
+    this.extractPollingActive = true
+    if (!this.aiNoteWorking) {
+      this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
+      this.aiNoteWorking = true
+      this.aiMenuVisible = false
+    } else {
+      this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
+    }
+    if (this.extractPollTimer === -1) {
+      this.extractPollTimer = setInterval((): void => {
+        void this.pollExtractOnce()
+      }, 5000)
+    }
+    await this.pollExtractOnce()
+  }
+
+  private async pollExtractOnce(): Promise<void> {
+    if (!this.lifecycle.isActive() || this.noteId.length === 0 || !this.extractPollingActive) {
+      return
+    }
+    try {
+      const updated = await NoteRepository.getInstance().refreshExtractJobForNote(this.noteId)
+      if (!this.lifecycle.isActive() || updated === null) {
+        return
+      }
+      if (isExtractStatusPending(updated.extractStatus)) {
+        return
+      }
+      this.applyNoteContentFromExtractRefresh(updated)
+      this.stopExtractPolling()
+      this.aiNoteWorking = false
+      if (updated.extractStatus === 'succeeded' || updated.extractStatus === 'partial') {
+        this.maybeSwitchToPreviewAfterAiSuccess(true)
+      } else if (updated.extractStatus === 'failed') {
+        this.showPreviewMessage(EditorUiStrings.loc(
+          'AI 提取链接失败，请稍后重试',
+          'AI link extract failed; try again',
+          'AIリンク抽出に失敗しました。後でもう一度お試しください'
+        ))
+      }
+    } catch (_) {
+      // ignore transient network errors; next poll will retry
+    }
+  }
+
+  private applyNoteContentFromExtractRefresh(note: Note): void {
+    if (!this.lifecycle.isActive() || note.id !== this.noteId) {
+      return
+    }
+    if (note.title.trim().length > 0) {
+      this.title = note.title
+    }
+    if (note.content.trim().length > 0) {
+      this.content = note.content
+      this.previousContent = note.content
+      this.contentCaretIndex = note.content.length
+    }
+    this.saveStatus = '已保存'
+    this.lastSavedAt = note.updatedAt
+    this.handleContentChange()
   }
 
   private handleAiBackgroundTaskChanged(): void {
@@ -2493,6 +2591,9 @@ struct NoteEdit {
       this.lastAppliedAiBgResult = result
       if (result.success) {
         this.applyAiBackgroundTaskResult(result)
+        if (result.kind === 'extractLink') {
+          void this.maybeStartExtractPolling()
+        }
       }
     }
     this.syncAiWorkingFromBackgroundTask()
@@ -2585,6 +2686,9 @@ struct NoteEdit {
     if (!svc.ensureIdleOrNotifyBusy()) {
       return
     }
+    if (!(await svc.ensureNoPendingExtractOrNotify())) {
+      return
+    }
     const ui = this.getUIContext()
     let holder: ComponentContent<EditorAiLinkExtractDialogParams> | undefined = undefined
     const params: EditorAiLinkExtractDialogParams = {
@@ -2638,11 +2742,14 @@ struct NoteEdit {
     if (!svc.ensureIdleOrNotifyBusy()) {
       return
     }
+    if (!(await svc.ensureNoPendingExtractOrNotify())) {
+      return
+    }
     if (this.saveTimer !== -1) {
       clearTimeout(this.saveTimer)
       this.saveTimer = -1
     }
-    this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
+    this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 提交中…', 'Submitting…', '送信中…')
     this.aiNoteWorking = true
     this.aiMenuVisible = false
     // 记录跑 AI 前的原始 title/content：若用户原本就有内容，必须保留，绝不能被占位文本覆盖。
@@ -2674,6 +2781,7 @@ struct NoteEdit {
       } else if (this.title === originalTitle && this.content === originalContent) {
         // 编辑器原本有内容但 listener 这次漏写控制器；disk 上保留了用户内容，无需覆盖。
       }
+      await this.maybeStartExtractPolling()
     }
     if (!started && !svc.isBusy) {
       this.aiNoteWorking = false
@@ -2711,6 +2819,14 @@ struct NoteEdit {
           .fontSize(15)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.primary_text'))
+        Text(EditorUiStrings.loc(
+          '关闭页面可在后台继续执行',
+          'You can leave this page; the task continues in the background',
+          'ページを閉じてもバックグラウンドで続行されます'
+        ))
+          .fontSize(13)
+          .fontColor($r('app.color.secondary_text'))
+          .textAlign(TextAlign.Center)
       }
     }
     .width('100%')

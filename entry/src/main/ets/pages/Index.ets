@@ -16,6 +16,7 @@ import { SyncSettingsRemoteReport } from '../services/SyncSettingsRemoteReport'
 import { WebDAVClient } from '../services/WebDAVClient'
 import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
 import { LinkExtractClient, type JobStatusResult } from '../services/LinkExtractClient'
+import { AiNoteBackgroundTaskService } from '../services/AiNoteBackgroundTaskService'
 import { Logger } from '../common/utils/Logger'
 import {
   NoteFolderTree,
@@ -581,6 +582,17 @@ struct Index {
     this.moreOptionsVisible = true
   }
 
+  private async onHomePasteLink(): Promise<void> {
+    const svc = AiNoteBackgroundTaskService.getInstance()
+    if (!svc.ensureIdleOrNotifyBusy()) {
+      return
+    }
+    if (!(await svc.ensureNoPendingExtractOrNotify())) {
+      return
+    }
+    await this.openEditor(undefined, false, 'aiLinkExtract')
+  }
+
   private closeMoreOptionsSheet(): void {
     this.moreOptionsVisible = false
   }
@@ -595,7 +607,7 @@ struct Index {
         void this.openEditor(undefined, false, 'todoList')
       },
       onPasteLink: (): void => {
-        void this.openEditor(undefined, false, 'aiLinkExtract')
+        void this.onHomePasteLink()
       },
       onPhotoImage: (): void => {
         void this.openEditor(undefined, false, 'generateNoteFromImage')
@@ -1466,6 +1478,9 @@ struct Index {
     if (url.length === 0) {
       return
     }
+    if (!(await AiNoteBackgroundTaskService.getInstance().ensureNoPendingExtractOrNotify())) {
+      return
+    }
     await NoteRepository.getInstance().updateExtractInfo({
       noteId: note.id,
       jobId: '',
@@ -1487,70 +1502,15 @@ struct Index {
       if (pending.length === 0) {
         return
       }
-      for (const n of pending) {
-        Logger.info('LinkExtractDebug', `FLOW step=PENDING noteId=${n.id} jobId=${n.extractJobId} extractStatus=${n.extractStatus} titleLen=${n.title.length} contentLen=${n.content.length}`)
-      }
-      // 不节流，一次性并发。
-      const results = await Promise.all(pending.map(async (n): Promise<ExtractRefreshEntry | null> => {
-        try {
-          Logger.info('LinkExtractDebug', `FLOW step=GETJOB_START noteId=${n.id} jobId=${n.extractJobId}`)
-          const job = await LinkExtractClient.getInstance().getJob(n.extractJobId)
-          Logger.info('LinkExtractDebug', `FLOW step=GETJOB_DONE noteId=${n.id} jobStatus=${job.status} hasResult=${job.result !== null} titleLen=${job.result?.title?.length ?? 0} contentLen=${job.result?.content?.length ?? 0} errorCode=${job.error?.code ?? '-'}`)
-          const entry: ExtractRefreshEntry = { note: n, job }
-          return entry
-        } catch (e) {
-          Logger.warn('LinkExtractDebug', `FLOW step=GETJOB_THREW noteId=${n.id} jobId=${n.extractJobId}: ${JSON.stringify(e)}`)
-          return null
-        }
-      }))
       let mutated = false
-      for (const entry of results) {
-        if (!entry) continue
-        const n = entry.note
-        const j = entry.job
-        Logger.info('LinkExtractDebug', `FLOW step=PROCESS_ENTRY noteId=${n.id} jobStatus=${j.status} hasResult=${j.result !== null} titleLen=${j.result?.title?.length ?? 0} contentLen=${j.result?.content?.length ?? 0} errorCode=${j.error?.code ?? '-'}`)
-        if (j.status === 'succeeded' && j.result) {
-          Logger.info('LinkExtractDebug', `FLOW step=UPDATE_SUCCEEDED noteId=${n.id} newTitleLen=${j.result.title.length} newContentLen=${j.result.content.length}`)
-          await NoteRepository.getInstance().updateExtractInfo({
-            noteId: n.id,
-            jobId: j.jobId,
-            status: 'succeeded',
-            title: j.result.title.length > 0 ? j.result.title : n.title,
-            content: j.result.content.length > 0 ? j.result.content : n.content,
-            extractedAt: j.finishedAt ?? j.updatedAt,
-            progress: 1.0
-          })
+      for (const n of pending) {
+        const beforeStatus = n.extractStatus
+        const updated = await NoteRepository.getInstance().refreshExtractJobForNote(n.id)
+        if (updated !== null && updated.extractStatus !== beforeStatus) {
           mutated = true
-          Logger.info('LinkExtractDebug', `FLOW step=UPDATE_DONE noteId=${n.id} status=succeeded`)
-        } else if (j.status === 'partial' && j.result) {
-          Logger.info('LinkExtractDebug', `FLOW step=UPDATE_PARTIAL noteId=${n.id}`)
-          await NoteRepository.getInstance().updateExtractInfo({
-            noteId: n.id,
-            jobId: j.jobId,
-            status: 'partial',
-            title: j.result.title.length > 0 ? j.result.title : n.title,
-            content: j.result.content.length > 0 ? j.result.content : n.content,
-            extractedAt: j.finishedAt ?? j.updatedAt,
-            progress: 1.0,
-            error: j.error?.code ?? ''
-          })
-          mutated = true
-          Logger.info('LinkExtractDebug', `FLOW step=UPDATE_DONE noteId=${n.id} status=partial`)
-        } else if (j.status === 'failed') {
-          Logger.info('LinkExtractDebug', `FLOW step=UPDATE_FAILED noteId=${n.id} errorCode=${j.error?.code ?? 'extract_failed'}`)
-          await NoteRepository.getInstance().updateExtractInfo({
-            noteId: n.id,
-            jobId: j.jobId,
-            status: 'failed',
-            error: j.error?.code ?? 'extract_failed'
-          })
-          mutated = true
-          Logger.info('LinkExtractDebug', `FLOW step=UPDATE_DONE noteId=${n.id} status=failed`)
-        } else {
-          Logger.info('LinkExtractDebug', `FLOW step=NO_UPDATE_NEEDED noteId=${n.id} jobStatus=${j.status} hasResult=${j.result !== null}`)
         }
       }
-      Logger.info('LinkExtractDebug', `FLOW step=REFRESH_DONE mutated=${mutated} processedJobs=${results.filter(r => r !== null).length}/${pending.length}`)
+      Logger.info('LinkExtractDebug', `FLOW step=REFRESH_DONE mutated=${mutated}`)
       if (mutated) {
         await this.loadNotes()
         Logger.info('LinkExtractDebug', `FLOW step=LOADNOTES_AFTER_REFRESH done`)

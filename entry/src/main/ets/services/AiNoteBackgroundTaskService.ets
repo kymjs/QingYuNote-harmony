@@ -42,6 +42,8 @@ export class AiNoteBackgroundTaskService {
 
   static readonly BUSY_WAIT_MESSAGE_ZH: string = '请等待上一个 AI 任务完成'
 
+  static readonly PENDING_EXTRACT_BUSY_MESSAGE_ZH: string = '已经有进行中的AI提取任务'
+
   private inFlight: boolean = false
   private activeNoteIdInternal: string = ''
   private overlayMessageInternal: string = EditorUiStrings.loc('AI 处理中…', 'AI processing…', 'AI処理中…')
@@ -110,6 +112,19 @@ export class AiNoteBackgroundTaskService {
       AiNoteBackgroundTaskService.BUSY_WAIT_MESSAGE_ZH,
       'Please wait for the previous AI task to finish',
       '前のAIタスクが完了するまでお待ちください'
+    ))
+    return false
+  }
+
+  /** 若已有进行中的链接提取任务，弹 Toast 并返回 false。 */
+  async ensureNoPendingExtractOrNotify(): Promise<boolean> {
+    if (!(await NoteRepository.getInstance().hasAnyPendingExtract())) {
+      return true
+    }
+    this.showGlobalToast(EditorUiStrings.loc(
+      AiNoteBackgroundTaskService.PENDING_EXTRACT_BUSY_MESSAGE_ZH,
+      'An AI link extraction task is already in progress',
+      '進行中のAIリンク抽出タスクがあります'
     ))
     return false
   }
@@ -197,6 +212,9 @@ export class AiNoteBackgroundTaskService {
     if (trimmedUrl.length === 0) {
       return false
     }
+    if (!(await this.ensureNoPendingExtractOrNotify())) {
+      return false
+    }
     return this.runLocked(
       noteId,
       EditorUiStrings.loc('AI 提交中…', 'Submitting…', '送信中…'),
@@ -258,12 +276,12 @@ export class AiNoteBackgroundTaskService {
               appliedContent = EditorUiStrings.loc(placeholderContentZh, placeholderContentEn, placeholderContentJa)
             }
           }
-          // 标记为 queued（首页列表立即可见「提取中」卡片）
-          await NoteRepository.getInstance().updateExtractInfo({
-            noteId: id,
-            status: 'queued'
-          })
         }
+
+        await NoteRepository.getInstance().updateExtractInfo({
+          noteId: id,
+          status: 'queued'
+        })
 
         const finalPrompt = prompt.length > 0
           ? prompt

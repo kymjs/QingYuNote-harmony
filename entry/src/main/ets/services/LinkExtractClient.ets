@@ -240,6 +240,40 @@ export class LinkExtractClient {
     }
   }
 
+  async cancelJob(jobId: string): Promise<void> {
+    const trimmed = jobId.trim()
+    if (trimmed.length === 0) {
+      return
+    }
+    const token = await this.requireToken()
+    const base = LinkExtractConstants.baseUrl.replace(/\/+$/, '')
+    const fullUrl = `${base}/api/v1/extract/jobs/${trimmed}`
+    const req = http.createHttp()
+    try {
+      Logger.info(TAG, `cancelJob begin url=${fullUrl}`)
+      const resp = await req.request(fullUrl, {
+        method: http.RequestMethod.DELETE,
+        header: this.headers(token),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 10000,
+        readTimeout: 15000
+      })
+      const code = resp.responseCode
+      Logger.info(TAG, `cancelJob resp code=${code}`)
+      if (code === 401) {
+        throw new Error('未登录或服务不可用')
+      }
+      if (code === 404 || code === 409) {
+        return
+      }
+      if (code < 200 || code >= 300) {
+        throw new Error('AI 提取链接失败，请稍后重试')
+      }
+    } finally {
+      req.destroy()
+    }
+  }
+
   // ---------- internals ----------
 
   private async requireToken(): Promise<string> {
