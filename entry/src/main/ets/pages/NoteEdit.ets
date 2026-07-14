@@ -2637,9 +2637,6 @@ struct NoteEdit {
     if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
       return
     }
-    if (this.noteId.length === 0) {
-      return
-    }
     const trimmed = this.content.trim()
     const hasImageRefs = NoteStateCodec.extractImageRefs(this.content).length > 0
     const noteHasText = NoteStateCodec.hasSubstantiveNoteText(this.content)
@@ -2649,6 +2646,10 @@ struct NoteEdit {
     }
     if (noteHasText && !hasImageRefs && Array.from(trimmed).length < AiNotePrompt.OPTIMIZE_MIN_RUNES) {
       this.showPreviewMessage(EditorUiStrings.loc('内容过少，无需AI优化', 'Too little content to optimize', '内容が少なすぎるため最適化不要です'))
+      return
+    }
+    await this.ensureNoteIdForAiTask()
+    if (this.noteId.length === 0) {
       return
     }
     if (!svc.ensureIdleOrNotifyBusy()) {
