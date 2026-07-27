@@ -34,7 +34,7 @@ import { maybeShowReferralInviteDialog } from '../common/utils/ReferralInviteNav
 import { type NoteEditorEntryAction } from '../common/model/NoteEditorEntryAction'
 import { navigateToNoteEdit } from '../common/utils/NoteEditNavigation'
 import { navigateToFlowchart } from '../common/utils/FlowchartNavigation'
-import { HomeLiquidGlassTabBar } from '../components/HomeLiquidGlassTabBar'
+import { HomeLiquidGlassTabBar, homeTabBarOccupiedHeight } from '../components/HomeLiquidGlassTabBar'
 import {
   buildHomeMoreOptionsSheetContent,
   type HomeMoreOptionsSheetParams
@@ -89,6 +89,9 @@ struct Index {
   @State drawerLoggedIn: boolean = false
   @State appLockBlocking: boolean = false
   @State appLockRecovering: boolean = false
+  @State undoNoteId: string = ''
+  @State undoBarVisible: boolean = false
+  private undoHideTimer: number = -1
   private hasShownOnce: boolean = false
   private startupSyncHandled: boolean = false
   /** 仅统计「非首次」onPageShow 触发的 loadNotes 完成时间；与 initializeHome 首次加载无关，避免阻断从编辑页返回后的刷新。 */
@@ -103,7 +106,7 @@ struct Index {
     void this.showQingyuSubscriptionBlockedDialog()
   }
   private cloudSyncNotConfiguredHandler = (): void => {
-    this.showUserMessage('当前未配置云服务')
+    void this.showCloudSyncNotConfiguredToastIfAllowed()
   }
   private noteSettingsChangedHandler = (): void => {
     void this.reloadNoteSettingsFromService()
@@ -159,9 +162,13 @@ struct Index {
       console.error('Index: eventHub.off qingyu_sync_blocked failed')
     }
     this.clearSearchFilterTimer()
+    this.clearUndoHideTimer()
   }
 
   private async showQingyuSubscriptionBlockedDialog(): Promise<void> {
+    if (!(await PreferencesService.getInstance().canRunCloudSync())) {
+      return
+    }
     if (!CloudSyncNotifyThrottle.tryConsumeQingyuSubscriptionDialogSlot()) {
       return
     }
@@ -182,6 +189,13 @@ struct Index {
     } catch (_) {
       console.error('showQingyuSubscriptionBlockedDialog failed')
     }
+  }
+
+  private async showCloudSyncNotConfiguredToastIfAllowed(): Promise<void> {
+    if (!(await PreferencesService.getInstance().canRunCloudSync())) {
+      return
+    }
+    this.showUserMessage('当前未配置云服务')
   }
 
   onPageShow(): void {
@@ -453,6 +467,9 @@ struct Index {
     if (context) {
       await PreferencesService.getInstance().init(context)
     }
+    if (!(await PreferencesService.getInstance().canRunCloudSync())) {
+      return false
+    }
     const config = await PreferencesService.getInstance().getWebDAVConfig()
     if (!config || !config.enabled) {
       return false
@@ -524,12 +541,49 @@ struct Index {
     try {
       await NoteRepository.getInstance().deleteNote(noteId, Date.now())
       await this.refreshTagCatalog(this.allNotes)
+      this.showUndoBar(noteId)
     } catch (error) {
       this.allNotes = previousAllNotes
       this.applyTagFilter()
       await this.loadNotes(false)
       console.error(JSON.stringify(error))
       this.showUserMessage(this.formatActionError('删除', error))
+    }
+  }
+
+  private clearUndoHideTimer(): void {
+    if (this.undoHideTimer >= 0) {
+      clearTimeout(this.undoHideTimer)
+      this.undoHideTimer = -1
+    }
+  }
+
+  private showUndoBar(noteId: string): void {
+    this.clearUndoHideTimer()
+    this.undoNoteId = noteId
+    this.undoBarVisible = true
+    this.undoHideTimer = setTimeout((): void => {
+      this.undoBarVisible = false
+      this.undoNoteId = ''
+      this.undoHideTimer = -1
+    }, 5000)
+  }
+
+  private async undoDelete(): Promise<void> {
+    const noteId = this.undoNoteId
+    this.clearUndoHideTimer()
+    this.undoBarVisible = false
+    this.undoNoteId = ''
+    if (noteId.length === 0) {
+      return
+    }
+    try {
+      await NoteRepository.getInstance().restoreRecycleBinNote(noteId)
+      await this.loadNotes(false)
+    } catch (error) {
+      console.error(JSON.stringify(error))
+      this.showUserMessage(this.formatActionError('撤销', error))
+      await this.loadNotes(false)
     }
   }
 
@@ -1145,12 +1199,12 @@ struct Index {
   @Builder
   private buildEmptyStateCard() {
     Column({ space: 20 }) {
-      Column() {
+      Column({ space: 12 }) {
         Text('✦')
           .fontSize(40)
           .fontColor($r('app.color.accent'))
           .opacity(0.85)
-        Text('从这里开始')
+        Text(LocaleService.loc('从这里开始', 'Start here', 'ここから始める'))
           .fontSize(22)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.primary_text'))
@@ -1159,6 +1213,32 @@ struct Index {
           .fontColor($r('app.color.secondary_text'))
           .textAlign(TextAlign.Center)
           .lineHeight(24)
+        Row({ space: 10 }) {
+          Button(LocaleService.loc('语音笔记', 'Voice note', '音声ノート'))
+            .layoutWeight(1)
+            .height(44)
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.primary_text'))
+            .backgroundColor($r('app.color.surface_muted'))
+            .borderRadius(22)
+            .onClick(() => {
+              void this.openEditor(undefined, false, 'voiceMemo')
+            })
+          Button(LocaleService.loc('写笔记', 'Write a note', 'ノートを書く'))
+            .layoutWeight(1)
+            .height(44)
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Color.White)
+            .backgroundColor($r('app.color.accent'))
+            .borderRadius(22)
+            .onClick(() => {
+              void this.openEditor()
+            })
+        }
+        .width('100%')
+        .margin({ top: 8 })
       }
       .width('100%')
       .padding({ left: 28, right: 28, top: 36, bottom: 36 })
@@ -1174,6 +1254,30 @@ struct Index {
     }
     .width('100%')
     .padding({ top: 72, bottom: 24 })
+  }
+
+  @Builder
+  private buildSearchEmptyStateCard() {
+    Column({ space: 16 }) {
+      Text(LocaleService.loc('未找到匹配的笔记', 'No matching notes', '一致するノートが見つかりません'))
+        .fontSize($r('app.float.body_font_size'))
+        .fontColor($r('app.color.secondary_text'))
+        .textAlign(TextAlign.Center)
+      Button(LocaleService.loc('清除搜索', 'Clear search', '検索をクリア'))
+        .height(40)
+        .fontSize(14)
+        .fontColor($r('app.color.accent'))
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.clearSearchFilterTimer()
+          this.searchQuery = ''
+          this.searchExpanded = false
+          this.applyTagFilter()
+        })
+    }
+    .width('100%')
+    .padding({ top: 72, bottom: 24, left: 28, right: 28 })
+    .justifyContent(FlexAlign.Center)
   }
 
   @Builder
@@ -1245,19 +1349,6 @@ struct Index {
       })
       .margin({ top: 10, right: 10 })
     }
-  }
-
-  @Builder
-  private buildSearchEmptyStateCard() {
-    Column({ space: 16 }) {
-      Text('未找到匹配的笔记')
-        .fontSize($r('app.float.body_font_size'))
-        .fontColor($r('app.color.secondary_text'))
-        .textAlign(TextAlign.Center)
-    }
-    .width('100%')
-    .padding({ top: 72, bottom: 24, left: 28, right: 28 })
-    .justifyContent(FlexAlign.Center)
   }
 
   @Builder
@@ -1488,9 +1579,32 @@ struct Index {
       error: ''
     })
     try {
-      await LinkExtractClient.getInstance().submitJob(url, '', 0, note.id)
+      const job = await LinkExtractClient.getInstance().submitJob(
+        url,
+        '请根据链接内容生成结构化的 Markdown 笔记摘要。',
+        0,
+        note.id
+      )
+      if (job.jobId.trim().length === 0) {
+        await NoteRepository.getInstance().updateExtractInfo({
+          noteId: note.id,
+          status: 'failed',
+          error: 'extract_failed'
+        })
+      } else {
+        await NoteRepository.getInstance().updateExtractInfo({
+          noteId: note.id,
+          jobId: job.jobId,
+          status: 'running',
+          error: ''
+        })
+      }
     } catch (_) {
-      // ignore; status flips to failed on next poll
+      await NoteRepository.getInstance().updateExtractInfo({
+        noteId: note.id,
+        status: 'failed',
+        error: 'extract_failed'
+      })
     }
     await this.refreshExtractStatuses()
   }
@@ -1573,7 +1687,8 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .padding({ top: 4, bottom: 0 })
+    .padding({ top: 4 })
+    .contentEndOffset(homeTabBarOccupiedHeight())
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
   }
@@ -1602,6 +1717,37 @@ struct Index {
     // @Watch：语言切换后重建首页以刷新 $r 与 LocaleService.loc 文案。
   }
 
+  @Builder
+  private buildUndoDeleteBar() {
+    if (this.undoBarVisible) {
+      Row() {
+        Text(LocaleService.loc('已删除', 'Deleted', '削除しました'))
+          .fontSize(14)
+          .fontColor(Color.White)
+          .layoutWeight(1)
+        Text(LocaleService.loc('撤销', 'Undo', '元に戻す'))
+          .fontSize(14)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.accent'))
+          .padding({ left: 12, right: 4, top: 8, bottom: 8 })
+          .onClick(() => {
+            void this.undoDelete()
+          })
+      }
+      .width('86%')
+      .padding({ left: 16, right: 12, top: 10, bottom: 10 })
+      .backgroundColor($r('app.color.primary_text'))
+      .borderRadius(16)
+      .shadow({
+        radius: 16,
+        color: $r('app.color.shadow_color'),
+        offsetX: 0,
+        offsetY: 4
+      })
+      .margin({ bottom: homeTabBarOccupiedHeight() + 8 })
+    }
+  }
+
   build() {
     Stack() {
       Column() {
@@ -1617,6 +1763,15 @@ struct Index {
       if (this.drawerModel.progress <= 0.001) {
         this.buildHomeTabBarLayer()
       }
+
+      Column() {
+        Blank()
+        this.buildUndoDeleteBar()
+      }
+      .width('100%')
+      .height('100%')
+      .alignItems(HorizontalAlign.Center)
+      .hitTestBehavior(HitTestMode.Transparent)
 
       HomeDrawerLayer({
         tags: this.tags,

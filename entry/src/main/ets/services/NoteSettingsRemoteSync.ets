@@ -13,7 +13,7 @@ export class NoteSettingsRemoteSync {
   }
 
   private async canSync(): Promise<boolean> {
-    if (await PreferencesService.getInstance().isGuestMode()) {
+    if (!(await PreferencesService.getInstance().canRunCloudSync())) {
       return false
     }
     if (await PreferencesService.getInstance().isAuthInvalid()) {

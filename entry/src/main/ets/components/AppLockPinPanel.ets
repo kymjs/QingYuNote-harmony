@@ -269,7 +269,7 @@ export struct AppLockPinPanel {
     .width('100%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .backgroundColor('#EBF3F4F8')
+    .backgroundColor($r('app.color.sheet_background'))
   }
 
   build() {

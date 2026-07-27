@@ -19,20 +19,41 @@ export default class EntryAbility extends UIAbility {
   private deferredServicesPrepared: boolean = false
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
-    try {
-      this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET)
-    } catch (err) {
-      hilog.error(DOMAIN, 'noteTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err))
-    }
     AppContextHolder.setContext(this.context)
     AppStorage.setOrCreate(APP_LOCALE_REVISION_KEY, 0)
     void LocaleService.getInstance().load(this.context)
+    void this.applyStoredColorMode()
     void this.prepareCriticalServices().then(() => {
       this.scheduleDeferredServices()
     }).catch((error: Error) => {
       hilog.error(DOMAIN, 'noteTag', 'Failed to prepare critical services. Cause: %{public}s', JSON.stringify(error))
     })
     hilog.info(DOMAIN, 'noteTag', '%{public}s', 'Ability onCreate')
+  }
+
+  private async applyStoredColorMode(): Promise<void> {
+    try {
+      await PreferencesService.getInstance().init(this.context)
+      const mode = await PreferencesService.getInstance().getAppThemeMode()
+      this.applyColorMode(mode)
+    } catch (err) {
+      hilog.error(DOMAIN, 'noteTag', 'Failed to apply colorMode. Cause: %{public}s', JSON.stringify(err))
+      try {
+        this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET)
+      } catch (_) {
+        // ignore
+      }
+    }
+  }
+
+  private applyColorMode(mode: string): void {
+    let colorMode = ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET
+    if (mode === 'light') {
+      colorMode = ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT
+    } else if (mode === 'dark') {
+      colorMode = ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+    }
+    this.context.getApplicationContext().setColorMode(colorMode)
   }
 
   onDestroy(): void {

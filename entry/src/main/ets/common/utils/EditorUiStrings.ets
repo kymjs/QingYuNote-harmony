@@ -27,8 +27,8 @@ export class EditorUiStrings {
       : EditorUiStrings.loc('编辑模式', 'Edit mode', '編集モード')
     }
 
-  static saveStatusDisplay(status: string, mode: string): string {
-    return `${EditorUiStrings.saveStatus(status)} - ${EditorUiStrings.previewModeLabel(mode)}`
+  static saveStatusDisplay(status: string, _mode: string): string {
+    return EditorUiStrings.saveStatus(status)
   }
 
   static userSequenceLabel(id: string): string {

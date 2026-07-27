@@ -1,6 +1,6 @@
 import fs from '@ohos.file.fs'
 import type common from '@ohos.app.ability.common'
-import type { CreateNoteInput, Note, NoteFilePayload, NoteStateBlock, NoteSyncState, RecycleBinLoadResult,
+import type { CreateNoteInput, ExtractStatus, Note, NoteFilePayload, NoteStateBlock, NoteSyncState, RecycleBinLoadResult,
   UpdateExtractInfo, UpdateNoteInput } from '../common/model/Note'
 import { isExtractStatusPending } from '../common/model/Note'
 import { Logger } from '../common/utils/Logger'
@@ -606,9 +606,6 @@ export class NoteRepository {
       if (n.deleted || n.deletedTime !== 0) {
         return false
       }
-      if (!n.extractJobId || n.extractJobId.length === 0) {
-        return false
-      }
       return isExtractStatusPending(n.extractStatus)
     })
     // Sample some loaded notes so we can see what's actually in memory.
@@ -639,9 +636,16 @@ export class NoteRepository {
     if (note === null || note.deleted || !isExtractStatusPending(note.extractStatus)) {
       return note
     }
-    const jobId = note.extractJobId.trim()
+    let jobId = note.extractJobId.trim()
     if (jobId.length === 0) {
-      return note
+      note = await this.recoverExtractJobId(note)
+      if (note === null || !isExtractStatusPending(note.extractStatus)) {
+        return note
+      }
+      jobId = note.extractJobId.trim()
+      if (jobId.length === 0) {
+        return note
+      }
     }
     try {
       const job = await LinkExtractClient.getInstance().getJob(jobId)
@@ -676,10 +680,60 @@ export class NoteRepository {
           error: job.error?.code ?? 'extract_failed'
         })
       }
-    } catch (_) {
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : ''
+      if (msg === 'job_not_found') {
+        return await this.updateExtractInfo({
+          noteId: id,
+          status: 'failed',
+          error: 'job_not_found'
+        })
+      }
       return note
     }
     return await this.getNote(id)
+  }
+
+  /** pending 但缺少 extract_job_id 时：重新 submit（或 409 复用）写回隐藏字段。 */
+  private async recoverExtractJobId(note: Note): Promise<Note | null> {
+    const url = (note.sourceUrl ?? '').trim()
+    if (url.length === 0) {
+      return await this.updateExtractInfo({
+        noteId: note.id,
+        status: 'failed',
+        error: 'missing_source_url'
+      })
+    }
+    try {
+      const job = await LinkExtractClient.getInstance().submitJob(
+        url,
+        '请根据链接内容生成结构化的 Markdown 笔记摘要。',
+        0,
+        note.id
+      )
+      if (job.jobId.trim().length === 0) {
+        return await this.updateExtractInfo({
+          noteId: note.id,
+          status: 'failed',
+          error: 'extract_failed'
+        })
+      }
+      let nextStatus: ExtractStatus = 'running'
+      if (job.status === 'queued') {
+        nextStatus = 'queued'
+      }
+      // 终态仍先落 jobId 为 running，随后由 getJob 路径覆盖 title/content。
+      if (job.status === 'succeeded' || job.status === 'partial' || job.status === 'failed') {
+        nextStatus = 'running'
+      }
+      return await this.updateExtractInfo({
+        noteId: note.id,
+        jobId: job.jobId,
+        status: nextStatus
+      })
+    } catch (_) {
+      return note
+    }
   }
 
   async hasAnyPendingExtract(): Promise<boolean> {

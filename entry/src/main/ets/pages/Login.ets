@@ -1,6 +1,8 @@
 import { Want } from '@kit.AbilityKit'
 import common from '@ohos.app.ability.common'
+import { window } from '@kit.ArkUI'
 
+import { showAgreeTermsPromptDialog } from '../dialogs/AgreeTermsPromptDialog'
 import { describeHuaweiLoginError, startHuaweiLogin } from '../services/HuaweiAuthService'
 import { NoteApiClient } from '../services/NoteApiClient'
 import { PreferencesService } from '../services/PreferencesService'
@@ -23,10 +25,42 @@ struct Login {
   @State password: string = ''
   @State accountBusy: boolean = false
   @State agreeToTerms: boolean = false
+  /** 软键盘高度（vp）：根布局 bottom padding，压缩 Logo 与表单之间的 Blank，表单整体上移 */
+  @State keyboardHeightVp: number = 0
+  private keyboardWindow?: window.Window
+  private readonly onKeyboardHeightChange = (heightPx: number): void => {
+    this.keyboardHeightVp = heightPx > 0 ? this.getUIContext().px2vp(heightPx) : 0
+  }
 
   private obtainUiAbilityContext(): common.UIAbilityContext | undefined {
     const host = this.getUIContext().getHostContext()
     return host as common.UIAbilityContext
+  }
+
+  private async initKeyboardHeightListener(): Promise<void> {
+    const host = this.obtainUiAbilityContext()
+    if (host === undefined) {
+      return
+    }
+    try {
+      const win = await window.getLastWindow(host)
+      this.keyboardWindow = win
+      win.on('keyboardHeightChange', this.onKeyboardHeightChange)
+    } catch (e) {
+      console.error(`Login initKeyboardHeightListener: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private releaseKeyboardHeightListener(): void {
+    if (this.keyboardWindow === undefined) {
+      return
+    }
+    try {
+      this.keyboardWindow.off('keyboardHeightChange', this.onKeyboardHeightChange)
+    } catch (_) {
+      // ignore
+    }
+    this.keyboardWindow = undefined
   }
 
   private captureNavParams(): void {
@@ -87,6 +121,11 @@ struct Login {
 
   aboutToAppear(): void {
     void this.loadPendingReturnTarget()
+    void this.initKeyboardHeightListener()
+  }
+
+  aboutToDisappear(): void {
+    this.releaseKeyboardHeightListener()
   }
 
   private async loadPendingReturnTarget(): Promise<void> {
@@ -166,6 +205,14 @@ struct Login {
     }
   }
 
+  /** 未勾选时弹窗；确定则勾选，点外部关闭则不勾选。不继续登录。 */
+  private async showAgreeTermsAndCheck(): Promise<void> {
+    const ok = await showAgreeTermsPromptDialog(this.getUIContext())
+    if (ok) {
+      this.agreeToTerms = true
+    }
+  }
+
   private async onAccountPasswordSubmit(): Promise<void> {
     if (this.accountBusy) {
       return
@@ -226,8 +273,9 @@ struct Login {
   }
 
   build() {
+    // Logo 固定；Blank 吃中间间距。键盘弹出时 root padding.bottom = 键盘高，Blank 被压缩，表单整体上移。
     Column({ space: 0 }) {
-      Column({ space: 10 }) {
+      Column({ space: 12 }) {
         Image($r('app.media.icon_app'))
           .width(72)
           .height(72)
@@ -241,14 +289,17 @@ struct Login {
           .textAlign(TextAlign.Center)
       }
       .width('100%')
-      .padding({ top: 48, bottom: 20 })
+      .height(168)
+      .margin({ top: 44 })
+      .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
 
       Blank()
         .width('100%')
         .layoutWeight(1)
 
-      Column({ space: 14 }) {
+      Scroll() {
+        Column({ space: 14 }) {
           TextInput({ text: this.phone, placeholder: $r('app.string.login_account_placeholder') })
             .width('100%')
             .height(50)
@@ -348,7 +399,7 @@ struct Login {
             .enabled(!this.accountBusy)
             .onClick((): void => {
               if (!this.agreeToTerms) {
-                this.showToast('请先同意用户协议')
+                void this.showAgreeTermsAndCheck()
                 return
               }
               void this.onAccountPasswordSubmit()
@@ -392,54 +443,61 @@ struct Login {
           .alignItems(VerticalAlign.Center)
           .margin({ top: 12 })
 
-          Row() {
-            Divider()
-              .layoutWeight(1)
-              .color($r('app.color.divider'))
-              .strokeWidth(1)
+          // 键盘升起时隐藏第三方区，优先保证登录按钮落在键盘上方
+          if (this.keyboardHeightVp <= 0) {
+            Row() {
+              Divider()
+                .layoutWeight(1)
+                .color($r('app.color.divider'))
+                .strokeWidth(1)
 
-            Text($r('app.string.login_other_methods'))
-              .fontSize(13)
-              .fontColor($r('app.color.tertiary_text'))
-              .padding({ left: 14, right: 14 })
+              Text($r('app.string.login_other_methods'))
+                .fontSize(13)
+                .fontColor($r('app.color.tertiary_text'))
+                .padding({ left: 14, right: 14 })
 
-            Divider()
-              .layoutWeight(1)
-              .color($r('app.color.divider'))
-              .strokeWidth(1)
-          }
-          .width('100%')
-          .margin({ top: 18 })
-          .alignItems(VerticalAlign.Center)
+              Divider()
+                .layoutWeight(1)
+                .color($r('app.color.divider'))
+                .strokeWidth(1)
+            }
+            .width('100%')
+            .margin({ top: 32 })
+            .alignItems(VerticalAlign.Center)
 
-          Row({ space: 0 }) {
-            Image($r('app.media.ic_login_huawei'))
-              .width(48)
-              .height(48)
-              .borderRadius(24)
-              .objectFit(ImageFit.Cover)
-              .shadow({
-                radius: 6,
-                color: $r('app.color.shadow_color'),
-                offsetX: 0,
-                offsetY: 2
-              })
-              .onClick((): void => {
-                if (!this.accountBusy) {
-                  if (!this.agreeToTerms) {
-                    this.showToast('请先同意用户协议')
-                    return
+            Row({ space: 0 }) {
+              Image($r('app.media.ic_login_huawei'))
+                .width(48)
+                .height(48)
+                .borderRadius(24)
+                .objectFit(ImageFit.Cover)
+                .shadow({
+                  radius: 6,
+                  color: $r('app.color.shadow_color'),
+                  offsetX: 0,
+                  offsetY: 2
+                })
+                .onClick((): void => {
+                  if (!this.accountBusy) {
+                    if (!this.agreeToTerms) {
+                      void this.showAgreeTermsAndCheck()
+                      return
+                    }
+                    void this.onHuaweiTap()
                   }
-                  void this.onHuaweiTap()
-                }
-              })
+                })
+            }
+            .width('100%')
+            .justifyContent(FlexAlign.Center)
+            .margin({ top: 20, bottom: 24 })
           }
-          .width('100%')
-          .justifyContent(FlexAlign.Center)
-          .margin({ top: 18 })
         }
         .width('100%')
-        .padding({ left: 28, right: 28, top: 0, bottom: 36 })
+        .padding({ left: 28, right: 28, bottom: this.keyboardHeightVp > 0 ? 12 : 24 })
+      }
+      .scrollBar(BarState.Off)
+      .width('100%')
+      .align(Alignment.TopStart)
     }
     .width('100%')
     .height('100%')
@@ -448,7 +506,8 @@ struct Login {
       top: $r('app.float.toolbar_page_padding_top'),
       left: 0,
       right: 0,
-      bottom: 36
+      // 键盘遮挡模式下窗口不压缩；用键盘高度占底，强制中间 Blank 变矮，表单整体上移
+      bottom: this.keyboardHeightVp > 0 ? this.keyboardHeightVp : 36
     })
   }
 }

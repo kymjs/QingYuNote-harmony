@@ -14,11 +14,7 @@ export class SyncSettingsRemoteReport {
 
   /** 按本地 preferences 上报当前云同步方案（首页进入 / 自动开通后调用）。 */
   async reportCurrentIfPossible(): Promise<void> {
-    if (await PreferencesService.getInstance().isGuestMode()) {
-      return
-    }
-    const userId = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
-    if (userId.length === 0) {
+    if (!(await PreferencesService.getInstance().canRunCloudSync())) {
       return
     }
     const custom = await PreferencesService.getInstance().getSavedCustomWebDAVConfigSnapshot()
@@ -51,13 +47,10 @@ export class SyncSettingsRemoteReport {
   }
 
   async reportIfPossible(config: WebDAVConfig): Promise<void> {
-    if (await PreferencesService.getInstance().isGuestMode()) {
+    if (!(await PreferencesService.getInstance().canRunCloudSync())) {
       return
     }
     const userId = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
-    if (userId.length === 0) {
-      return
-    }
     try {
       const api = NoteApiClient.getInstance()
       if (config.provider === 'qingyu_cloud') {

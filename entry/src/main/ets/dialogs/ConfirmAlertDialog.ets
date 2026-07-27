@@ -46,7 +46,7 @@ export struct ConfirmAlertDialog {
         Button(this.params.cancelLabel)
           .layoutWeight(1)
           .fontSize($r('app.float.body_font_size'))
-          .fontColor('#6B7280')
+          .fontColor($r('app.color.secondary_text'))
           .backgroundColor(Color.Transparent)
           .borderRadius($r('app.float.pill_radius'))
           .padding({ top: 12, bottom: 12 })

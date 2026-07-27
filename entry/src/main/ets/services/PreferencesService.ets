@@ -3,10 +3,12 @@ import type common from '@ohos.app.ability.common'
 import type { SyncPolicy, WebDAVConfig, WebDAVProvider } from '../common/model/Note'
 import { util } from '@kit.ArkTS'
 import { Logger } from '../common/utils/Logger'
+import { SyncConstants } from '../common/constants/SyncConstants'
 import { buildQingyuCloudWebDavConfig } from './QingyuCloudConfigHelper'
 import { NoteSettingsService } from './NoteSettingsService'
 import { NoteSettingsRemoteSync } from './NoteSettingsRemoteSync'
 import { WebViewSessionCleaner } from '../common/utils/WebViewSessionCleaner'
+import { AppContextHolder } from './AppContextHolder'
 
 const PREFERENCES_NAME = 'qingyu_preferences'
 const TAG_LIST_KEY = 'note_tags'
@@ -48,6 +50,8 @@ const AI_MEMBERSHIP_GATE_DIALOG_SHOWN_KEY = 'ai_membership_gate_dialog_shown'
 const AI_LINK_EXTRACT_SUMMARY_ENABLED_KEY = 'ai_link_extract_summary_enabled'
 /** 与 Flutter `AppConst.prefShareCardThemeKey` 一致 */
 const SHARE_CARD_THEME_KEY = 'share_card_theme'
+/** 与 Flutter `prefThemeModeKey` 一致：`system` | `light` | `dark` */
+const APP_THEME_MODE_KEY = 'theme_mode'
 /** 与 Flutter `AppConst.prefShareCardToneKey` 一致 */
 const SHARE_CARD_TONE_KEY = 'share_card_tone'
 /** 登录成功后导航：`Login` 消费并清空（OAuth 返回后 router params 可能丢失） */
@@ -142,12 +146,24 @@ export class PreferencesService {
     }
   }
 
+  /** 是否允许发起云同步：已登录且非游客。登出不清 sync_provider，但未登录期间视为不可同步。 */
+  async canRunCloudSync(): Promise<boolean> {
+    if (await this.isGuestMode()) {
+      return false
+    }
+    return await this.isUserLoggedIn()
+  }
+
   /**
    * 仅读 preferences，不请求 Note API。
    * 用于订阅状态展示；避免 `getWebDAVConfig` 因 `/qingyu/webdav` 失败为 null 时被误判为未开通轻羽云。
+   * 未登录/游客时逻辑上视为未选用轻羽云（不改 preferences；再次登录后恢复）。
    */
   async getQingyuCloudSyncIntent(): Promise<'not_qingyu' | 'disabled' | 'qingyu'> {
     try {
+      if (!(await this.canRunCloudSync())) {
+        return 'not_qingyu'
+      }
       const store = this.ensureStore()
       const provider = store.getSync('sync_provider', 'webdav') as WebDAVProvider
       const enabled = store.getSync('webdav_enabled', true) as boolean
@@ -870,6 +886,11 @@ export class PreferencesService {
       // 登出后清空 WebView 缓存与 Cookie，防止 H5 容器（飞书表单、微信读书 Skill 等）
       // 残留上一个账号的会话状态。
       await WebViewSessionCleaner.clearAll()
+      try {
+        AppContextHolder.tryGetContext()?.eventHub.emit(SyncConstants.cloudSyncStopOnLogoutEvent)
+      } catch (_) {
+        // SyncService 入口门禁仍会挡住未登录同步
+      }
     } catch (error) {
       Logger.warn('PreferencesService', `clearLoginSession failed: ${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)
@@ -1128,6 +1149,32 @@ export class PreferencesService {
       await store.flush()
     } catch (error) {
       Logger.warn('PreferencesService', `setShareCardTone failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  /** App 外观：`system` | `light` | `dark`（与 Flutter ThemeNotifier 对齐）。 */
+  async getAppThemeMode(): Promise<string> {
+    try {
+      const raw = `${this.ensureStore().getSync(APP_THEME_MODE_KEY, 'system') ?? 'system'}`.trim()
+      if (raw === 'light' || raw === 'dark' || raw === 'system') {
+        return raw
+      }
+      return 'system'
+    } catch (error) {
+      Logger.warn('PreferencesService', `getAppThemeMode failed: ${this.describeError(error as Object)}`)
+      return 'system'
+    }
+  }
+
+  async setAppThemeMode(mode: string): Promise<void> {
+    const normalized =
+      mode === 'light' || mode === 'dark' || mode === 'system' ? mode : 'system'
+    try {
+      const store = this.ensureStore()
+      store.putSync(APP_THEME_MODE_KEY, normalized)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setAppThemeMode failed: ${this.describeError(error as Object)}`)
     }
   }
 

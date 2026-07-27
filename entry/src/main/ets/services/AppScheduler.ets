@@ -75,6 +75,9 @@ export class AppScheduler {
     if (!policy.autoSync || await PreferencesService.getInstance().isAuthInvalid()) {
       return false
     }
+    if (!(await PreferencesService.getInstance().canRunCloudSync())) {
+      return false
+    }
     if (!this.isNetworkAvailable()) {
       return false
     }

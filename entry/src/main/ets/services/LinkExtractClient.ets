@@ -145,6 +145,14 @@ export class LinkExtractClient {
       if (code === 401) {
         throw new Error('未登录或服务不可用')
       }
+      // 已有进行中任务：复用 detail 中的 job_id，便于杀进程后恢复本地 extract_job_id。
+      if (code === 409) {
+        const recovered = this.parseInProgressJob(resp.result as string, noteId)
+        if (recovered !== null) {
+          Logger.info(TAG, `submitJob 409 recovered jobId=${recovered.jobId}`)
+          return recovered
+        }
+      }
       if (code < 200 || code >= 300) {
         Logger.error(TAG, `submitJob status=${code} body=${(resp.result as string ?? '').substring(0, 500)}`)
         throw new Error('AI 提取链接失败，请稍后重试')
@@ -160,6 +168,34 @@ export class LinkExtractClient {
       return out
     } finally {
       req.destroy()
+    }
+  }
+
+  /** FastAPI 409 `detail: { error, job_id, note_id }` → 可复用的 SubmitJobResult。 */
+  private parseInProgressJob(body: string, fallbackNoteId: string): SubmitJobResult | null {
+    try {
+      const obj = this.parseJson(body)
+      let detail: Record<string, Object> = obj
+      const nested = obj['detail']
+      if (nested && typeof nested === 'object') {
+        detail = nested as Record<string, Object>
+      }
+      const error = `${detail['error'] ?? ''}`
+      const jobId = `${detail['job_id'] ?? ''}`.trim()
+      if (jobId.length === 0) {
+        return null
+      }
+      if (error.length > 0 && error !== 'extract_job_in_progress') {
+        return null
+      }
+      return {
+        jobId: jobId,
+        noteId: `${detail['note_id'] ?? fallbackNoteId}`,
+        status: 'running',
+        deduped: true
+      }
+    } catch (_) {
+      return null
     }
   }
 

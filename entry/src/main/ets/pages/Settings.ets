@@ -8,6 +8,7 @@ import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { SyncConstants } from '../common/constants/SyncConstants'
 import { BiometricLockService } from '../services/BiometricLockService'
 import { APP_LOCALE_REVISION_KEY, LocaleService } from '../services/LocaleService'
+import { ConfigurationConstant } from '@kit.AbilityKit'
 
 /** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展，用于退出登录后避免返回敏感页。 */
 interface RouterWithOptionalClear {
@@ -32,6 +33,7 @@ struct Settings {
   @State biometricLockEnabled: boolean = false
   @State biometricLockLabel: string = ''
   @State showReferralInviteMenu: boolean = false
+  @State appThemeMode: string = 'system'
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
   private noteSettingsChangedHandler = (): void => {
@@ -98,6 +100,68 @@ struct Settings {
     await this.loadBiometricSettings()
   }
 
+  private appearanceLabel(): string {
+    if (this.appThemeMode === 'light') {
+      return LocaleService.loc('浅色', 'Light', 'ライト')
+    }
+    if (this.appThemeMode === 'dark') {
+      return LocaleService.loc('深色', 'Dark', 'ダーク')
+    }
+    return LocaleService.loc('跟随系统', 'System', 'システムに合わせる')
+  }
+
+  private applyColorMode(mode: string): void {
+    const context = AppContextHolder.tryGetContext()
+    if (!context) {
+      return
+    }
+    let colorMode = ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET
+    if (mode === 'light') {
+      colorMode = ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT
+    } else if (mode === 'dark') {
+      colorMode = ConfigurationConstant.ColorMode.COLOR_MODE_DARK
+    }
+    try {
+      context.getApplicationContext().setColorMode(colorMode)
+    } catch (err) {
+      console.error(`setColorMode failed: ${JSON.stringify(err)}`)
+    }
+  }
+
+  private async openAppearancePicker(): Promise<void> {
+    try {
+      const result = await this.getUIContext().getPromptAction().showDialog({
+        title: LocaleService.loc('外观', 'Appearance', '外観'),
+        message: LocaleService.loc(
+          '选择应用外观',
+          'Choose app appearance',
+          'アプリの外観を選択'
+        ),
+        buttons: [
+          {
+            text: LocaleService.loc('跟随系统', 'System', 'システムに合わせる'),
+            color: '#0DAA4A'
+          },
+          {
+            text: LocaleService.loc('浅色', 'Light', 'ライト'),
+            color: '#0DAA4A'
+          },
+          {
+            text: LocaleService.loc('深色', 'Dark', 'ダーク'),
+            color: '#0DAA4A'
+          }
+        ]
+      })
+      const index = result.index
+      const mode = index === 1 ? 'light' : (index === 2 ? 'dark' : 'system')
+      await PreferencesService.getInstance().setAppThemeMode(mode)
+      this.appThemeMode = mode
+      this.applyColorMode(mode)
+    } catch (err) {
+      console.error(`openAppearancePicker: ${JSON.stringify(err)}`)
+    }
+  }
+
   private async loadBiometricSettings(): Promise<void> {
     await BiometricLockService.getInstance().ensureConsistentWithAppLock(this.appLockEnabled)
     const kind = await BiometricLockService.getInstance().getAvailableKind()
@@ -122,6 +186,10 @@ struct Settings {
       return
     }
     this.accountSubId = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.appThemeMode = await PreferencesService.getInstance().getAppThemeMode()
     if (!this.lifecycle.isActive()) {
       return
     }
@@ -417,7 +485,20 @@ struct Settings {
             offsetY: 4
           })
 
-          if (!this.noteSettingsLoading) {
+          if (this.noteSettingsLoading) {
+            Column() {
+              LoadingProgress()
+                .width(28)
+                .height(28)
+                .color($r('app.color.accent'))
+            }
+            .width('100%')
+            .padding({ top: 28, bottom: 28 })
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor($r('app.color.card_background'))
+            .borderRadius($r('app.float.card_radius'))
+            .border({ width: 1, color: $r('app.color.card_border') })
+          } else {
             Column({ space: 0 }) {
               Row() {
                 Text($r('app.string.note_quick_action_bar'))
@@ -612,6 +693,36 @@ struct Settings {
               this.getUIContext().getRouter().pushUrl({ url: 'pages/LanguageSettings' }).catch((err: Error) => {
                 console.error(`openLanguageSettings: ${JSON.stringify(err)}`)
               })
+            })
+
+            Divider()
+              .color($r('app.color.divider'))
+              .strokeWidth(1)
+
+            Row() {
+              Text(LocaleService.loc('外观', 'Appearance', '外観'))
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor($r('app.color.primary_text'))
+                .layoutWeight(1)
+              Text(this.appearanceLabel())
+                .fontSize(13)
+                .fontColor($r('app.color.tertiary_text'))
+                .margin({ right: 8 })
+              Text('›')
+                .fontSize(22)
+                .fontColor($r('app.color.tertiary_text'))
+            }
+            .width('100%')
+            .padding({
+              left: 20,
+              right: 16,
+              top: 14,
+              bottom: 14
+            })
+            .justifyContent(FlexAlign.SpaceBetween)
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              void this.openAppearancePicker()
             })
 
             Divider()

@@ -1,4 +1,4 @@
-import { ComponentContent, window } from '@kit.ArkUI'
+import { ComponentContent, SymbolGlyphModifier, window } from '@kit.ArkUI'
 import type { MarkdownBlock } from '../common/utils/MarkdownUtils'
 import { MarkdownUtils, shouldPersistTodoNote } from '../common/utils/MarkdownUtils'
 import {
@@ -44,7 +44,7 @@ import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { NoteImageGalleryUtils } from '../common/utils/NoteImageGalleryUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
-import { NoteFolderTree, type FolderSidebarRow, type MovePickerEntry } from '../common/utils/NoteFolderTree'
+import { NoteFolderTree, type FolderSidebarRow, type HomeSidebarFilterMode, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 import {
   hasEditorTitleOrBody,
   resolveTitleForSave,
@@ -121,7 +121,6 @@ struct NoteEdit {
   @State tagMenuVisible: boolean = false
   @State aiTagCreating: boolean = false
   @State aiFeatureEnabled: boolean = false
-  @State aiMenuVisible: boolean = false
   @State aiNoteWorking: boolean = false
   @State aiWorkingOverlayMessage: string = 'AI 处理中…'
   private extractPollTimer: number = -1
@@ -143,18 +142,13 @@ struct NoteEdit {
   @State tagBarHeight: number = 32
   @State lastPanOffsetX: number = 0
   @State lastPanOffsetY: number = 0
-  /** 页面 Stack 窗口坐标，用于把工具栏 AI 按钮换算成菜单锚点。 */
-  @State pageStackGlobalX: number = 0
-  @State pageStackGlobalY: number = 0
-  @State aiButtonX: number = 0
-  @State aiButtonY: number = 0
-  @State aiButtonWidth: number = 30
-  @State aiButtonHeight: number = 30
   /** 标题输入框是否处于焦点（编辑）状态。 */
   @State titleFieldFocused: boolean = false
   /** 笔记设置：是否展示输入法上方快捷操作栏。 */
   @State quickActionBarEnabled: boolean = true
   @State folderModeEnabled: boolean = false
+  /** 首页侧栏筛选模式（本地偏好 `home_sidebar_filter_mode`）。 */
+  @State sidebarFilterMode: HomeSidebarFilterMode = 'tag'
   /** 软键盘占用高度（vp），用于快捷栏贴键盘定位。 */
   @State keyboardHeightVp: number = 0
   /** 正文上次已知光标位置；点击快捷栏时 TextArea 失焦，getCaretOffset 常误报文末。 */
@@ -251,6 +245,7 @@ struct NoteEdit {
   onPageShow(): void {
     void this.loadQuickActionBarPref()
     void this.loadFolderModePref()
+    void this.loadSidebarFilterModePref()
     void this.onNoteEditPageShow()
   }
 
@@ -284,6 +279,7 @@ struct NoteEdit {
     void this.refreshAllNotes()
     void this.loadQuickActionBarPref()
     void this.loadFolderModePref()
+    void this.loadSidebarFilterModePref()
     void this.loadAiFeatureConfig()
     void this.initKeyboardAvoidArea()
     this.syncAiWorkingFromBackgroundTask()
@@ -374,6 +370,21 @@ struct NoteEdit {
     }
   }
 
+  private async loadSidebarFilterModePref(): Promise<void> {
+    await this.ensurePreferencesInitialized()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    const mode = await PreferencesService.getInstance().getHomeSidebarFilterMode()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.sidebarFilterMode = mode
+    if (mode === 'folder') {
+      this.tagMenuVisible = false
+    }
+  }
+
   private async loadAiFeatureConfig(): Promise<void> {
     const filesDir = this.filesDirCache.length > 0
       ? this.filesDirCache
@@ -384,14 +395,63 @@ struct NoteEdit {
     }
   }
 
+  /** 顶栏「更多」菜单中是否展示 AI 项。 */
   private shouldShowMobileToolbarAi(): boolean {
     return !this.isSplitMode() &&
       this.aiFeatureEnabled &&
       hasEditorTitleOrBody(this.title, this.content)
   }
 
+  private buildToolbarMoreMenuItems(): Array<MenuElement> {
+    const items: Array<MenuElement> = [
+      {
+        value: EditorUiStrings.loc('分享', 'Share', '共有'),
+        symbolIcon: new SymbolGlyphModifier($r('sys.symbol.share')),
+        action: (): void => {
+          void this.runShareNote()
+        }
+      }
+    ]
+    if (this.shouldShowMobileToolbarAi()) {
+      items.push({
+        value: this.aiNoteWorking
+          ? EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
+          : EditorUiStrings.loc('AI优化语句', 'AI polish', 'AIで文章を整える'),
+        symbolIcon: new SymbolGlyphModifier($r('sys.symbol.wand_and_stars')),
+        action: (): void => {
+          if (!this.aiNoteWorking) {
+            void this.onAiOptimizeContent()
+          }
+        }
+      })
+      items.push({
+        value: EditorUiStrings.loc('AI提取链接', 'AI extract link', 'AIでリンク抽出'),
+        symbolIcon: new SymbolGlyphModifier($r('sys.symbol.link')),
+        action: (): void => {
+          if (!this.aiNoteWorking) {
+            void this.openAiLinkExtractDialog()
+          }
+        }
+      })
+      if (this.aiUndoAvailable) {
+        items.push({
+          value: EditorUiStrings.loc('撤回AI修改', 'Undo AI edit', 'AI編集を元に戻す'),
+          symbolIcon: new SymbolGlyphModifier($r('sys.symbol.undo')),
+          action: (): void => {
+            if (!this.aiNoteWorking) {
+              this.onAiUndo()
+            }
+          }
+        })
+      }
+    }
+    return items
+  }
+
   private shouldShowMobileTagBar(): boolean {
-    return !this.isSplitMode() && hasEditorTitleOrBody(this.title, this.content)
+    return !this.isSplitMode() &&
+      hasEditorTitleOrBody(this.title, this.content) &&
+      this.sidebarFilterMode !== 'folder'
   }
 
   private static readonly FLOAT_MENU_WIDTH: number = 154
@@ -434,34 +494,6 @@ struct NoteEdit {
     return this.tagBarY - menuHeight - NoteEdit.FLOAT_MENU_GAP
   }
 
-  /** 工具栏 AI 菜单：固定在按钮正下方，右对齐按钮。 */
-  private aiToolbarMenuPosX(): number {
-    let x = this.aiButtonX + this.aiButtonWidth - NoteEdit.FLOAT_MENU_WIDTH
-    if (x < 8) {
-      x = 8
-    }
-    const maxX = this.pageWidth - NoteEdit.FLOAT_MENU_WIDTH - 8
-    if (x > maxX) {
-      x = maxX
-    }
-    return x
-  }
-
-  private aiToolbarMenuPosY(): number {
-    return this.aiButtonY + this.aiButtonHeight + NoteEdit.FLOAT_MENU_GAP
-  }
-
-  private recordAiButtonArea(area: Area): void {
-    this.aiButtonWidth = Number.parseFloat(`${area.width}`) || 30
-    this.aiButtonHeight = Number.parseFloat(`${area.height}`) || 30
-    const globalX = Number.parseFloat(`${area.globalPosition?.x ?? -1}`)
-    const globalY = Number.parseFloat(`${area.globalPosition?.y ?? -1}`)
-    if (globalX >= 0 && globalY >= 0) {
-      this.aiButtonX = globalX - this.pageStackGlobalX
-      this.aiButtonY = globalY - this.pageStackGlobalY
-    }
-  }
-
   private captureAiUndoBaseline(contentBeforeChange: string): void {
     if (this.aiUndoBaselineContent === null) {
       this.aiUndoBaselineContent = contentBeforeChange
@@ -476,7 +508,6 @@ struct NoteEdit {
     this.content = this.aiUndoBaselineContent
     this.aiUndoBaselineContent = null
     this.aiUndoAvailable = false
-    this.aiMenuVisible = false
     this.handleContentChange()
     this.showPreviewMessage(EditorUiStrings.loc('已撤回 AI 修改', 'AI edit undone', 'AI編集を元に戻しました'))
   }
@@ -878,7 +909,6 @@ struct NoteEdit {
     }
     this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
     this.aiNoteWorking = true
-    this.aiMenuVisible = false
     const started = await svc.runVoiceTranscribe(this.noteId, outputPath)
     if (!started && !svc.isBusy) {
       this.aiNoteWorking = false
@@ -1521,10 +1551,8 @@ struct NoteEdit {
     this.previewMode = mode
     if (mode === 'preview') {
       this.preparePreviewForCurrentMode(this.content, true)
-      this.aiMenuVisible = false
     } else if (mode === 'edit') {
       this.tagMenuVisible = false
-      this.aiMenuVisible = false
       this.folderMovePopupVisible = false
       this.stopPathCaptionMarquee()
     }
@@ -2397,88 +2425,6 @@ struct NoteEdit {
       .key(`share_export_${this.shareExportMountKey()}`)
   }
 
-  @Builder
-  buildAiDropdown() {
-    Column() {
-      Row() {
-        if (this.aiNoteWorking) {
-          LoadingProgress()
-            .width(20)
-            .height(20)
-            .color($r('app.color.accent'))
-        } else {
-          SymbolGlyph($r('sys.symbol.wand_and_stars'))
-            .fontSize(16)
-            .fontColor([$r('app.color.accent')])
-        }
-        Text(this.aiNoteWorking
-          ? EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
-          : EditorUiStrings.loc('AI优化语句', 'AI polish', 'AIで文章を整える'))
-          .fontSize($r('app.float.body_font_size'))
-          .fontColor($r('app.color.accent'))
-          .margin({ left: 8 })
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-      .onClick(() => {
-        if (!this.aiNoteWorking) {
-          void this.onAiOptimizeContent()
-        }
-      })
-      Divider()
-        .color($r('app.color.card_border'))
-        .strokeWidth(1)
-      Row() {
-        SymbolGlyph($r('sys.symbol.link'))
-          .fontSize(16)
-          .fontColor([$r('app.color.accent')])
-        Text(EditorUiStrings.loc('AI提取链接', 'AI extract link', 'AIでリンク抽出'))
-          .fontSize($r('app.float.body_font_size'))
-          .fontColor($r('app.color.accent'))
-          .margin({ left: 8 })
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-      .onClick(() => {
-        if (!this.aiNoteWorking) {
-          this.aiMenuVisible = false
-          this.openAiLinkExtractDialog()
-        }
-      })
-      if (this.aiUndoAvailable) {
-        Divider()
-          .color($r('app.color.card_border'))
-          .strokeWidth(1)
-        Row() {
-          SymbolGlyph($r('sys.symbol.undo'))
-            .fontSize(16)
-            .fontColor([$r('app.color.accent')])
-          Text(EditorUiStrings.loc('撤回AI修改', 'Undo AI edit', 'AI編集を元に戻す'))
-            .fontSize($r('app.float.body_font_size'))
-            .fontColor($r('app.color.accent'))
-            .margin({ left: 8 })
-        }
-        .width('100%')
-        .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-        .onClick(() => {
-          if (!this.aiNoteWorking) {
-            this.onAiUndo()
-          }
-        })
-      }
-    }
-    .width(154)
-    .backgroundColor($r('app.color.card_background'))
-    .borderRadius(12)
-    .border({ width: 1, color: $r('app.color.card_border') })
-    .shadow({
-      radius: 12,
-      color: $r('app.color.shadow_color'),
-      offsetX: 0,
-      offsetY: 4
-    })
-  }
-
   private syncAiWorkingFromBackgroundTask(): void {
     const svc = AiNoteBackgroundTaskService.getInstance()
     const busyHere = svc.isBusyForNote(this.noteId)
@@ -2487,7 +2433,6 @@ struct NoteEdit {
       this.aiWorkingOverlayMessage = busyHere
         ? svc.overlayMessage
         : EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
-      this.aiMenuVisible = false
       return
     }
     if (this.aiNoteWorking) {
@@ -2521,7 +2466,6 @@ struct NoteEdit {
     if (!this.aiNoteWorking) {
       this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
       this.aiNoteWorking = true
-      this.aiMenuVisible = false
     } else {
       this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 处理中…', 'AI working…', 'AI処理中…')
     }
@@ -2662,7 +2606,6 @@ struct NoteEdit {
     )
     this.aiWorkingOverlayMessage = optimizeMessage
     this.aiNoteWorking = true
-    this.aiMenuVisible = false
     const filesDir = this.filesDirCache.length > 0
       ? this.filesDirCache
       : (this.obtainUiAbilityContext()?.filesDir ?? '')
@@ -2752,7 +2695,6 @@ struct NoteEdit {
     }
     this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 提交中…', 'Submitting…', '送信中…')
     this.aiNoteWorking = true
-    this.aiMenuVisible = false
     // 记录跑 AI 前的原始 title/content：若用户原本就有内容，必须保留，绝不能被占位文本覆盖。
     const originalTitle = this.title
     const originalContent = this.content
@@ -2789,21 +2731,6 @@ struct NoteEdit {
     }
   }
 
-  private async onMobileAiButtonPressed(): Promise<void> {
-    const svc = AiNoteBackgroundTaskService.getInstance()
-    if (this.aiNoteWorking || svc.isBusy) {
-      svc.ensureIdleOrNotifyBusy()
-      return
-    }
-    if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
-      return
-    }
-    this.aiMenuVisible = !this.aiMenuVisible
-    if (this.aiMenuVisible) {
-      this.tagMenuVisible = false
-    }
-  }
-
   @Builder
   buildAiWorkingOverlay() {
     Stack({ alignContent: Alignment.Center }) {
@@ -2815,18 +2742,14 @@ struct NoteEdit {
         LoadingProgress()
           .width(40)
           .height(40)
-          .color($r('app.color.accent'))
-        Text(this.aiWorkingOverlayMessage)
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.primary_text'))
+          .color(Color.White)
         Text(EditorUiStrings.loc(
           '关闭页面可在后台继续执行',
           'You can leave this page; the task continues in the background',
           'ページを閉じてもバックグラウンドで続行されます'
         ))
           .fontSize(13)
-          .fontColor($r('app.color.secondary_text'))
+          .fontColor('#D9FFFFFF')
           .textAlign(TextAlign.Center)
       }
     }
@@ -2877,9 +2800,6 @@ struct NoteEdit {
       .onClick(() => {
         void this.refreshTagPool()
         this.tagMenuVisible = !this.tagMenuVisible
-        if (this.tagMenuVisible) {
-          this.aiMenuVisible = false
-        }
       })
     }
     .shadow({
@@ -2933,9 +2853,6 @@ struct NoteEdit {
           }
           void this.refreshTagPool()
           this.tagMenuVisible = !this.tagMenuVisible
-          if (this.tagMenuVisible) {
-            this.aiMenuVisible = false
-          }
         })
         .shadow({
           radius: 18,
@@ -3049,20 +2966,10 @@ struct NoteEdit {
           Column({ space: 4 }) {
             if (this.saveStatusBarClickable()) {
               Text() {
-                Span(`${EditorUiStrings.saveStatus(this.saveStatus)} - `)
-                  .fontSize($r('app.float.caption_font_size'))
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor(
-                    this.saveStatus === '已保存' ? $r('app.color.success') :
-                      (this.saveStatus === '保存失败' ? $r('app.color.danger') : $r('app.color.secondary_text'))
-                  )
                 Span(EditorUiStrings.previewModeLabel('preview'))
                   .fontSize($r('app.float.caption_font_size'))
                   .fontWeight(FontWeight.Medium)
-                  .fontColor(
-                    this.saveStatus === '已保存' ? $r('app.color.success') :
-                      (this.saveStatus === '保存失败' ? $r('app.color.danger') : $r('app.color.secondary_text'))
-                  )
+                  .fontColor($r('app.color.primary_text'))
                 Span('▼')
                   .fontSize($r('app.float.caption_font_size'))
                   .fontWeight(FontWeight.Medium)
@@ -3084,20 +2991,17 @@ struct NoteEdit {
                   }
                 }
               })
-            } else if (this.mobileFullPreviewChrome()) {
-              Text(this.saveStatusDisplay())
+            } else if (!this.isSplitMode()) {
+              Text(EditorUiStrings.previewModeLabel(this.previewMode))
                 .fontSize($r('app.float.caption_font_size'))
                 .fontWeight(FontWeight.Medium)
-                .fontColor(
-                  this.saveStatus === '已保存' ? $r('app.color.success') :
-                    (this.saveStatus === '保存失败' ? $r('app.color.danger') : $r('app.color.secondary_text'))
-                )
+                .fontColor($r('app.color.primary_text'))
                 .textAlign(TextAlign.Start)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .width('100%')
             } else {
-              Text(this.saveStatusDisplay())
+              Text(EditorUiStrings.saveStatus(this.saveStatus))
                 .fontSize($r('app.float.caption_font_size'))
                 .fontWeight(FontWeight.Medium)
                 .fontColor(
@@ -3109,7 +3013,19 @@ struct NoteEdit {
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .width('100%')
             }
-            if (this.lastSavedAt > 0) {
+            if (!this.isSplitMode()) {
+              Text(EditorUiStrings.saveStatus(this.saveStatus))
+                .fontSize(12)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(
+                  this.saveStatus === '已保存' ? $r('app.color.success') :
+                    (this.saveStatus === '保存失败' ? $r('app.color.danger') : $r('app.color.secondary_text'))
+                )
+                .textAlign(TextAlign.Start)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+            } else if (this.lastSavedAt > 0) {
               Text(TimeUtils.format(this.lastSavedAt))
                 .fontSize(12)
                 .fontColor($r('app.color.tertiary_text'))
@@ -3138,33 +3054,6 @@ struct NoteEdit {
 
           if (!this.isSplitMode()) {
             Row({ space: 6 }) {
-              if (this.shouldShowMobileToolbarAi()) {
-                Stack({ alignContent: Alignment.Center }) {
-                  if (this.aiNoteWorking) {
-                    LoadingProgress()
-                      .width(30)
-                      .height(30)
-                      .color($r('app.color.accent'))
-                  } else {
-                    Image($r('app.media.ic_ai_float'))
-                      .width(30)
-                      .height(30)
-                      .objectFit(ImageFit.Contain)
-                  }
-                }
-                .width(30)
-                .height(30)
-                .opacity(this.aiNoteWorking ? 0.6 : 1)
-                .onAreaChange((_: Area, area: Area) => {
-                  this.recordAiButtonArea(area)
-                })
-                .onClick(() => {
-                  if (this.aiNoteWorking) {
-                    return
-                  }
-                  void this.onMobileAiButtonPressed()
-                })
-              }
               if (this.previewMode === 'preview') {
                 Button(EditorUiStrings.loc('编辑', 'Edit', '編集'))
                   .fontSize($r('app.float.caption_font_size'))
@@ -3190,25 +3079,13 @@ struct NoteEdit {
                   .onClick(() => {
                     this.switchMode('preview')
                   })
-                if (!this.quickActionBarEnabled) {
-                  SymbolGlyph($r('sys.symbol.picture'))
-                    .fontSize(22)
-                    .fontColor([$r('app.color.primary_text')])
-                    .margin({ right: 5, left: 5 })
-                    .padding(3)
-                    .onClick(() => {
-                      void this.insertImage()
-                    })
-                }
               }
-              SymbolGlyph($r('sys.symbol.share'))
+              SymbolGlyph($r('sys.symbol.more'))
                 .fontSize(22)
                 .fontColor([$r('app.color.primary_text')])
                 .margin({ right: 5, left: 5 })
                 .padding(3)
-                .onClick(() => {
-                  void this.runShareNote()
-                })
+                .bindMenu(this.buildToolbarMoreMenuItems())
             }
             .alignItems(VerticalAlign.Center)
           }
@@ -3286,7 +3163,7 @@ struct NoteEdit {
           .width('100%')
         } else if (this.previewMode === 'preview') {
           Column({ space: 0 }) {
-            if (this.folderModeEnabled && this.mobileFullPreviewChrome()) {
+            if (this.sidebarFilterMode === 'folder' && this.mobileFullPreviewChrome()) {
               this.buildParentPathCaption()
             }
             NoteEditPreviewPane({
@@ -3414,18 +3291,6 @@ struct NoteEdit {
           .hitTestBehavior(HitTestMode.Transparent)
       }
 
-      // 工具栏 AI 菜单：锚在 AI 按钮正下方
-      if (this.aiMenuVisible && this.shouldShowMobileToolbarAi()) {
-        Column() {
-          this.buildAiDropdown()
-        }
-        .position({ x: this.aiToolbarMenuPosX(), y: this.aiToolbarMenuPosY() })
-        .zIndex(999)
-        .onClick(() => {
-          // 吃掉菜单区域点击，避免冒泡到页面根节点立刻关闭菜单。
-        })
-      }
-
       if (this.aiNoteWorking) {
         this.buildAiWorkingOverlay()
       }
@@ -3473,21 +3338,10 @@ struct NoteEdit {
       if (this.tagMenuVisible) {
         this.tagMenuVisible = false
       }
-      if (this.aiMenuVisible) {
-        this.aiMenuVisible = false
-      }
     })
     .onAreaChange((_, value) => {
       const nextWidth = Number.parseFloat(`${value.width}`) || 360
       const nextHeight = Number.parseFloat(`${value.height}`) || 780
-      const nextGlobalX = Number.parseFloat(`${value.globalPosition?.x ?? 0}`)
-      const nextGlobalY = Number.parseFloat(`${value.globalPosition?.y ?? 0}`)
-      if (Math.abs(this.pageStackGlobalX - nextGlobalX) >= 0.5) {
-        this.pageStackGlobalX = nextGlobalX
-      }
-      if (Math.abs(this.pageStackGlobalY - nextGlobalY) >= 0.5) {
-        this.pageStackGlobalY = nextGlobalY
-      }
       const wasSplitMode = this.isSplitMode()
       if (Math.abs(this.pageWidth - nextWidth) >= 1) {
         this.pageWidth = nextWidth

@@ -7,6 +7,7 @@ import {
   buildRegisterCaptchaDialogContent,
   type RegisterCaptchaDialogParams
 } from '../dialogs/RegisterCaptchaDialog'
+import { showAgreeTermsPromptDialog } from '../dialogs/AgreeTermsPromptDialog'
 import { NoteApiClient } from '../services/NoteApiClient'
 import { PreferencesService } from '../services/PreferencesService'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
@@ -225,6 +226,14 @@ struct Register {
       this.getUIContext().getPromptAction().showToast({ message: msg, duration: 2000 })
     } catch (_) {
       console.error(`Register toast failed: ${msg}`)
+    }
+  }
+
+  /** 未勾选时弹窗；确定则勾选，点外部关闭则不勾选。不继续注册。 */
+  private async showAgreeTermsAndCheck(): Promise<void> {
+    const ok = await showAgreeTermsPromptDialog(this.getUIContext())
+    if (ok) {
+      this.agreeToTerms = true
     }
   }
 
@@ -576,7 +585,7 @@ struct Register {
             .enabled(!this.submitting)
             .onClick((): void => {
               if (!this.agreeToTerms) {
-                this.showToast('请先同意用户协议')
+                void this.showAgreeTermsAndCheck()
                 return
               }
               void this.onSubmit()

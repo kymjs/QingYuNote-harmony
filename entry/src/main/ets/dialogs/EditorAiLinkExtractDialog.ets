@@ -1,4 +1,5 @@
 import { EditorUiStrings } from '../common/utils/EditorUiStrings'
+import { LinkUrlUtils } from '../common/utils/LinkUrlUtils'
 import { PreferencesService } from '../services/PreferencesService'
 
 export interface EditorAiLinkExtractDialogParams {
@@ -27,7 +28,7 @@ export struct EditorAiLinkExtractDialog {
   }
 
   private canConfirm(): boolean {
-    return this.urlDraft.trim().length > 0
+    return LinkUrlUtils.extractFirstUrl(this.urlDraft) !== null
   }
 
   private async onSummaryChanged(value: boolean): Promise<void> {
@@ -65,12 +66,12 @@ export struct EditorAiLinkExtractDialog {
           .textOverflow({ overflow: TextOverflow.Clip })
       }
     }
-    .width(65)
+    .width(71.5)
     .height(28)
     .justifyContent(FlexAlign.SpaceBetween)
     .alignItems(VerticalAlign.Center)
     .borderRadius(14)
-    .backgroundColor(this.summaryEnabled ? $r('app.color.accent') : $r('app.color.secondary_text'))
+    .backgroundColor($r('app.color.accent'))
     .onClick(() => {
       void this.onSummaryChanged(!this.summaryEnabled)
     })
@@ -90,7 +91,7 @@ export struct EditorAiLinkExtractDialog {
           this.labeledTrackSwitch()
         } else {
           Row()
-            .width(65)
+            .width(71.5)
             .height(28)
         }
       }
@@ -124,8 +125,9 @@ export struct EditorAiLinkExtractDialog {
           .padding({ top: 12, bottom: 12 })
           .enabled(this.canConfirm())
           .onClick(() => {
-            if (this.canConfirm()) {
-              this.params.onConfirm(this.urlDraft.trim(), this.summaryEnabled ? 1 : 0)
+            const url = LinkUrlUtils.extractFirstUrl(this.urlDraft)
+            if (url !== null) {
+              this.params.onConfirm(url, this.summaryEnabled ? 1 : 0)
             }
           })
       }

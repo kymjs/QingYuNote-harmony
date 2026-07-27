@@ -153,7 +153,7 @@ export struct HomeMoreOptionsSheet {
     .width('100%')
     .padding({ left: 20, right: 20, top: 16, bottom: 12 })
     .backgroundBlurStyle(BlurStyle.Thin)
-    .backgroundColor('#EBF3F4F8')
+    .backgroundColor($r('app.color.sheet_background'))
     .borderRadius({ topLeft: 24, topRight: 24 })
   }
 }

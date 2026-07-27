@@ -404,7 +404,7 @@ export class FlowchartLayoutEngine {
   }
 
   static applyMindMapLinearLayout(graph: FlowchartGraphModel, preferVertical: boolean = false,
-    rootId?: string): FlowchartGraphModel {
+    rootId?: string, preserveRootPosition: boolean = false): FlowchartGraphModel {
     if (graph.nodes.length === 0) {
       return graph
     }
@@ -421,6 +421,9 @@ export class FlowchartLayoutEngine {
     if (nodeById[resolvedRootId] === undefined) {
       return graph
     }
+    const previousRootPosition = preserveRootPosition
+      ? nodeById[resolvedRootId].position
+      : undefined
 
     const siblingGap = 32
     const levelGap = 80
@@ -537,6 +540,20 @@ export class FlowchartLayoutEngine {
         const childBox = measureOnSide(childId, FLOWCHART_MIND_MAP_SIDE_RIGHT)
         placeOnSide(childId, FLOWCHART_MIND_MAP_SIDE_RIGHT, rootX + root.width + levelGap, cursorY)
         cursorY += childBox.h + siblingGap
+      }
+    }
+
+    if (previousRootPosition !== undefined) {
+      const laidRoot = positions[resolvedRootId]
+      if (laidRoot !== undefined) {
+        const dx = previousRootPosition.x - laidRoot.x
+        const dy = previousRootPosition.y - laidRoot.y
+        if (dx !== 0 || dy !== 0) {
+          for (const id of Object.keys(positions)) {
+            const pos = positions[id]
+            positions[id] = createFlowchartPosition(pos.x + dx, pos.y + dy)
+          }
+        }
       }
     }
 

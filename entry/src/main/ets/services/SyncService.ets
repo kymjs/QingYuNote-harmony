@@ -79,12 +79,35 @@ export class SyncService {
     NoteRepository.getInstance().setScheduleSyncHandler((noteId: string) => {
       this.scheduleSync(noteId)
     })
+    try {
+      AppContextHolder.tryGetContext()?.eventHub.on(
+        SyncConstants.cloudSyncStopOnLogoutEvent,
+        this.stopOnLogoutHandler)
+    } catch (_) {
+      Logger.warn('SyncService', 'eventHub.on cloud_sync_stop_on_logout failed')
+    }
     this.syncRunning = false
     this.initialized = true
   }
 
+  private stopOnLogoutHandler = (): void => {
+    this.stopAllCloudSyncActivity()
+  }
+
+  private async ensureCanRunCloudSync(): Promise<boolean> {
+    return await PreferencesService.getInstance().canRunCloudSync()
+  }
+
+  /** 取消已调度的 debounce 同步；不强制中断进行中的批次（入口与 emit 会再次门禁）。 */
+  stopAllCloudSyncActivity(): void {
+    this.cancelScheduledSync()
+  }
+
   scheduleSync(noteId?: string): void {
     void this.init().then(async () => {
+      if (!(await this.ensureCanRunCloudSync())) {
+        return
+      }
       const policy = await PreferencesService.getInstance().getSyncPolicy()
       if (!policy.autoSync) {
         return
@@ -122,6 +145,9 @@ export class SyncService {
 
   async syncNow(): Promise<SyncResult[]> {
     await this.init()
+    if (!(await this.ensureCanRunCloudSync())) {
+      return []
+    }
     this.cancelScheduledSync()
     if (this.currentSyncPromise) {
       Logger.info('SyncService', 'syncNow reuse current sync promise')
@@ -169,6 +195,15 @@ export class SyncService {
    */
   async syncNote(noteId: string, reuseRemoteIndexSnapshot?: RemoteIndexSnapshot): Promise<SyncResult> {
     await this.init()
+    if (!(await this.ensureCanRunCloudSync())) {
+      return {
+        noteId,
+        success: true,
+        action: 'skip',
+        message: '',
+        remoteModified: 0
+      }
+    }
     if (!(await this.isQingyuSubscriptionSyncAllowed())) {
       this.notifyQingyuSyncBlockedThrottled()
       return {
@@ -381,6 +416,9 @@ export class SyncService {
 
   async retryFailedNotes(): Promise<SyncResult[]> {
     await this.init()
+    if (!(await this.ensureCanRunCloudSync())) {
+      return []
+    }
     const pendingNoteIds = await DatabaseService.getInstance().listPendingNoteIds()
     const localNotes = await NoteRepository.getInstance().listAllNotes()
     const permanentSnapshot = await WebDAVClient.getInstance().getRemoteIndexSnapshot()
@@ -402,6 +440,10 @@ export class SyncService {
   }
 
   async restorePendingAfterLaunch(): Promise<void> {
+    if (!(await this.ensureCanRunCloudSync())) {
+      await DatabaseService.getInstance().purgeDeletedBefore(Date.now() - TOMBSTONE_RETENTION_MS)
+      return
+    }
     const pendingNoteIds = await DatabaseService.getInstance().listPendingNoteIds()
     if (pendingNoteIds.length > 0) {
       await this.retryFailedNotes()
@@ -604,6 +646,9 @@ export class SyncService {
   }
 
   private async emitQingyuBlockedUi(): Promise<void> {
+    if (!(await this.ensureCanRunCloudSync())) {
+      return
+    }
     const hub = AppContextHolder.tryGetContext()?.eventHub
     if (hub === undefined) {
       return

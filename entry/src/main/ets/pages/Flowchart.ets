@@ -59,6 +59,7 @@ import {
   createEmptyFlowchartGraph,
   createFlowchartPosition,
   cloneFlowchartGraph,
+  cloneFlowchartRecord,
   flowchartFirstMatchingNodeId,
   FLOWCHART_DEFAULT_TITLE,
   isDefaultFlowchartTitle,
@@ -337,50 +338,154 @@ struct FlowchartPage {
   }
 
   private onMindMapPaletteTap(): void {
-    if (!this.isMindMapMode() || this.graph.nodes.length === 0) {
-      this.enterMindMapMode()
-    }
+    this.enterMindMapMode()
   }
 
+  /** 侧边栏点击思维导图：始终新增一套默认模板，不复用/升格已有图形节点。 */
   private enterMindMapMode(): void {
     this.pushUndo()
-    let graph = this.graph
-    let rootId = FlowchartMindMap.rootId(graph)
+    const wasMindMapMode = this.isMindMapMode()
+    const preferVertical = this.isPhoneLayout()
+    const inputText = EditorUiStrings.loc('输入文本', 'Enter text', 'テキストを入力')
 
-    if (graph.nodes.length === 0) {
-      graph = FlowchartMindMap.createDefaultTemplate(() => util.generateRandomUUID())
-      const inputText = EditorUiStrings.loc('输入文本', 'Enter text', 'テキストを入力')
-      const nodes = graph.nodes.map((node: FlowchartNodeModel): FlowchartNodeModel => ({
-        id: node.id,
-        title: inputText,
-        description: node.description,
-        color: node.color,
-        shape: node.shape,
-        position: node.position,
-        width: node.width,
-        height: node.height,
-        rotation: node.rotation,
-        properties: node.properties
-      }))
-      graph = {
-        version: graph.version,
-        metadata: graph.metadata,
-        nodes,
-        edges: [...graph.edges]
-      }
-      rootId = FlowchartMindMap.rootId(graph)
-    } else if (rootId.length === 0) {
-      rootId = this.selectedNodeId.length > 0 ? this.selectedNodeId : graph.nodes[0].id
+    let template = FlowchartMindMap.createDefaultTemplate(() => util.generateRandomUUID())
+    const templateNodes = template.nodes.map((node: FlowchartNodeModel): FlowchartNodeModel => ({
+      id: node.id,
+      title: inputText,
+      description: node.description,
+      color: node.color,
+      shape: node.shape,
+      position: node.position,
+      width: node.width,
+      height: node.height,
+      rotation: node.rotation,
+      properties: node.properties
+    }))
+    template = {
+      version: template.version,
+      metadata: template.metadata,
+      nodes: templateNodes,
+      edges: [...template.edges]
+    }
+    const newRootId = FlowchartMindMap.rootId(template)
+    template = FlowchartLayoutEngine.applyMindMapLinearLayout(template, preferVertical, newRootId)
+
+    if (this.graph.nodes.length > 0) {
+      template = this.offsetGraphToFreeSpace(template, this.graph.nodes)
     }
 
-    graph = FlowchartMindMap.assignRoles(graph, rootId)
-    graph = FlowchartLayoutEngine.applyMindMapLinearLayout(graph, this.isPhoneLayout(), rootId)
-    this.graph = graph
-    this.selectedNodeId = rootId
+    const metadata = cloneFlowchartRecord(this.graph.metadata)
+    const templateMetaKeys = Object.keys(template.metadata)
+    for (let i = 0; i < templateMetaKeys.length; i++) {
+      const key = templateMetaKeys[i]
+      metadata[key] = template.metadata[key]
+    }
+    this.graph = {
+      version: this.graph.version,
+      metadata,
+      nodes: [...this.graph.nodes, ...template.nodes],
+      edges: [...this.graph.edges, ...template.edges]
+    }
+    this.selectedNodeId = newRootId
+    this.markNodeEdited(newRootId)
     this.graphRevision++
     this.markDirty()
     this.scheduleCanvasRedraw()
-    this.showUserMessage(EditorUiStrings.loc('已进入思维导图模式', 'Mind map mode enabled', 'マインドマップモードを開始しました'))
+    if (!wasMindMapMode) {
+      this.showUserMessage(EditorUiStrings.loc('已进入思维导图模式', 'Mind map mode enabled', 'マインドマップモードを開始しました'))
+    }
+  }
+
+  private offsetGraphToFreeSpace(
+    graph: FlowchartGraphModel,
+    against: FlowchartNodeModel[]
+  ): FlowchartGraphModel {
+    if (graph.nodes.length === 0) {
+      return graph
+    }
+    let minX = Number.MAX_VALUE
+    let minY = Number.MAX_VALUE
+    let maxX = Number.MIN_VALUE
+    let maxY = Number.MIN_VALUE
+    for (const node of graph.nodes) {
+      minX = Math.min(minX, node.position.x)
+      minY = Math.min(minY, node.position.y)
+      maxX = Math.max(maxX, node.position.x + node.width)
+      maxY = Math.max(maxY, node.position.y + node.height)
+    }
+    const blockW = Math.max(1, maxX - minX)
+    const blockH = Math.max(1, maxY - minY)
+    const start = this.newNodePosition(blockW, blockH, against.length)
+    const freeOrigin = this.findFreePositionAmong(start.x, start.y, blockW, blockH, against)
+    const dx = freeOrigin.x - minX
+    const dy = freeOrigin.y - minY
+    if (dx === 0 && dy === 0) {
+      return graph
+    }
+    const nodes = graph.nodes.map((node: FlowchartNodeModel): FlowchartNodeModel => ({
+      id: node.id,
+      title: node.title,
+      description: node.description,
+      color: node.color,
+      shape: node.shape,
+      position: { x: node.position.x + dx, y: node.position.y + dy },
+      width: node.width,
+      height: node.height,
+      rotation: node.rotation,
+      properties: node.properties
+    }))
+    return {
+      version: graph.version,
+      metadata: graph.metadata,
+      nodes,
+      edges: [...graph.edges]
+    }
+  }
+
+  private overlapsNodes(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    nodes: FlowchartNodeModel[]
+  ): boolean {
+    const pad = 8
+    const right = x + w
+    const bottom = y + h
+    for (const node of nodes) {
+      const nLeft = node.position.x - pad
+      const nTop = node.position.y - pad
+      const nRight = node.position.x + node.width + pad
+      const nBottom = node.position.y + node.height + pad
+      if (x < nRight && right > nLeft && y < nBottom && bottom > nTop) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private findFreePositionAmong(
+    startX: number,
+    startY: number,
+    w: number,
+    h: number,
+    nodes: FlowchartNodeModel[]
+  ): FlowchartNodePosition {
+    const gapY = 24
+    const stepX = 48
+    let x = startX
+    let y = startY
+    for (let attempt = 0; attempt < 64; attempt++) {
+      if (!this.overlapsNodes(x, y, w, h, nodes)) {
+        return createFlowchartPosition(x, y)
+      }
+      y += gapY
+      if (attempt % 8 === 7) {
+        x += stepX
+        y = startY
+      }
+    }
+    return createFlowchartPosition(startX, startY + gapY * 64)
   }
 
   private addMindMapChildOnSide(parentId: string, side: string): void {
@@ -412,8 +517,11 @@ struct FlowchartPage {
       child,
       util.generateRandomUUID()
     )
-    const rootId = this.mindMapRootId().length > 0 ? this.mindMapRootId() : FlowchartMindMap.rootId(graph)
-    graph = FlowchartLayoutEngine.applyMindMapLinearLayout(graph, this.isPhoneLayout(), rootId)
+    const treeRoot = FlowchartMindMap.treeRootId(graph, parentId)
+    const rootId = treeRoot.length > 0
+      ? treeRoot
+      : (this.mindMapRootId().length > 0 ? this.mindMapRootId() : FlowchartMindMap.rootId(graph))
+    graph = FlowchartLayoutEngine.applyMindMapLinearLayout(graph, this.isPhoneLayout(), rootId, true)
     this.graph = graph
     this.selectedNodeId = childId
     this.markNodeEdited(childId)
@@ -1387,9 +1495,12 @@ struct FlowchartPage {
         nodes,
         edges: graph.edges
       }
-      const rootId = this.mindMapRootId().length > 0 ? this.mindMapRootId() : fromId
+      const treeRoot = FlowchartMindMap.treeRootId(graph, fromId)
+      const rootId = treeRoot.length > 0
+        ? treeRoot
+        : (this.mindMapRootId().length > 0 ? this.mindMapRootId() : fromId)
       graph = FlowchartMindMap.assignRoles(graph, rootId)
-      graph = FlowchartLayoutEngine.applyMindMapLinearLayout(graph, preferVertical, rootId)
+      graph = FlowchartLayoutEngine.applyMindMapLinearLayout(graph, preferVertical, rootId, true)
       this.graph = graph
       this.graphRevision++
       this.markDirty()
@@ -1440,16 +1551,19 @@ struct FlowchartPage {
     if (node !== undefined &&
       this.isMindMapMode() &&
       FlowchartMindMap.isTreeNode(this.graph, node)) {
+      const treeRootBefore = FlowchartMindMap.treeRootId(this.graph, id)
+      const deletedEntireTree = treeRootBefore === id
       let graph = FlowchartMindMap.removeSubtree(this.graph, id)
-      if (FlowchartMindMap.isMindMapMode(graph) && graph.nodes.length > 0) {
-        const rootId = FlowchartMindMap.rootId(graph)
-        if (rootId.length > 0) {
-          graph = FlowchartLayoutEngine.applyMindMapLinearLayout(
-            graph,
-            this.isPhoneLayout(),
-            rootId
-          )
-        }
+      if (!deletedEntireTree &&
+        treeRootBefore.length > 0 &&
+        FlowchartMindMap.isMindMapMode(graph) &&
+        graph.nodes.some((n: FlowchartNodeModel) => n.id === treeRootBefore)) {
+        graph = FlowchartLayoutEngine.applyMindMapLinearLayout(
+          graph,
+          this.isPhoneLayout(),
+          treeRootBefore,
+          true
+        )
       }
       this.graph = graph
       this.selectedNodeId = ''
@@ -2575,21 +2689,21 @@ struct FlowchartPage {
         .width(size)
         .height(size)
         .borderRadius(size / 2)
-        .backgroundColor('#F5F5F5')
+        .backgroundColor($r('app.color.card_background'))
         .border({ width: 1.5, color: '#212121' })
     } else if (shape === 'pill') {
       Row()
         .width(size)
         .height(size * 0.55)
         .borderRadius(size * 0.3)
-        .backgroundColor('#F5F5F5')
+        .backgroundColor($r('app.color.card_background'))
         .border({ width: 1.5, color: '#212121' })
     } else if (shape === 'roundedRect' || shape === 'speechBubble' || shape === 'rectSpeechBubble') {
       Row()
         .width(size)
         .height(size * 0.62)
         .borderRadius(8)
-        .backgroundColor('#F5F5F5')
+        .backgroundColor($r('app.color.card_background'))
         .border({ width: 1.5, color: '#212121' })
     } else if (shape === 'triangle' || shape === 'equilateralTriangle') {
       Text('△')
@@ -2617,7 +2731,7 @@ struct FlowchartPage {
         .width(size)
         .height(size * 0.62)
         .borderRadius(shape === 'rectangle' ? 0 : 2)
-        .backgroundColor('#F5F5F5')
+        .backgroundColor($r('app.color.card_background'))
         .border({ width: 1.5, color: '#212121' })
     }
   }

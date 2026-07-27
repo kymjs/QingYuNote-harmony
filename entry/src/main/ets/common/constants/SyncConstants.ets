@@ -10,6 +10,8 @@ export class SyncConstants {
   static readonly qingyuSyncBlockedEvent: string = 'qingyu_sync_blocked'
   /** 既未开通轻羽云、也未配置完整自建 WebDAV 时，仅 Toast，不弹开通弹窗。 */
   static readonly cloudSyncNotConfiguredToastEvent: string = 'cloud_sync_not_configured_toast'
+  /** 登出/清会话后通知 SyncService 取消已调度的云同步（不打断进行中的批次，靠入口门禁静默退出）。 */
+  static readonly cloudSyncStopOnLogoutEvent: string = 'cloud_sync_stop_on_logout'
   /** `.qingyu-index.json` 中已彻底删除笔记 id 列表。 */
   static readonly remoteIndexFieldPermanentlyDeletedNoteIds: string = 'permanentlyDeletedNoteIds'
   /** 彻底删除 id 超过该数量时裁剪最老条目（与 Flutter 对齐）。 */

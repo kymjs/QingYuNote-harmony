@@ -952,10 +952,23 @@ struct Profile {
               .fontColor($r('app.color.tertiary_text'))
               .padding({ top: 24, bottom: 24 })
           } else if (this.loadError.length > 0) {
-            Text(this.loadError)
-              .fontSize($r('app.float.body_font_size'))
-              .fontColor($r('app.color.tertiary_text'))
-              .padding({ top: 24, bottom: 24 })
+            Column({ space: 12 }) {
+              Text(this.loadError)
+                .fontSize($r('app.float.body_font_size'))
+                .fontColor($r('app.color.tertiary_text'))
+              Button(LocaleService.loc('重试', 'Retry', '再試行'))
+                .height(40)
+                .fontSize(14)
+                .fontColor(Color.White)
+                .backgroundColor($r('app.color.accent'))
+                .borderRadius(20)
+                .onClick(() => {
+                  void this.reload()
+                })
+            }
+            .width('100%')
+            .padding({ top: 24, bottom: 24 })
+            .alignItems(HorizontalAlign.Start)
           } else if (this.profile !== null) {
             ProfileMenuCard() {
               Row() {

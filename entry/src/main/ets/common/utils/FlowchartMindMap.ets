@@ -144,20 +144,42 @@ export class FlowchartMindMap {
   }
 
   static isRoot(graph: FlowchartGraphModel, node: FlowchartNodeModel): boolean {
-    const root = FlowchartMindMap.rootId(graph)
-    if (root.length > 0) {
-      return node.id === root
+    if (!FlowchartMindMap.isMindMapMode(graph)) {
+      return false
     }
-    return FlowchartMindMap.roleOf(node) === FLOWCHART_MIND_MAP_ROLE_ROOT
+    if (FlowchartMindMap.roleOf(node) === FLOWCHART_MIND_MAP_ROLE_ROOT) {
+      return true
+    }
+    return node.id === FlowchartMindMap.rootId(graph)
   }
 
   static isTextOnlyBranch(graph: FlowchartGraphModel, node: FlowchartNodeModel): boolean {
     return FlowchartMindMap.isMindMapMode(graph) && FlowchartMindMap.isBranch(graph, node)
   }
 
+  /** 沿父边向上找到该节点所属思维导图树根。 */
+  static treeRootId(graph: FlowchartGraphModel, nodeId: string): string {
+    let current = nodeId
+    const seen: Record<string, boolean> = {}
+    while (!seen[current]) {
+      seen[current] = true
+      const parent = FlowchartMindMap.parentOf(graph, current)
+      if (parent.length === 0) {
+        return current
+      }
+      current = parent
+    }
+    return ''
+  }
+
+  /** 是否属于思维导图树内节点（根或分支；支持画布上多套导图）。 */
   static isTreeNode(graph: FlowchartGraphModel, node: FlowchartNodeModel): boolean {
     if (!FlowchartMindMap.isMindMapMode(graph)) {
       return false
+    }
+    const role = FlowchartMindMap.roleOf(node)
+    if (role === FLOWCHART_MIND_MAP_ROLE_ROOT || role === FLOWCHART_MIND_MAP_ROLE_BRANCH) {
+      return true
     }
     const root = FlowchartMindMap.rootId(graph)
     if (root.length === 0) {
@@ -166,16 +188,28 @@ export class FlowchartMindMap {
     return FlowchartMindMap.collectSubtreeIds(graph, root).has(node.id)
   }
 
+  /** 是否思维导图内部连线（两端均属同一棵导图树）。 */
   static isMindMapEdge(graph: FlowchartGraphModel, edge: FlowchartEdgeModel): boolean {
     if (!FlowchartMindMap.isMindMapMode(graph)) {
       return false
     }
-    const root = FlowchartMindMap.rootId(graph)
-    if (root.length === 0) {
+    let source: FlowchartNodeModel | undefined = undefined
+    let target: FlowchartNodeModel | undefined = undefined
+    for (const node of graph.nodes) {
+      if (node.id === edge.source) {
+        source = node
+      }
+      if (node.id === edge.target) {
+        target = node
+      }
+    }
+    if (source === undefined || target === undefined ||
+      !FlowchartMindMap.isTreeNode(graph, source) ||
+      !FlowchartMindMap.isTreeNode(graph, target)) {
       return false
     }
-    const treeIds = FlowchartMindMap.collectSubtreeIds(graph, root)
-    return treeIds.has(edge.source) && treeIds.has(edge.target)
+    return FlowchartMindMap.treeRootId(graph, edge.source) ===
+      FlowchartMindMap.treeRootId(graph, edge.target)
   }
 
   static canInitiateConnection(graph: FlowchartGraphModel, node: FlowchartNodeModel): boolean {
@@ -765,8 +799,17 @@ export class FlowchartMindMap {
     const nodes = graph.nodes.filter((node: FlowchartNodeModel) => !removeIds.has(node.id))
     const edges = graph.edges.filter((edge: FlowchartEdgeModel) =>
       !removeIds.has(edge.source) && !removeIds.has(edge.target))
-    const shouldRemoveRoot = graph.metadata[FLOWCHART_MIND_MAP_ROOT_ID_KEY] === nodeId
-    const shouldExitMindMap = shouldRemoveRoot || nodes.length === 0
+    const removingTrackedRoot = graph.metadata[FLOWCHART_MIND_MAP_ROOT_ID_KEY] === nodeId
+    let nextRootId = ''
+    if (nodes.length > 0 && removingTrackedRoot) {
+      for (const node of nodes) {
+        if (FlowchartMindMap.roleOf(node) === FLOWCHART_MIND_MAP_ROLE_ROOT) {
+          nextRootId = node.id
+          break
+        }
+      }
+    }
+    const shouldExitMindMap = nodes.length === 0 || (removingTrackedRoot && nextRootId.length === 0)
     const metadata: Record<string, Object> = {}
     for (const key of Object.keys(graph.metadata)) {
       if (shouldExitMindMap &&
@@ -776,6 +819,9 @@ export class FlowchartMindMap {
         continue
       }
       metadata[key] = graph.metadata[key]
+    }
+    if (!shouldExitMindMap && removingTrackedRoot && nextRootId.length > 0) {
+      metadata[FLOWCHART_MIND_MAP_ROOT_ID_KEY] = nextRootId
     }
     return {
       version: graph.version,

@@ -7,7 +7,8 @@ import {
   type SystemMaterialParams
 } from '@kit.UIDesignKit'
 
-/** 首页底部三按钮 TabBar：更多 / 语音 / 笔记（HdsTabs 悬浮 + 沉浸光感，低版本毛玻璃降级）。 */
+/** 首页底部三按钮动作坞：更多 / 语音 / 笔记（HdsTabs 悬浮 + 沉浸光感，低版本毛玻璃降级）。
+ * 语义为瞬时动作，不是导航 Tab（选中/未选同色）。 */
 
 const TAB_BAR_HEIGHT_VP = 45
 
@@ -21,6 +22,11 @@ const TAB_BAR_BOTTOM_MARGIN_VP = 50
 const TAB_BAR_WIDTH_FACTOR = 0.68
 
 const TAB_BAR_HORIZONTAL_PADDING_VP = 4
+
+/** 列表等内容需躲开整块坞时的垂直占位（含安全区）。 */
+export function homeTabBarOccupiedHeight(bottomInsetVp: number = 0): number {
+  return TAB_BAR_HEIGHT_VP + TAB_BAR_BOTTOM_MARGIN_VP + bottomInsetVp
+}
 
 @Component
 export struct HomeLiquidGlassTabBar {
