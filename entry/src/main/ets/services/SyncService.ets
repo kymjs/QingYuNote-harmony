@@ -641,6 +641,26 @@ export class SyncService {
     return false
   }
 
+  /** 视频链接提取：须已登录且轻羽云同步可用（含有效订阅）。 */
+  async isQingyuCloudAvailableForVideoExtract(): Promise<boolean> {
+    const token = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (token === null || token.trim().length === 0) {
+      return false
+    }
+    const intent = await PreferencesService.getInstance().getQingyuCloudSyncIntent()
+    if (intent !== 'qingyu') {
+      return false
+    }
+    const config = await PreferencesService.getInstance().getWebDAVConfig()
+    if (config === null || !config.enabled) {
+      return false
+    }
+    if (config.provider !== 'qingyu_cloud') {
+      return false
+    }
+    return await this.isQingyuSubscriptionSyncAllowed()
+  }
+
   private notifyQingyuSyncBlockedThrottled(): void {
     void this.emitQingyuBlockedUi()
   }

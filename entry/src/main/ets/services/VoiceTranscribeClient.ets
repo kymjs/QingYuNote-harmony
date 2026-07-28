@@ -7,12 +7,29 @@ import { PreferencesService } from './PreferencesService'
 
 const TAG = 'VoiceTranscribe'
 
+/** Result of a voice transcription request. */
+export class VoiceTranscribeResult {
+  text: string = ''
+  summary: string = ''
+
+  constructor(text: string = '', summary: string = '') {
+    this.text = text
+    this.summary = summary
+  }
+}
+
 /** `POST /api/v1/transcribe/recording` */
 interface TranscribeRecordingRequestBody {
   user_id: number
   filename: string
   language: string
   optimize: number
+  summarize: number
+}
+
+/** `POST /api/v1/transcribe/summarize` */
+interface SummarizeTextRequestBody {
+  text: string
 }
 
 export class VoiceTranscribeClient {
@@ -28,8 +45,9 @@ export class VoiceTranscribeClient {
   async transcribeLocalFile(
     localPath: string,
     language: string = 'Chinese',
-    optimize: number = 1
-  ): Promise<string> {
+    optimize: number = 1,
+    summarize: number = 1
+  ): Promise<VoiceTranscribeResult> {
     const token = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (token === null || token.trim().length === 0) {
       Logger.warn(TAG, 'transcribeLocalFile aborted: missing access token')
@@ -66,8 +84,12 @@ export class VoiceTranscribeClient {
     const fullUrl = `${base}/api/v1/transcribe`
     const mime = VoiceTranscribeClient.guessAudioMime(trimmedPath)
     const boundary = `----VoiceTranscribe${Date.now()}`
-    const body = VoiceTranscribeClient.buildTranscribeMultipartBody(fileBuf, mime, boundary, language, optimize)
-    Logger.info(TAG, `transcribeLocalFile request url=${fullUrl} path=${trimmedPath} bytes=${fileSize} mime=${mime} optimize=${optimize}`)
+    const body = VoiceTranscribeClient.buildTranscribeMultipartBody(
+      fileBuf, mime, boundary, language, optimize, summarize
+    )
+    Logger.info(TAG,
+      `transcribeLocalFile request url=${fullUrl} path=${trimmedPath} bytes=${fileSize} mime=${mime} optimize=${optimize} summarize=${summarize}`
+    )
     const req = http.createHttp()
     try {
       const resp = await req.request(fullUrl, {
@@ -82,7 +104,9 @@ export class VoiceTranscribeClient {
         connectTimeout: 20000,
         readTimeout: 600000
       })
-      return VoiceTranscribeClient.parseTranscribeResponse(resp.responseCode, (resp.result as string) ?? '', 'transcribeLocalFile')
+      return VoiceTranscribeClient.parseTranscribeResponse(
+        resp.responseCode, (resp.result as string) ?? '', 'transcribeLocalFile'
+      )
     } catch (e) {
       if (e instanceof Error) {
         Logger.error(TAG, `transcribeLocalFile error message=${e.message}`)
@@ -100,8 +124,9 @@ export class VoiceTranscribeClient {
     userId: number,
     filename: string,
     language: string = 'Chinese',
-    optimize: number = 1
-  ): Promise<string> {
+    optimize: number = 1,
+    summarize: number = 1
+  ): Promise<VoiceTranscribeResult> {
     const token = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (token === null || token.trim().length === 0) {
       Logger.warn(TAG, 'transcribeRecording aborted: missing access token')
@@ -114,9 +139,12 @@ export class VoiceTranscribeClient {
       user_id: userId,
       filename: filename.trim(),
       language,
-      optimize
+      optimize,
+      summarize
     }
-    Logger.info(TAG, `transcribeRecording request url=${fullUrl} userId=${userId} filename=${body.filename} language=${language} optimize=${optimize}`)
+    Logger.info(TAG,
+      `transcribeRecording request url=${fullUrl} userId=${userId} filename=${body.filename} language=${language} optimize=${optimize} summarize=${summarize}`
+    )
     const req = http.createHttp()
     try {
       const resp = await req.request(fullUrl, {
@@ -131,7 +159,9 @@ export class VoiceTranscribeClient {
         connectTimeout: 20000,
         readTimeout: 600000
       })
-      return VoiceTranscribeClient.parseTranscribeResponse(resp.responseCode, (resp.result as string) ?? '', 'transcribeRecording')
+      return VoiceTranscribeClient.parseTranscribeResponse(
+        resp.responseCode, (resp.result as string) ?? '', 'transcribeRecording'
+      )
     } catch (e) {
       if (e instanceof Error) {
         Logger.error(TAG, `transcribeRecording error message=${e.message}`)
@@ -145,7 +175,65 @@ export class VoiceTranscribeClient {
     }
   }
 
-  private static parseTranscribeResponse(responseCode: number, raw: string, label: string): string {
+  /** 对已有转写正文补生成摘要（不重传音频）。 */
+  async summarizeText(text: string): Promise<string> {
+    const cleaned = text.trim()
+    if (cleaned.length === 0) {
+      return ''
+    }
+    const token = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (token === null || token.trim().length === 0) {
+      Logger.warn(TAG, 'summarizeText aborted: missing access token')
+      throw new Error('未登录或服务不可用')
+    }
+    const base = LinkExtractConstants.baseUrl.replace(/\/+$/, '')
+    const fullUrl = `${base}/api/v1/transcribe/summarize`
+    const body: SummarizeTextRequestBody = { text: cleaned }
+    Logger.info(TAG, `summarizeText request url=${fullUrl} textLength=${cleaned.length}`)
+    const req = http.createHttp()
+    try {
+      const resp = await req.request(fullUrl, {
+        method: http.RequestMethod.POST,
+        header: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json; charset=utf-8',
+          'Accept': 'application/json'
+        },
+        extraData: JSON.stringify(body),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 20000,
+        readTimeout: 120000
+      })
+      if (resp.responseCode === 401) {
+        Logger.warn(TAG, 'summarizeText unauthorized')
+        throw new Error('未登录或服务不可用')
+      }
+      if (resp.responseCode === 404) {
+        Logger.error(TAG, `summarizeText endpoint missing code=404 body=${((resp.result as string) ?? '').slice(0, 500)}`)
+        throw new Error('摘要服务不可用，请稍后重试')
+      }
+      if (resp.responseCode < 200 || resp.responseCode >= 300) {
+        Logger.error(TAG, `summarizeText failed code=${resp.responseCode} body=${((resp.result as string) ?? '').slice(0, 500)}`)
+        throw new Error('生成摘要失败，请稍后重试')
+      }
+      const obj = JSON.parse((resp.result as string) ?? '{}') as Record<string, Object>
+      const summary = `${obj['summary'] ?? ''}`.trim()
+      Logger.info(TAG, `summarizeText success summaryLength=${summary.length}`)
+      return summary
+    } catch (e) {
+      if (e instanceof Error) {
+        Logger.error(TAG, `summarizeText error message=${e.message}`)
+        throw e
+      }
+      const be = e as BusinessError
+      Logger.error(TAG, `summarizeText business error code=${be?.code} message=${be?.message}`)
+      throw new Error(be?.message ?? '生成摘要失败，请稍后重试')
+    } finally {
+      req.destroy()
+    }
+  }
+
+  private static parseTranscribeResponse(responseCode: number, raw: string, label: string): VoiceTranscribeResult {
     Logger.info(TAG, `${label} response code=${responseCode} bodyLength=${raw.length}`)
     if (responseCode === 401) {
       Logger.warn(TAG, `${label} unauthorized`)
@@ -164,13 +252,14 @@ export class VoiceTranscribeClient {
       throw new Error('语音转文字失败，请稍后重试')
     }
     const obj = JSON.parse(raw) as Record<string, Object>
-    const content = `${obj['text'] ?? ''}`.trim()
-    if (content.length === 0) {
+    const text = `${obj['text'] ?? ''}`.trim()
+    if (text.length === 0) {
       Logger.warn(TAG, `${label} empty text payload=${raw.slice(0, 500)}`)
       throw new Error('语音转文字未返回有效内容')
     }
-    Logger.info(TAG, `${label} success textLength=${content.length}`)
-    return content
+    const summary = `${obj['summary'] ?? ''}`.trim()
+    Logger.info(TAG, `${label} success textLength=${text.length} summaryLength=${summary.length}`)
+    return new VoiceTranscribeResult(text, summary)
   }
 
   private static guessAudioMime(path: string): string {
@@ -200,13 +289,18 @@ export class VoiceTranscribeClient {
     mime: string,
     boundary: string,
     language: string,
-    optimize: number
+    optimize: number,
+    summarize: number
   ): ArrayBuffer {
     const crlf = '\r\n'
     const optimizePart =
       `--${boundary}${crlf}` +
       `Content-Disposition: form-data; name="optimize"${crlf}${crlf}` +
       `${optimize}${crlf}`
+    const summarizePart =
+      `--${boundary}${crlf}` +
+      `Content-Disposition: form-data; name="summarize"${crlf}${crlf}` +
+      `${summarize}${crlf}`
     const langPart =
       `--${boundary}${crlf}` +
       `Content-Disposition: form-data; name="language"${crlf}${crlf}` +
@@ -217,14 +311,19 @@ export class VoiceTranscribeClient {
       `Content-Type: ${mime}${crlf}${crlf}`
     const tailStr = `${crlf}--${boundary}--${crlf}`
     const optimizeBytes = VoiceTranscribeClient.multipartAsciiBytes(optimizePart)
+    const summarizeBytes = VoiceTranscribeClient.multipartAsciiBytes(summarizePart)
     const langBytes = VoiceTranscribeClient.multipartAsciiBytes(langPart)
     const head = VoiceTranscribeClient.multipartAsciiBytes(filePartHead)
     const tail = VoiceTranscribeClient.multipartAsciiBytes(tailStr)
     const mid = new Uint8Array(fileBuf)
-    const out = new Uint8Array(optimizeBytes.length + langBytes.length + head.length + mid.length + tail.length)
+    const out = new Uint8Array(
+      optimizeBytes.length + summarizeBytes.length + langBytes.length + head.length + mid.length + tail.length
+    )
     let offset = 0
     out.set(optimizeBytes, offset)
     offset += optimizeBytes.length
+    out.set(summarizeBytes, offset)
+    offset += summarizeBytes.length
     out.set(langBytes, offset)
     offset += langBytes.length
     out.set(head, offset)

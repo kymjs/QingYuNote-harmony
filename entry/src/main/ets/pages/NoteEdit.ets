@@ -81,10 +81,6 @@ import {
   buildJinshuLightSegmentCaptureIds
 } from '../share/NoteShareExportCard'
 import { NoteSharePreviewSheetParams } from '../share/NoteSharePreviewSheet'
-import {
-  buildVoiceRecordingSheetContent,
-  type VoiceRecordingSheetParams
-} from '../components/VoiceRecordingSheet'
 import { NoteAudioPlayerBar } from '../components/NoteAudioPlayerBar'
 import {
   AiNoteBackgroundTaskService,
@@ -97,6 +93,8 @@ interface NoteEditParams {
   openWithPreview?: boolean
   /** 从首页「更多方式」进入时，加载完成后自动触发的动作。 */
   initialAction?: NoteEditorEntryAction
+  /** 语音笔记页完成后带入，加载笔记后触发转写。 */
+  pendingVoicePath?: string
 }
 
 @Entry
@@ -196,7 +194,6 @@ struct NoteEdit {
   @State shareExportSnapshotSkipQr: boolean = false
   @State shareShowAppIcon: boolean = false
   @State audioId: string = ''
-  @State voiceRecordingVisible: boolean = false
   private saveTimer: number = -1
   private previewTimer: number = -1
   private previewDirty: boolean = true
@@ -219,6 +216,8 @@ struct NoteEdit {
   private preferPreviewOnOpen: boolean = false
   private pendingInitialAction: NoteEditorEntryAction | null = null
   private initialActionHandled: boolean = false
+  private pendingVoicePath: string = ''
+  private pendingVoiceHandled: boolean = false
   /** 打开页面时待办笔记是否已有实质内容（避免清空后误删历史笔记）。 */
   private initialHadTodoContent: boolean = false
   private shareCardHeight: number = 0
@@ -274,6 +273,8 @@ struct NoteEdit {
     this.preferPreviewOnOpen = params?.openWithPreview === true
     this.pendingInitialAction = params?.initialAction ?? null
     this.initialActionHandled = false
+    this.pendingVoicePath = `${params?.pendingVoicePath ?? ''}`.trim()
+    this.pendingVoiceHandled = false
     AiNoteBackgroundTaskService.getInstance().addListener(this.onAiBackgroundTaskChanged)
     void this.loadNote()
     void this.refreshAllNotes()
@@ -300,9 +301,22 @@ struct NoteEdit {
     }
     const nextPreview = params?.openWithPreview === true
     const nextAction = params?.initialAction ?? null
+    const nextPendingVoice = `${params?.pendingVoicePath ?? ''}`.trim()
     if (nextNoteId === this.noteId &&
       nextPreview === this.preferPreviewOnOpen &&
-      nextAction === this.pendingInitialAction) {
+      nextAction === this.pendingInitialAction &&
+      nextPendingVoice.length === 0) {
+      return
+    }
+    // Same note re-opened with a pending recording: only attach the path.
+    // Do not flush autosave first — that would purge a voice placeholder.
+    if (nextNoteId === this.noteId && nextPendingVoice.length > 0) {
+      this.preferPreviewOnOpen = nextPreview
+      this.pendingInitialAction = nextAction
+      this.initialActionHandled = false
+      this.pendingVoicePath = nextPendingVoice
+      this.pendingVoiceHandled = false
+      this.runPendingVoicePathIfNeeded()
       return
     }
     await this.flushAndAutoSaveAfterLeave()
@@ -313,6 +327,10 @@ struct NoteEdit {
     this.preferPreviewOnOpen = nextPreview
     this.pendingInitialAction = nextAction
     this.initialActionHandled = false
+    if (nextPendingVoice.length > 0) {
+      this.pendingVoicePath = nextPendingVoice
+      this.pendingVoiceHandled = false
+    }
     void this.loadNote()
     void this.refreshAllNotes()
   }
@@ -837,46 +855,14 @@ struct NoteEdit {
     }
   }
 
-  private async ensureNoteExistsForRecording(): Promise<void> {
-    if (this.noteId.length > 0) {
-      return
-    }
-    const note = await NoteRepository.getInstance().createNote({
-      title: EditorUiStrings.loc('新录音', 'New recording', '新規録音'),
-      content: '',
-      tags: [],
-      skipTitleAutoFill: true
-    })
-    if (!this.lifecycle.isActive()) {
-      return
-    }
-    this.noteId = note.id
-    this.title = note.title
-    this.previousContent = ''
-    this.lastSavedAt = note.updatedAt
-    this.noteCreatedAt = note.createdAt
-    this.saveStatus = '已保存'
-  }
-
-  private async showVoiceRecordingSheet(): Promise<void> {
-    await this.ensureNoteExistsForRecording()
-    if (!this.lifecycle.isActive() || this.noteId.length === 0) {
-      return
-    }
-    this.voiceRecordingVisible = true
-  }
-
   private isVoicePlaceholderNote(): boolean {
+    if (this.pendingVoicePath.trim().length > 0) {
+      return false
+    }
     return this.audioId.length === 0 &&
       this.content.trim().length === 0 &&
       (this.title.trim().length === 0 ||
         this.title.trim() === EditorUiStrings.loc('新录音', 'New recording', '新規録音'))
-  }
-
-  private onVoiceRecordingCancel(): void {
-    if (this.isVoicePlaceholderNote() && this.noteId.length > 0) {
-      void this.abandonVoicePlaceholderNote()
-    }
   }
 
   private async abandonVoicePlaceholderIfNeeded(): Promise<void> {
@@ -886,14 +872,6 @@ struct NoteEdit {
     const id = this.noteId
     this.noteId = ''
     await NoteRepository.getInstance().purgeLocalNoteCompletely(id)
-  }
-
-  private async abandonVoicePlaceholderNote(): Promise<void> {
-    await this.abandonVoicePlaceholderIfNeeded()
-    if (!this.lifecycle.isActive()) {
-      return
-    }
-    this.getUIContext().getRouter().back()
   }
 
   private async onVoiceRecordingComplete(outputPath: string): Promise<void> {
@@ -915,33 +893,22 @@ struct NoteEdit {
     }
   }
 
-  @Builder
-  private buildVoiceRecordingSheet(): void {
-    buildVoiceRecordingSheetContent({
-      noteId: this.noteId,
-      noteTitle: this.title.trim().length > 0
-        ? this.title.trim()
-        : EditorUiStrings.loc('新录音', 'New recording', '新規録音'),
-      onClose: (): void => {
-        this.voiceRecordingVisible = false
-      },
-      onCancel: (): void => {
-        this.onVoiceRecordingCancel()
-      },
-      onComplete: (outputPath: string): void => {
-        void this.onVoiceRecordingComplete(outputPath)
-      },
-      onPermissionDenied: (): void => {
-        try {
-          this.getUIContext().getPromptAction().showToast({
-            message: EditorUiStrings.loc('需要麦克风权限才能录音', 'Microphone permission is required to record', '録音にはマイク権限が必要です'),
-            duration: 2000
-          })
-        } catch (error) {
-          console.error(`showToast failed: ${JSON.stringify(error)}`)
-        }
+  private runPendingVoicePathIfNeeded(): void {
+    if (this.pendingVoiceHandled) {
+      return
+    }
+    const path = this.pendingVoicePath.trim()
+    if (path.length === 0) {
+      return
+    }
+    this.pendingVoiceHandled = true
+    this.pendingVoicePath = ''
+    setTimeout((): void => {
+      if (!this.lifecycle.isActive()) {
+        return
       }
-    } as VoiceRecordingSheetParams)
+      void this.onVoiceRecordingComplete(path)
+    }, 0)
   }
 
   private noteTagsSafe(): string[] {
@@ -1100,6 +1067,7 @@ struct NoteEdit {
       this.preparePreviewForCurrentMode(this.content)
       void this.refreshAllNotes()
       this.runInitialActionIfNeeded()
+      this.runPendingVoicePathIfNeeded()
       this.scheduleMembershipExpiryReminderIfNeeded()
       return
     }
@@ -1110,6 +1078,7 @@ struct NoteEdit {
     if (!note) {
       this.preparePreviewForCurrentMode(this.content)
       this.runInitialActionIfNeeded()
+      this.runPendingVoicePathIfNeeded()
       this.scheduleMembershipExpiryReminderIfNeeded()
       return
     }
@@ -1136,6 +1105,7 @@ struct NoteEdit {
     this.schedulePathCaptionMarquee()
     this.syncAiWorkingFromBackgroundTask()
     this.runInitialActionIfNeeded()
+    this.runPendingVoicePathIfNeeded()
     this.scheduleMembershipExpiryReminderIfNeeded()
     if (isExtractStatusPending(note.extractStatus)) {
       setTimeout((): void => {
@@ -1172,9 +1142,8 @@ struct NoteEdit {
         void this.insertImage(true, true)
       } else if (action === 'todoList') {
         this.applyTodoListEntryDefaults()
-      } else if (action === 'voiceMemo') {
-        void this.showVoiceRecordingSheet()
       }
+      // voiceMemo：首页已改为先开 VoiceNote，不再从编辑页二次打开
     }, 0)
   }
 
@@ -1260,6 +1229,11 @@ struct NoteEdit {
         return
       }
       if (this.isVoicePlaceholderNote()) {
+        if (this.pendingVoicePath.trim().length > 0) {
+          this.saveStatus = '未保存'
+          Logger.info('NoteEdit', 'handleAutoSave skipped: pending voice path')
+          return
+        }
         await this.abandonVoicePlaceholderIfNeeded()
         this.saveStatus = '未保存'
         Logger.info('NoteEdit', 'handleAutoSave skipped: voice placeholder note')
@@ -3356,15 +3330,6 @@ struct NoteEdit {
       }
       if ((!wasSplitMode && nextSplitMode) || this.shouldRenderPreview()) {
         this.preparePreviewForCurrentMode(this.content, true)
-      }
-    })
-    .bindSheet($$this.voiceRecordingVisible, this.buildVoiceRecordingSheet(), {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: false,
-      showClose: false,
-      backgroundColor: Color.Transparent,
-      onDisappear: (): void => {
-        this.voiceRecordingVisible = false
       }
     })
   }

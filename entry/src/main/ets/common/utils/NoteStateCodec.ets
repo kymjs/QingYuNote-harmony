@@ -1,5 +1,5 @@
 import type { Note, NoteFilePayload, NoteStateBlock } from '../model/Note'
-import { EXTRACT_STATUS_VALUES, ExtractStatus } from '../model/Note'
+import { EXTRACT_STATUS_VALUES, ExtractStatus, VOICE_TRANSCRIBE_STATUS_VALUES, VoiceTranscribeStatus } from '../model/Note'
 import { MarkdownUtils } from './MarkdownUtils'
 
 const NOTE_STATE_START = '<!-- NOTE_STATE'
@@ -80,7 +80,10 @@ export class NoteStateCodec {
       extractJobId: note.extractJobId ?? '',
       extractError: note.extractError ?? '',
       extractedAt: note.extractedAt ?? 0,
-      extractProgress: note.extractProgress ?? 0
+      extractProgress: note.extractProgress ?? 0,
+      voiceSummary: note.voiceSummary ?? '',
+      voiceSegmentsJson: note.voiceSegmentsJson ?? '',
+      voiceTranscribeStatus: note.voiceTranscribeStatus ?? 'none'
     }
   }
 
@@ -131,6 +134,15 @@ export class NoteStateCodec {
     }
     if (state.extractProgress && state.extractProgress > 0 && state.extractProgress < 1) {
       lines.push(`extract_progress: ${state.extractProgress.toFixed(2)}`)
+    }
+    if (state.voiceSummary.length > 0) {
+      lines.push(`voice_summary: ${NoteStateCodec.escapeSingleLine(state.voiceSummary)}`)
+    }
+    if (state.voiceSegmentsJson.length > 0) {
+      lines.push(`voice_segments_json: ${state.voiceSegmentsJson}`)
+    }
+    if (state.voiceTranscribeStatus && state.voiceTranscribeStatus !== 'none') {
+      lines.push(`voice_transcribe_status: ${state.voiceTranscribeStatus}`)
     }
     lines.push('-->')
     return lines.join('\n')
@@ -185,7 +197,10 @@ export class NoteStateCodec {
       extractJobId: state.extractJobId,
       extractError: state.extractError,
       extractedAt: state.extractedAt,
-      extractProgress: state.extractProgress
+      extractProgress: state.extractProgress,
+      voiceSummary: state.voiceSummary,
+      voiceSegmentsJson: state.voiceSegmentsJson,
+      voiceTranscribeStatus: state.voiceTranscribeStatus
     }
     return NoteStateCodec.serializeNoteFile(note)
   }
@@ -219,7 +234,10 @@ export class NoteStateCodec {
       extractJobId: '',
       extractError: '',
       extractedAt: 0,
-      extractProgress: 0
+      extractProgress: 0,
+      voiceSummary: '',
+      voiceSegmentsJson: '',
+      voiceTranscribeStatus: 'none'
     }
   }
 
@@ -321,6 +339,17 @@ export class NoteStateCodec {
         case 'extract_progress':
           parsed.extractProgress = NoteStateCodec.parseNumber(value, parsed.extractProgress)
           break
+        case 'voice_summary':
+          parsed.voiceSummary = NoteStateCodec.unescapeSingleLine(value)
+          break
+        case 'voice_segments_json':
+          parsed.voiceSegmentsJson = value
+          break
+        case 'voice_transcribe_status': {
+          const v = value as VoiceTranscribeStatus
+          parsed.voiceTranscribeStatus = VOICE_TRANSCRIBE_STATUS_VALUES.includes(v) ? v : 'none'
+          break
+        }
         default:
           break
       }
@@ -397,6 +426,37 @@ export class NoteStateCodec {
       return (0).toFixed(fractionDigits)
     }
     return value.toFixed(fractionDigits)
+  }
+
+  /** Encode multiline text into a single NOTE_STATE value line. */
+  private static escapeSingleLine(value: string): string {
+    return value
+      .replace(/\\/g, '\\\\')
+      .replace(/\r\n/g, '\\n')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\n')
+  }
+
+  private static unescapeSingleLine(value: string): string {
+    let out = ''
+    for (let i = 0; i < value.length; i++) {
+      const ch = value.charAt(i)
+      if (ch === '\\' && i + 1 < value.length) {
+        const next = value.charAt(i + 1)
+        if (next === 'n') {
+          out += '\n'
+          i++
+          continue
+        }
+        if (next === '\\') {
+          out += '\\'
+          i++
+          continue
+        }
+      }
+      out += ch
+    }
+    return out
   }
 
   /** 除去 Markdown 图片与 NOTE_STATE 后是否仍有实质正文。 */

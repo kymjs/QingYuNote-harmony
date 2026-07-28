@@ -18,6 +18,15 @@ export const EXTRACT_STATUS_VALUES: ExtractStatus[] = [
   'partial'
 ]
 
+export type VoiceTranscribeStatus = 'none' | 'running' | 'succeeded' | 'failed'
+
+export const VOICE_TRANSCRIBE_STATUS_VALUES: VoiceTranscribeStatus[] = [
+  'none',
+  'running',
+  'succeeded',
+  'failed'
+]
+
 export function isExtractStatusPending(s: ExtractStatus): boolean {
   return s === 'queued' || s === 'running'
 }
@@ -60,6 +69,12 @@ export interface NoteStateBlock {
   extractedAt: number
   /** 粗粒度进度 0~1，前端可仅用于图标旋转。 */
   extractProgress: number
+  /** 语音笔记 AI 摘要（NOTE_STATE `voice_summary`）。 */
+  voiceSummary: string
+  /** 语音转写分段 JSON（NOTE_STATE `voice_segments_json`）。 */
+  voiceSegmentsJson: string
+  /** 语音转写任务状态。 */
+  voiceTranscribeStatus: VoiceTranscribeStatus
 }
 
 export interface NoteSyncState {
@@ -110,6 +125,9 @@ export interface Note {
   extractError: string
   extractedAt: number
   extractProgress: number
+  voiceSummary: string
+  voiceSegmentsJson: string
+  voiceTranscribeStatus: VoiceTranscribeStatus
 }
 
 export interface NoteFilePayload {
@@ -180,6 +198,9 @@ export interface UpdateNoteInput {
   audioId?: string
   /** 链接来源 URL；undefined 时不修改。 */
   sourceUrl?: string
+  voiceSummary?: string
+  voiceSegmentsJson?: string
+  voiceTranscribeStatus?: VoiceTranscribeStatus
 }
 
 /** 仅更新异步链接提取相关字段的 patch。 */
@@ -194,6 +215,9 @@ export interface UpdateExtractInfo {
   title?: string
   /** 任务到达终态时，可选择覆盖笔记正文（来自 server2 result.content）。 */
   content?: string
+  audioId?: string
+  voiceSummary?: string
+  voiceTranscribeStatus?: VoiceTranscribeStatus
 }
 
 /** 回收站列表加载结果（含仅存在于远端、尚未写入本地的条目 id）。 */

@@ -8,8 +8,10 @@ import { AudioConstants } from '../common/constants/AudioConstants'
 import { EditorUiStrings } from '../common/utils/EditorUiStrings'
 import { MarkdownUtils } from '../common/utils/MarkdownUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
+import { VoiceSegmentSplitter } from '../common/utils/VoiceSegmentSplitter'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { Logger } from '../common/utils/Logger'
+import { fileIo as fs } from '@kit.CoreFileKit'
 
 /** AI 后台任务类型（编辑页离开后仍继续）。 */
 export type AiNoteBackgroundJobKind = 'optimize' | 'extractLink' | 'voiceTranscribe'
@@ -215,6 +217,18 @@ export class AiNoteBackgroundTaskService {
     if (!(await this.ensureNoPendingExtractOrNotify())) {
       return false
     }
+    const isVideo = LinkExtractClient.isVideoPlatformUrl(trimmedUrl)
+    if (isVideo) {
+      const ok = await SyncService.getInstance().isQingyuCloudAvailableForVideoExtract()
+      if (!ok) {
+        this.showGlobalToast(EditorUiStrings.loc(
+          '视频链接提取需要登录并启用轻羽云同步',
+          'Video link extract requires login and Qingyu Cloud sync',
+          '動画リンク抽出にはログインとQingyu Cloud同期が必要です'
+        ))
+        return false
+      }
+    }
     return this.runLocked(
       noteId,
       EditorUiStrings.loc('AI 提交中…', 'Submitting…', '送信中…'),
@@ -276,6 +290,13 @@ export class AiNoteBackgroundTaskService {
               appliedContent = EditorUiStrings.loc(placeholderContentZh, placeholderContentEn, placeholderContentJa)
             }
           }
+        }
+
+        if (isVideo) {
+          await NoteRepository.getInstance().saveDraft(id, {
+            audioId: AudioConstants.audioFileNameForVideoNote(id),
+            voiceTranscribeStatus: 'running'
+          })
         }
 
         await NoteRepository.getInstance().updateExtractInfo({
@@ -345,31 +366,80 @@ export class AiNoteBackgroundTaskService {
       id,
       EditorUiStrings.loc('AI 处理中…', 'AI processing…', 'AI処理中…'),
       async (): Promise<AiNoteBackgroundTaskResult> => {
-        const audioId = AudioConstants.audioFileNameForNote(id)
-        const note = await NoteRepository.getInstance().saveDraft(id, {
-          audioId: audioId
-        })
-        const syncResult = await SyncService.getInstance().syncNote(id)
-        if (!syncResult.success) {
-          throw new Error(EditorUiStrings.loc('同步失败，请稍后重试', 'Sync failed; try again', '同期に失敗しました。後でもう一度お試しください'))
+        const localPath = outputPath.trim()
+        if (localPath.length === 0) {
+          throw new Error(EditorUiStrings.loc(
+            '录音文件未找到，请稍后重试',
+            'Recording file not found; please try again',
+            '録音ファイルが見つかりません。後でもう一度お試しください'
+          ))
         }
-        await SyncService.getInstance().uploadAudioForNoteOrThrow(id)
-        const text = await VoiceTranscribeClient.getInstance().transcribeLocalFile(outputPath)
-        const existing = await NoteRepository.getInstance().getNote(id)
-        const contentBefore = existing?.content ?? ''
-        await NoteRepository.getInstance().saveDraft(id, {
-          content: text,
-          audioId: note.audioId
-        })
-        const result = new AiNoteBackgroundTaskResult()
-        result.noteId = id
-        result.kind = 'voiceTranscribe'
-        result.success = true
-        result.message = ''
-        result.content = text
-        result.contentBefore = contentBefore
-        result.audioId = note.audioId
-        return result
+        try {
+          if (!fs.accessSync(localPath) || fs.statSync(localPath).size <= 44) {
+            throw new Error(EditorUiStrings.loc(
+              '录音文件未找到，请稍后重试',
+              'Recording file not found; please try again',
+              '録音ファイルが見つかりません。後でもう一度お試しください'
+            ))
+          }
+        } catch (e) {
+          if (e instanceof Error &&
+            (e.message.indexOf('录音文件') >= 0 || e.message.indexOf('Recording file') >= 0)) {
+            throw e
+          }
+          throw new Error(EditorUiStrings.loc(
+            '录音文件未找到，请稍后重试',
+            'Recording file not found; please try again',
+            '録音ファイルが見つかりません。後でもう一度お試しください'
+          ))
+        }
+
+        await NoteRepository.getInstance().saveDraft(id, { voiceTranscribeStatus: 'running' })
+
+        try {
+          const audioId = AudioConstants.audioFileNameForNote(id)
+          const note = await NoteRepository.getInstance().saveDraft(id, {
+            audioId: audioId
+          })
+          const syncResult = await SyncService.getInstance().syncNote(id)
+          if (!syncResult.success) {
+            throw new Error(EditorUiStrings.loc('同步失败，请稍后重试', 'Sync failed; try again', '同期に失敗しました。後でもう一度お試しください'))
+          }
+          await SyncService.getInstance().uploadAudioForNoteOrThrow(id)
+          const transcribeResult = await VoiceTranscribeClient.getInstance().transcribeLocalFile(localPath)
+          const durationMs = AiNoteBackgroundTaskService.readAudioDurationMs(localPath)
+          const segmentsJson = VoiceSegmentSplitter.encodeJson(
+            VoiceSegmentSplitter.split(transcribeResult.text, durationMs)
+          )
+          const existing = await NoteRepository.getInstance().getNote(id)
+          const contentBefore = existing?.content ?? ''
+          await NoteRepository.getInstance().saveDraft(id, {
+            content: transcribeResult.text,
+            audioId: note.audioId,
+            voiceSummary: transcribeResult.summary,
+            voiceSegmentsJson: segmentsJson,
+            voiceTranscribeStatus: 'succeeded'
+          })
+          const result = new AiNoteBackgroundTaskResult()
+          result.noteId = id
+          result.kind = 'voiceTranscribe'
+          result.success = true
+          result.message = ''
+          result.content = transcribeResult.text
+          result.contentBefore = contentBefore
+          result.audioId = note.audioId
+          return result
+        } catch (e) {
+          try {
+            await NoteRepository.getInstance().saveDraft(id, { voiceTranscribeStatus: 'failed' })
+          } catch (saveErr) {
+            Logger.warn('AiNoteBgTask', `save failed voice status: ${JSON.stringify(saveErr)}`)
+          }
+          if (e instanceof Error) {
+            throw e
+          }
+          throw new Error(`${e}`)
+        }
       },
       (e: Object): AiNoteBackgroundTaskResult => {
         const result = new AiNoteBackgroundTaskResult()
@@ -383,6 +453,100 @@ export class AiNoteBackgroundTaskService {
         return result
       }
     )
+  }
+
+  async runVoiceSummarize(noteId: string, text: string, notifyUser: boolean = true): Promise<boolean> {
+    const id = noteId.trim()
+    if (id.length === 0) {
+      return false
+    }
+    return this.runLocked(
+      id,
+      EditorUiStrings.loc('AI 生成摘要中…', 'Generating summary…', 'AI要約生成中…'),
+      async (): Promise<AiNoteBackgroundTaskResult> => {
+        const summary = await VoiceTranscribeClient.getInstance().summarizeText(text)
+        await NoteRepository.getInstance().saveDraft(id, { voiceSummary: summary })
+        const result = new AiNoteBackgroundTaskResult()
+        result.noteId = id
+        result.kind = 'voiceTranscribe'
+        result.success = true
+        result.message = (notifyUser && summary.trim().length > 0)
+          ? EditorUiStrings.loc('摘要已生成', 'Summary generated', '要約を生成しました')
+          : ''
+        return result
+      },
+      (e: Object): AiNoteBackgroundTaskResult => {
+        const result = new AiNoteBackgroundTaskResult()
+        result.noteId = id
+        result.kind = 'voiceTranscribe'
+        result.success = false
+        result.message = notifyUser
+          ? UserFacingMessage.forAi(
+            e instanceof Error ? e.message : undefined,
+            EditorUiStrings.loc('生成摘要失败，请稍后重试', 'Summary generation failed; try again', '要約生成に失敗しました。後でもう一度お試しください')
+          )
+          : ''
+        return result
+      }
+    )
+  }
+
+  /** Best-effort WAV duration from local file header; returns 0 when unknown. */
+  private static readAudioDurationMs(path: string): number {
+    try {
+      const size = fs.statSync(path).size
+      if (size < 44) {
+        return 0
+      }
+      const readLen = Math.min(size, 8192)
+      const buf = new ArrayBuffer(readLen)
+      const file = fs.openSync(path, fs.OpenMode.READ_ONLY)
+      try {
+        fs.readSync(file.fd, buf)
+      } finally {
+        fs.closeSync(file)
+      }
+      const view = new DataView(buf)
+      if (AiNoteBackgroundTaskService.readAscii(view, 0, 4) !== 'RIFF' ||
+        AiNoteBackgroundTaskService.readAscii(view, 8, 4) !== 'WAVE') {
+        return 0
+      }
+      let offset = 12
+      let sampleRate = 0
+      let numChannels = 0
+      let bitsPerSample = 0
+      let dataSize = 0
+      while (offset + 8 <= readLen) {
+        const chunkId = AiNoteBackgroundTaskService.readAscii(view, offset, 4)
+        const chunkSize = view.getUint32(offset + 4, true)
+        if (chunkId === 'fmt ' && offset + 24 <= readLen) {
+          numChannels = view.getUint16(offset + 10, true)
+          sampleRate = view.getUint32(offset + 12, true)
+          bitsPerSample = view.getUint16(offset + 22, true)
+        } else if (chunkId === 'data') {
+          dataSize = chunkSize
+          break
+        }
+        offset += 8 + chunkSize + (chunkSize % 2)
+      }
+      if (sampleRate <= 0 || numChannels <= 0 || bitsPerSample <= 0 || dataSize <= 0) {
+        return 0
+      }
+      const bytesPerSample = bitsPerSample / 8
+      const numSamples = dataSize / (numChannels * bytesPerSample)
+      return Math.floor((numSamples / sampleRate) * 1000)
+    } catch (e) {
+      Logger.warn('AiNoteBgTask', `readAudioDurationMs failed: ${JSON.stringify(e)}`)
+      return 0
+    }
+  }
+
+  private static readAscii(view: DataView, offset: number, length: number): string {
+    let out = ''
+    for (let i = 0; i < length; i++) {
+      out += String.fromCharCode(view.getUint8(offset + i))
+    }
+    return out
   }
 
   private async runLocked(

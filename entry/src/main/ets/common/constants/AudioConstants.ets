@@ -6,4 +6,11 @@ export class AudioConstants {
   static audioFileNameForNote(noteId: string): string {
     return `${noteId}${AudioConstants.audioFileExtension}`
   }
+
+  /** 视频链接提取落盘为 mp3（与 server2 video_pipeline 一致）。 */
+  static readonly videoAudioFileExtension: string = '.mp3'
+
+  static audioFileNameForVideoNote(noteId: string): string {
+    return `${noteId}${AudioConstants.videoAudioFileExtension}`
+  }
 }

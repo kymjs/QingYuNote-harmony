@@ -24,6 +24,9 @@ export interface JobResultPayload {
   platform: string
   sourceUrl: string
   description: string
+  voiceSummary: string
+  audioId: string
+  mediaKind: string
 }
 
 export interface JobErrorPayload {
@@ -235,7 +238,10 @@ export class LinkExtractClient {
           content: `${r['content'] ?? ''}`,
           platform: `${r['platform'] ?? ''}`,
           sourceUrl: `${r['source_url'] ?? ''}`,
-          description: `${r['description'] ?? ''}`
+          description: `${r['description'] ?? ''}`,
+          voiceSummary: `${r['voice_summary'] ?? ''}`,
+          audioId: `${r['audio_id'] ?? ''}`,
+          mediaKind: `${r['media_kind'] ?? ''}`
         }
       }
       let error: JobErrorPayload | null = null

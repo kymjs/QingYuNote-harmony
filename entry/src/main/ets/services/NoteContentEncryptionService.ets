@@ -185,7 +185,10 @@ export class NoteContentEncryptionService {
       extractJobId: note.extractJobId,
       extractError: note.extractError,
       extractedAt: note.extractedAt,
-      extractProgress: note.extractProgress
+      extractProgress: note.extractProgress,
+      voiceSummary: note.voiceSummary,
+      voiceSegmentsJson: note.voiceSegmentsJson,
+      voiceTranscribeStatus: note.voiceTranscribeStatus
     }
   }
 }

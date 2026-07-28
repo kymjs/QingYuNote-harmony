@@ -27,6 +27,8 @@
     "pages/FolderManage",
     "pages/TagNoteAssign",
     "pages/Flowchart",
-    "pages/AppLockPin"
+    "pages/AppLockPin",
+    "pages/VoiceNote",
+    "pages/VoiceNoteDetail"
   ]
 }

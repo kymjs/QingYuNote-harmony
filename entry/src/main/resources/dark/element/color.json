@@ -21,6 +21,14 @@
       "value": "#FF1C2530"
     },
     {
+      "name": "voice_player_bar",
+      "value": "#FF1C2530"
+    },
+    {
+      "name": "voice_player_bar_border",
+      "value": "#FF6B7280"
+    },
+    {
       "name": "primary_text",
       "value": "#FFF3F4F6"
     },

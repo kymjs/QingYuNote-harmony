@@ -9,7 +9,7 @@ export class AudioPlaybackService {
   private avPlayer: media.AVPlayer | null = null
   private fileHandle: fs.File | null = null
   private positionCallback: ((positionMs: number, durationMs: number) => void) | undefined = undefined
-  private stateCallback: ((playing: boolean) => void) | undefined = undefined
+  private stateCallback: ((playing: boolean, completed: boolean) => void) | undefined = undefined
   private positionTimer: number = -1
 
   static getInstance(): AudioPlaybackService {
@@ -18,7 +18,7 @@ export class AudioPlaybackService {
 
   setCallbacks(
     positionCallback: ((positionMs: number, durationMs: number) => void) | undefined,
-    stateCallback: ((playing: boolean) => void) | undefined
+    stateCallback: ((playing: boolean, completed: boolean) => void) | undefined
   ): void {
     this.positionCallback = positionCallback
     this.stateCallback = stateCallback
@@ -55,9 +55,15 @@ export class AudioPlaybackService {
         Logger.info(TAG, `stateChange: ${state}`)
         if (this.stateCallback) {
           if (state === 'playing') {
-            this.stateCallback(true)
-          } else if (state === 'paused' || state === 'stopped' || state === 'completed') {
-            this.stateCallback(false)
+            this.stateCallback(true, false)
+          } else if (state === 'completed') {
+            if (this.positionCallback && this.avPlayer) {
+              const duration = this.avPlayer.duration
+              this.positionCallback(duration > 0 ? duration : this.avPlayer.currentTime, duration)
+            }
+            this.stateCallback(false, true)
+          } else if (state === 'paused' || state === 'stopped') {
+            this.stateCallback(false, false)
           }
         }
         if (state === 'playing') {

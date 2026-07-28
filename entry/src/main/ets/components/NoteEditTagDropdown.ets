@@ -159,7 +159,7 @@ export struct NoteEditTagChip {
         .borderRadius(10)
       Text(this.tag)
         .fontSize(12)
-        .fontColor($r('app.color.primary_text'))
+        .fontColor($r('app.color.accent'))
         .padding({ left: 8, right: 8, top: 3, bottom: 4 })
         .borderRadius(10)
     }

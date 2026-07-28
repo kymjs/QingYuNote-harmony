@@ -448,7 +448,16 @@ export class NoteRepository {
     const audioIdChanged = nextAudioId !== existing.audioId
     const nextSourceUrl = patch.sourceUrl !== undefined ? patch.sourceUrl : existing.sourceUrl
     const sourceUrlChanged = nextSourceUrl !== existing.sourceUrl
-    if (!contentChanged && !titleChanged && !summaryChanged && !tagsChanged && !parentIdChanged && !audioIdChanged && !sourceUrlChanged) {
+    const nextVoiceSummary = patch.voiceSummary !== undefined ? patch.voiceSummary : existing.voiceSummary
+    const voiceSummaryChanged = nextVoiceSummary !== existing.voiceSummary
+    const nextVoiceSegmentsJson =
+      patch.voiceSegmentsJson !== undefined ? patch.voiceSegmentsJson : existing.voiceSegmentsJson
+    const voiceSegmentsChanged = nextVoiceSegmentsJson !== existing.voiceSegmentsJson
+    const nextVoiceTranscribeStatus =
+      patch.voiceTranscribeStatus !== undefined ? patch.voiceTranscribeStatus : existing.voiceTranscribeStatus
+    const voiceStatusChanged = nextVoiceTranscribeStatus !== existing.voiceTranscribeStatus
+    if (!contentChanged && !titleChanged && !summaryChanged && !tagsChanged && !parentIdChanged && !audioIdChanged &&
+      !sourceUrlChanged && !voiceSummaryChanged && !voiceSegmentsChanged && !voiceStatusChanged) {
       return this.cloneNote(existing)
     }
 
@@ -461,6 +470,9 @@ export class NoteRepository {
     updated.summary = nextSummary
     updated.audioId = nextAudioId
     updated.sourceUrl = nextSourceUrl
+    updated.voiceSummary = nextVoiceSummary
+    updated.voiceSegmentsJson = nextVoiceSegmentsJson
+    updated.voiceTranscribeStatus = nextVoiceTranscribeStatus
     updated.localModified = now
     updated.deleted = false
     updated.deletedAt = 0
@@ -570,14 +582,19 @@ export class NoteRepository {
       userData: existing.userData,
       rsa: existing.rsa,
       imageRefs: nextImageRefs,
-      audioId: existing.audioId,
+      audioId: patch.audioId !== undefined ? patch.audioId : existing.audioId,
       deletedTime: existing.deletedTime,
       type_: existing.type_,
       extractStatus: patch.status ?? existing.extractStatus,
       extractJobId: patch.jobId ?? existing.extractJobId,
       extractError: patch.error ?? existing.extractError,
       extractedAt: patch.extractedAt ?? existing.extractedAt,
-      extractProgress: patch.progress ?? existing.extractProgress
+      extractProgress: patch.progress ?? existing.extractProgress,
+      voiceSummary: patch.voiceSummary !== undefined ? patch.voiceSummary : existing.voiceSummary,
+      voiceSegmentsJson: existing.voiceSegmentsJson,
+      voiceTranscribeStatus: patch.voiceTranscribeStatus !== undefined
+        ? patch.voiceTranscribeStatus
+        : existing.voiceTranscribeStatus
     }
     await FileService.getInstance().writeNoteFile(updated)
     await DatabaseService.getInstance().upsertSyncState(this.toSyncState(updated))
@@ -650,6 +667,8 @@ export class NoteRepository {
     try {
       const job = await LinkExtractClient.getInstance().getJob(jobId)
       if (job.status === 'succeeded' && job.result !== null) {
+        const result = job.result
+        const isVideo = result.mediaKind === 'video' || result.audioId.trim().length > 0
         return await this.updateExtractInfo({
           noteId: id,
           jobId: job.jobId,
@@ -657,10 +676,15 @@ export class NoteRepository {
           title: job.result.title.length > 0 ? job.result.title : note.title,
           content: job.result.content.length > 0 ? job.result.content : note.content,
           extractedAt: job.finishedAt ?? job.updatedAt,
-          progress: 1.0
+          progress: 1.0,
+          audioId: result.audioId.trim().length > 0 ? result.audioId.trim() : undefined,
+          voiceSummary: isVideo ? result.voiceSummary : undefined,
+          voiceTranscribeStatus: isVideo ? 'succeeded' : undefined
         })
       }
       if (job.status === 'partial' && job.result !== null) {
+        const result = job.result
+        const isVideo = result.mediaKind === 'video' || result.audioId.trim().length > 0
         return await this.updateExtractInfo({
           noteId: id,
           jobId: job.jobId,
@@ -669,15 +693,20 @@ export class NoteRepository {
           content: job.result.content.length > 0 ? job.result.content : note.content,
           extractedAt: job.finishedAt ?? job.updatedAt,
           progress: 1.0,
-          error: job.error?.code ?? ''
+          error: job.error?.code ?? '',
+          audioId: result.audioId.trim().length > 0 ? result.audioId.trim() : undefined,
+          voiceSummary: isVideo ? result.voiceSummary : undefined,
+          voiceTranscribeStatus: isVideo ? 'succeeded' : undefined
         })
       }
       if (job.status === 'failed') {
+        const isVideoNote = (note.audioId ?? '').trim().length > 0
         return await this.updateExtractInfo({
           noteId: id,
           jobId: job.jobId,
           status: 'failed',
-          error: job.error?.code ?? 'extract_failed'
+          error: job.error?.code ?? 'extract_failed',
+          voiceTranscribeStatus: isVideoNote ? 'failed' : undefined
         })
       }
     } catch (e) {
@@ -1190,7 +1219,10 @@ export class NoteRepository {
       extractJobId: base.extractJobId,
       extractError: base.extractError,
       extractedAt: base.extractedAt,
-      extractProgress: base.extractProgress
+      extractProgress: base.extractProgress,
+      voiceSummary: base.voiceSummary,
+      voiceSegmentsJson: base.voiceSegmentsJson,
+      voiceTranscribeStatus: base.voiceTranscribeStatus
     }
   }
 
@@ -1251,7 +1283,10 @@ export class NoteRepository {
       extractJobId: state.extractJobId,
       extractError: state.extractError,
       extractedAt: state.extractedAt,
-      extractProgress: state.extractProgress
+      extractProgress: state.extractProgress,
+      voiceSummary: state.voiceSummary,
+      voiceSegmentsJson: state.voiceSegmentsJson,
+      voiceTranscribeStatus: state.voiceTranscribeStatus
     }
     if (state.extractJobId.length > 0 && note.extractJobId.length === 0) {
       Logger.warn('LinkExtractDebug',
@@ -1334,7 +1369,10 @@ export class NoteRepository {
       extractJobId: note.extractJobId,
       extractError: note.extractError,
       extractedAt: note.extractedAt,
-      extractProgress: note.extractProgress
+      extractProgress: note.extractProgress,
+      voiceSummary: note.voiceSummary,
+      voiceSegmentsJson: note.voiceSegmentsJson,
+      voiceTranscribeStatus: note.voiceTranscribeStatus
     }
   }
 

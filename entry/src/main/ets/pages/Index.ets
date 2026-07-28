@@ -1,5 +1,6 @@
 import type { Note, SyncResult, SyncStatus } from '../common/model/Note'
 import { isExtractStatusPending } from '../common/model/Note'
+import { AudioConstants } from '../common/constants/AudioConstants'
 import { DrawerModel } from '../common/model/DrawerModel'
 import { HomeDrawerLayer } from './HomeDrawerLayer'
 import { IndexNotesDataSource } from './IndexNotesDataSource'
@@ -604,6 +605,17 @@ struct Index {
     }
   }
 
+  private async openVoiceNote(): Promise<void> {
+    try {
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/VoiceNote'
+      })
+    } catch (error) {
+      console.error(JSON.stringify(error))
+      this.showUserMessage(this.formatActionError('打开语音笔记', error))
+    }
+  }
+
   private onHomeNoteTabPressed(): void {
     if (this.searchExpanded) {
       this.searchExpanded = false
@@ -617,7 +629,7 @@ struct Index {
       this.searchExpanded = false
       return
     }
-    void this.openEditor(undefined, false, 'voiceMemo')
+    void this.openVoiceNote()
   }
 
   private onHomeTodoTabPressed(): void {
@@ -893,6 +905,18 @@ struct Index {
     if (note.type_ === 2) {
       const q = this.searchQuery.trim()
       await this.openFlowchart(note.id, q)
+      return
+    }
+    if (`${note.audioId ?? ''}`.trim().length > 0) {
+      try {
+        await this.getUIContext().getRouter().pushUrl({
+          url: 'pages/VoiceNoteDetail',
+          params: { noteId: note.id }
+        })
+      } catch (error) {
+        console.error(JSON.stringify(error))
+        this.showUserMessage(this.formatActionError('打开语音笔记', error))
+      }
       return
     }
     const hasBody = `${note.content ?? ''}`.trim().length > 0
@@ -1223,7 +1247,7 @@ struct Index {
             .backgroundColor($r('app.color.surface_muted'))
             .borderRadius(22)
             .onClick(() => {
-              void this.openEditor(undefined, false, 'voiceMemo')
+              void this.openVoiceNote()
             })
           Button(LocaleService.loc('写笔记', 'Write a note', 'ノートを書く'))
             .layoutWeight(1)
@@ -1571,6 +1595,21 @@ struct Index {
     }
     if (!(await AiNoteBackgroundTaskService.getInstance().ensureNoPendingExtractOrNotify())) {
       return
+    }
+    if (LinkExtractClient.isVideoPlatformUrl(url)) {
+      const ok = await SyncService.getInstance().isQingyuCloudAvailableForVideoExtract()
+      if (!ok) {
+        this.showUserMessage(LocaleService.loc(
+          '视频链接提取需要登录并启用轻羽云同步',
+          'Video link extract requires login and Qingyu Cloud sync',
+          '動画リンク抽出にはログインとQingyu Cloud同期が必要です'
+        ))
+        return
+      }
+      await NoteRepository.getInstance().saveDraft(note.id, {
+        audioId: AudioConstants.audioFileNameForVideoNote(note.id),
+        voiceTranscribeStatus: 'running'
+      })
     }
     await NoteRepository.getInstance().updateExtractInfo({
       noteId: note.id,

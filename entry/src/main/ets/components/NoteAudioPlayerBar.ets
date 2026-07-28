@@ -64,7 +64,7 @@ export struct NoteAudioPlayerBar {
         this.positionMs = position
         this.durationMs = duration
       },
-      (isPlaying: boolean): void => {
+      (isPlaying: boolean, _completed: boolean): void => {
         this.playing = isPlaying
       }
     )

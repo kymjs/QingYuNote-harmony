@@ -129,6 +129,31 @@ export async function updateSharePreviewImageLayoutVp(
   }
 }
 
+export async function sharePlainText(
+  context: common.UIAbilityContext,
+  text: string
+): Promise<boolean> {
+  const trimmed = text.trim()
+  if (trimmed.length === 0) {
+    return false
+  }
+  try {
+    const shareData: systemShare.SharedData = new systemShare.SharedData({
+      utd: utd.UniformDataType.PLAIN_TEXT,
+      content: trimmed
+    })
+    const controller: systemShare.ShareController = new systemShare.ShareController(shareData)
+    await controller.show(context, {
+      selectionMode: systemShare.SelectionMode.SINGLE,
+      previewMode: systemShare.SharePreviewMode.DEFAULT
+    })
+    return true
+  } catch (error) {
+    Logger.error('NoteEditShareHelper', `sharePlainText failed: ${JSON.stringify(error)}`)
+    return false
+  }
+}
+
 export async function sharePngFromCachePath(
   context: common.UIAbilityContext,
   cachePath: string

@@ -250,7 +250,10 @@ export class FileService {
       extractJobId: state.extractJobId,
       extractError: state.extractError,
       extractedAt: state.extractedAt,
-      extractProgress: state.extractProgress
+      extractProgress: state.extractProgress,
+      voiceSummary: state.voiceSummary,
+      voiceSegmentsJson: state.voiceSegmentsJson,
+      voiceTranscribeStatus: state.voiceTranscribeStatus
     })
   }
 
