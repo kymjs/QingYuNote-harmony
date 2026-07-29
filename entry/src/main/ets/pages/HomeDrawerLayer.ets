@@ -286,7 +286,7 @@ export struct HomeDrawerLayer {
       .layoutWeight(1)
       .align(Alignment.TopStart)
       .width('100%')
-      .scrollBar(BarState.Auto)
+      .scrollBar(BarState.Off)
 
       Divider()
         .strokeWidth(1)

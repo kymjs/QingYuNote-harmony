@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit'
+import { SymbolGlyphModifier } from '@kit.ArkUI'
 import { AudioConstants } from '../common/constants/AudioConstants'
 import { Note, isExtractStatusPending } from '../common/model/Note'
 import { ensureAiMembershipAccess } from '../common/utils/AiMembershipGateNavigation'
@@ -14,6 +15,7 @@ import { NoteShareExportFlow, type ShareExportDelegate } from '../common/utils/N
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { VoiceSegmentSplitter, VoiceTranscriptSegment } from '../common/utils/VoiceSegmentSplitter'
+import { NoteEditMarkdownBlocksView } from './NoteEditMarkdownBlocksView'
 import { NoteEditShareExportMount } from '../components/NoteEditShareExportMount'
 import { NoteEditSharePreviewOverlay } from '../components/NoteEditSharePreviewOverlay'
 import { NoteEditTagChip, NoteEditTagDropdown } from '../components/NoteEditTagDropdown'
@@ -52,6 +54,7 @@ struct VoiceNoteDetail {
   @State private note: Note | null = null
   @State private title: string = ''
   @State private titleEditing: boolean = false
+  @State private converting: boolean = false
   @State private noteTags: string[] = []
   @State private tagPool: string[] = []
   @State private tagMenuVisible: boolean = false
@@ -76,6 +79,10 @@ struct VoiceNoteDetail {
   @State private contentTabIndex: number = 0
   @State private aiWorking: boolean = false
   @State private aiWorkingOverlayMessage: string = 'AI 处理中…'
+  /** 外层 Scroll 视口高；TabBar 高；吸顶后 Swiper = viewport - tabBar。 */
+  @State private scrollViewportH: number = 0
+  @State private tabBarH: number = 48
+  @State private stickyHeaderH: number = 0
 
   @State private shareProfile: ProfileBody | null = null
   @State private previewBlocksState: MarkdownBlock[] = []
@@ -123,6 +130,9 @@ struct VoiceNoteDetail {
   }
 
   private swiperController: SwiperController = new SwiperController()
+  private outerScroller: Scroller = new Scroller()
+  private lastOuterOffsetY: number = 0
+  private lastStickyLogKey: string = ''
 
   private shouldBlockForExtractOrAudio(): boolean {
     const n = this.note
@@ -705,6 +715,109 @@ struct VoiceNoteDetail {
     return current.content
   }
 
+  /** 解析「转为普通笔记」正文：摘要 Tab 用摘要（空则回退全文）；否则用全文。空则返回 null。 */
+  private resolveConvertBody(): string | null {
+    const current = this.note
+    if (current === null) {
+      return null
+    }
+    if (this.hasSummary() && this.contentTabIndex === 1) {
+      const summary = current.voiceSummary.trim()
+      if (summary.length > 0) {
+        return summary
+      }
+      const content = current.content.trim()
+      if (content.length === 0) {
+        return null
+      }
+      return content
+    }
+    const content = current.content.trim()
+    if (content.length === 0) {
+      return null
+    }
+    return content
+  }
+
+  private beginEditTitle(): void {
+    this.titleEditing = true
+  }
+
+  private async handleConvertToNormalNote(): Promise<void> {
+    if (this.converting) {
+      return
+    }
+    const current = this.note
+    if (current === null) {
+      return
+    }
+    const body = this.resolveConvertBody()
+    if (body === null) {
+      this.showToast(LocaleService.loc('笔记内容为空', 'Note content is empty', 'ノート内容が空です'))
+      return
+    }
+    this.converting = true
+    try {
+      const created = await NoteRepository.getInstance().createNote({
+        title: current.title,
+        content: body,
+        tags: [...current.tags],
+        skipTitleAutoFill: true
+      })
+      const parentId = (current.parentId ?? '').trim()
+      if (parentId.length > 0) {
+        await NoteRepository.getInstance().saveDraft(created.id, {
+          parentId: parentId
+        })
+      }
+      if (!this.lifecycle.isActive()) {
+        return
+      }
+      this.showToast(LocaleService.loc('已创建新笔记', 'Note created', 'ノートを作成しました'))
+    } catch (error) {
+      Logger.error('VoiceNoteDetail', `convertToNormalNote failed: ${JSON.stringify(error)}`)
+      if (this.lifecycle.isActive()) {
+        this.showToast(LocaleService.loc('创建失败，请稍后重试', 'Create failed, please try again',
+          '作成に失敗しました。後でもう一度お試しください'))
+      }
+    } finally {
+      if (this.lifecycle.isActive()) {
+        this.converting = false
+      }
+    }
+  }
+
+  private buildVoiceDetailMoreMenuItems(): Array<MenuElement> {
+    const items: Array<MenuElement> = [
+      {
+        value: LocaleService.loc('分享', 'Share', '共有'),
+        symbolIcon: new SymbolGlyphModifier($r('sys.symbol.share')),
+        action: (): void => {
+          if (this.note !== null) {
+            void this.handleShare()
+          }
+        }
+      },
+      {
+        value: LocaleService.loc('修改标题', 'Edit title', 'タイトルを変更'),
+        symbolIcon: new SymbolGlyphModifier($r('sys.symbol.square_and_pencil')),
+        action: (): void => {
+          this.beginEditTitle()
+        }
+      },
+      {
+        value: LocaleService.loc('转为普通笔记', 'Convert to note', '通常ノートに変換'),
+        symbolIcon: new SymbolGlyphModifier($r('sys.symbol.doc_text')),
+        action: (): void => {
+          if (!this.converting) {
+            void this.handleConvertToNormalNote()
+          }
+        }
+      }
+    ]
+    return items
+  }
+
   private refreshSharePreviewBlocks(content: string): void {
     this.shareBodyMd = content
     this.previewBlocksState = MarkdownUtils.parseBlocks(content)
@@ -1013,7 +1126,7 @@ struct VoiceNoteDetail {
 
   @Builder
   private buildHeader() {
-    // 与关于页一致：左侧圆角返回、标题区 layoutWeight；本页右侧保留分享。
+    // 与关于页一致：左侧圆角返回、标题区 layoutWeight；移动端右侧「更多」菜单。
     Row() {
       Row() {
         SymbolGlyph($r('sys.symbol.arrow_left'))
@@ -1046,9 +1159,10 @@ struct VoiceNoteDetail {
       .justifyContent(FlexAlign.Start)
 
       Row() {
-        SymbolGlyph($r('sys.symbol.share'))
+        SymbolGlyph($r('sys.symbol.more'))
           .fontSize(18)
           .fontColor([$r('app.color.primary_text')])
+          .bindMenu(this.buildVoiceDetailMoreMenuItems())
       }
       .height('100%')
       .padding({
@@ -1057,11 +1171,7 @@ struct VoiceNoteDetail {
       })
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
-      .onClick((): void => {
-        if (this.note !== null) {
-          void this.handleShare()
-        }
-      })
+      .enabled(this.note !== null)
     }
     .width('100%')
     .height($r('app.float.toolbar_height'))
@@ -1071,17 +1181,17 @@ struct VoiceNoteDetail {
   @Builder
   private buildTitleBlock() {
     if (this.titleEditing) {
-      // 大号粗体标题 + 光标需要足够行盒高度；padding(0) 会裁切首字顶部与 caret。
+      // 浅色底 + 描边高亮，强调可编辑；caret 使用 accent。
       TextInput({ text: this.title })
         .width('100%')
         .height(48)
         .fontSize(22)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.primary_text'))
-        .backgroundColor(Color.Transparent)
-        .padding({ left: 0, right: 0, top: 8, bottom: 8 })
-        .border({ width: 0 })
-        .borderRadius(0)
+        .backgroundColor($r('app.color.surface_muted'))
+        .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+        .border({ width: 1.5, color: $r('app.color.accent') })
+        .borderRadius(8)
         .showUnderline(false)
         .caretColor($r('app.color.accent'))
         .clip(false)
@@ -1104,7 +1214,7 @@ struct VoiceNoteDetail {
         .width('100%')
         .lineHeight(30)
         .onClick((): void => {
-          this.titleEditing = true
+          this.beginEditTitle()
         })
     }
   }
@@ -1239,68 +1349,167 @@ struct VoiceNoteDetail {
     .padding({ top: 10 })
   }
 
+  private swiperContentHeight(): number {
+    const tabH = this.tabBarH > 0 ? this.tabBarH : 48
+    const h = this.scrollViewportH - tabH
+    return h > 120 ? h : 280
+  }
+
+  private logStickyMetrics(reason: string): void {
+    const key =
+      `${reason}|${Math.round(this.scrollViewportH)}|${Math.round(this.tabBarH)}|` +
+      `${Math.round(this.stickyHeaderH)}|${Math.round(this.swiperContentHeight())}|` +
+      `${Math.round(this.lastOuterOffsetY)}`
+    if (key === this.lastStickyLogKey) {
+      return
+    }
+    this.lastStickyLogKey = key
+    Logger.info(
+      'VoiceSticky',
+      `${reason} viewportH=${this.scrollViewportH.toFixed(1)} tabBarH=${this.tabBarH.toFixed(1)} ` +
+        `headerH=${this.stickyHeaderH.toFixed(1)} swiperH=${this.swiperContentHeight().toFixed(1)} ` +
+        `offsetY=${this.lastOuterOffsetY.toFixed(1)} metaOff=${this.lastOuterOffsetY + 0.5 >= this.stickyHeaderH}`
+    )
+  }
+
+  private onOuterScroll(): void {
+    const y = this.outerScroller.currentOffset().yOffset
+    this.lastOuterOffsetY = y
+    this.logStickyMetrics('outerScroll')
+  }
+
+  private lastEarlyHandoffLogMs: number = 0
+
+  private onInnerListScroll(source: string): void {
+    if (this.stickyHeaderH <= 0 || this.lastOuterOffsetY + 0.5 >= this.stickyHeaderH) {
+      return
+    }
+    const now = Date.now()
+    if (now - this.lastEarlyHandoffLogMs < 800) {
+      return
+    }
+    this.lastEarlyHandoffLogMs = now
+    Logger.warn(
+      'VoiceSticky',
+      `earlyHandoff source=${source} offsetY=${this.lastOuterOffsetY.toFixed(1)} ` +
+        `headerH=${this.stickyHeaderH.toFixed(1)} (meta still on screen)`
+    )
+  }
+
   @Builder
-  private buildSegmentList() {
-    Column() {
-      ForEach(this.segments(), (segment: VoiceTranscriptSegment, index: number) => {
-        Row() {
-          Text(this.formatClock(segment.startMs))
-            .fontSize(12)
-            .fontColor($r('app.color.secondary_text'))
-            .width(48)
-          Text(segment.text)
-            .fontSize(15)
-            .fontColor(this.playing && index === this.activeSegmentIndex()
-              ? $r('app.color.accent')
-              : $r('app.color.primary_text'))
-            .fontWeight(this.playing && index === this.activeSegmentIndex()
-              ? FontWeight.Medium
-              : FontWeight.Normal)
-            .lineHeight(23)
-            .layoutWeight(1)
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Top)
-        .padding({ top: 8, bottom: 8 })
-        .onClick((): void => {
-          this.onSegmentTap(segment)
-        })
-      }, (segment: VoiceTranscriptSegment, index: number) =>
-        `seg_${index}_${segment.startMs}`)
+  private buildSegmentListItem(segment: VoiceTranscriptSegment, index: number) {
+    Row() {
+      Text(this.formatClock(segment.startMs))
+        .fontSize(12)
+        .fontColor($r('app.color.secondary_text'))
+        .width(48)
+      Text(segment.text)
+        .fontSize(15)
+        .fontColor(this.playing && index === this.activeSegmentIndex()
+          ? $r('app.color.accent')
+          : $r('app.color.primary_text'))
+        .fontWeight(this.playing && index === this.activeSegmentIndex()
+          ? FontWeight.Medium
+          : FontWeight.Normal)
+        .lineHeight(23)
+        .layoutWeight(1)
     }
     .width('100%')
-    .margin({ top: 12 })
+    .alignItems(VerticalAlign.Top)
+    .padding({ top: 8, bottom: 8 })
+    .onClick((): void => {
+      this.onSegmentTap(segment)
+    })
   }
 
   @Builder
-  private buildTranscriptBody() {
-    if (this.shouldShowTranscribeFailure()) {
-      Text(LocaleService.loc(
-        '语音转文字失败，请稍后重试',
-        'Speech-to-text failed; try again',
-        '音声認識に失敗しました。後でもう一度お試しください'
-      ))
-        .fontSize(15)
-        .fontColor($r('app.color.secondary_text'))
-        .margin({ top: 20 })
-    } else if (this.segments().length === 0) {
-      Text(this.transcriptPlainText())
-        .fontSize(15)
-        .fontColor($r('app.color.primary_text'))
-        .lineHeight(24)
-        .margin({ top: 16 })
-    } else {
-      this.buildSegmentList()
+  private buildTranscriptList() {
+    List() {
+      if (this.shouldShowTranscribeFailure()) {
+        ListItem() {
+          Text(LocaleService.loc(
+            '语音转文字失败，请稍后重试',
+            'Speech-to-text failed; try again',
+            '音声認識に失敗しました。後でもう一度お試しください'
+          ))
+            .fontSize(15)
+            .fontColor($r('app.color.secondary_text'))
+            .margin({ top: 20 })
+        }
+      } else if (this.segments().length === 0) {
+        ListItem() {
+          Text(this.transcriptPlainText())
+            .fontSize(15)
+            .fontColor($r('app.color.primary_text'))
+            .lineHeight(24)
+            .width('100%')
+            .margin({ top: 16 })
+        }
+      } else {
+        ForEach(this.segments(), (segment: VoiceTranscriptSegment, index: number) => {
+          ListItem() {
+            this.buildSegmentListItem(segment, index)
+          }
+        }, (segment: VoiceTranscriptSegment, index: number) =>
+          `seg_${index}_${segment.startMs}`)
+      }
+      ListItem() {
+        Column()
+          .width('100%')
+          .height(120)
+      }
     }
+    .width('100%')
+    .height('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .nestedScroll({
+      scrollForward: NestedScrollMode.PARENT_FIRST,
+      scrollBackward: NestedScrollMode.SELF_FIRST
+    })
+    .onDidScroll((_scrollOffset: number, _scrollState: ScrollState): void => {
+      this.onInnerListScroll('transcript')
+    })
   }
 
   @Builder
-  private buildSummaryBody() {
-    Text(this.note?.voiceSummary ?? '')
-      .fontSize(15)
-      .fontColor($r('app.color.primary_text'))
-      .lineHeight(24)
-      .margin({ top: 16 })
+  private buildSummaryList() {
+    List() {
+      ListItem() {
+        Column() {
+          NoteEditMarkdownBlocksView({
+            blocks: MarkdownUtils.parseBlocks(this.note?.voiceSummary ?? ''),
+            filesDirCache: this.filesDirCache,
+            onLinkToast: (href: string): void => {
+              this.showToast(href)
+            },
+            onCheckboxToggle: (_lineIndex: number, _checked: boolean): void => {
+            },
+            onImageTap: (_src: string): void => {
+            }
+          })
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+        .margin({ top: 16 })
+      }
+      ListItem() {
+        Column()
+          .width('100%')
+          .height(120)
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .nestedScroll({
+      scrollForward: NestedScrollMode.PARENT_FIRST,
+      scrollBackward: NestedScrollMode.SELF_FIRST
+    })
+    .onDidScroll((_scrollOffset: number, _scrollState: ScrollState): void => {
+      this.onInnerListScroll('summary')
+    })
   }
 
   @Builder
@@ -1346,35 +1555,57 @@ struct VoiceNoteDetail {
       })
     }
     .width('100%')
-    .margin({ top: 16 })
+    .padding({ top: 16 })
+    .backgroundColor($r('app.color.app_background'))
+    .onAreaChange((_: Area, area: Area) => {
+      const h = Number.parseFloat(`${area.height}`) || 0
+      if (h > 0 && Math.abs(h - this.tabBarH) >= 1) {
+        this.tabBarH = h
+        this.logStickyMetrics('tabBarH')
+      }
+    })
   }
 
   @Builder
   private buildTabbedContent() {
+    // TabBar 自然高 + Swiper 固定高(viewport-tabBar)；头部(含 meta)滚尽后仅 Tab 吸顶。
     Column() {
       this.buildTabBar()
       Swiper(this.swiperController) {
-        Column() {
-          this.buildTranscriptBody()
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-
-        Column() {
-          this.buildSummaryBody()
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
+        this.buildTranscriptList()
+        this.buildSummaryList()
       }
       .index(this.contentTabIndex)
       .indicator(false)
       .loop(false)
-      .height(Math.max(280, this.pageHeight * 0.45))
+      .width('100%')
+      .height(this.swiperContentHeight())
       .onChange((index: number): void => {
         this.contentTabIndex = index
       })
     }
     .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  private buildStickyHeaderBlock() {
+    Column() {
+      this.buildTitleBlock()
+      this.buildTagChips()
+      this.buildPlayer()
+      this.buildMeta()
+    }
+    .width('100%')
+    .padding({ top: 15 })
+    .alignItems(HorizontalAlign.Start)
+    .onAreaChange((_: Area, area: Area) => {
+      const h = Number.parseFloat(`${area.height}`) || 0
+      if (h > 0 && Math.abs(h - this.stickyHeaderH) >= 1) {
+        this.stickyHeaderH = h
+        this.logStickyMetrics('headerH')
+      }
+    })
   }
 
   @Builder
@@ -1541,28 +1772,85 @@ struct VoiceNoteDetail {
           .width('100%')
           .justifyContent(FlexAlign.Center)
         } else {
-          Scroll() {
+          // 外层 Scroll 滚完 header(含 meta) 后 Tab 吸顶；Swiper 高=viewport-tabBar。
+          Scroll(this.outerScroller) {
             Column() {
-              this.buildTitleBlock()
-              this.buildTagChips()
-              this.buildPlayer()
-              this.buildMeta()
+              this.buildStickyHeaderBlock()
               if (this.hasSummary()) {
                 this.buildTabbedContent()
               } else {
-                this.buildTranscriptBody()
+                List() {
+                  // 无摘要：单 List 占满剩余视口，同样 PARENT_FIRST。
+                  if (this.shouldShowTranscribeFailure()) {
+                    ListItem() {
+                      Text(LocaleService.loc(
+                        '语音转文字失败，请稍后重试',
+                        'Speech-to-text failed; try again',
+                        '音声認識に失敗しました。後でもう一度お試しください'
+                      ))
+                        .fontSize(15)
+                        .fontColor($r('app.color.secondary_text'))
+                        .margin({ top: 20 })
+                    }
+                  } else if (this.segments().length === 0) {
+                    ListItem() {
+                      Text(this.transcriptPlainText())
+                        .fontSize(15)
+                        .fontColor($r('app.color.primary_text'))
+                        .lineHeight(24)
+                        .width('100%')
+                        .margin({ top: 16 })
+                    }
+                  } else {
+                    ForEach(this.segments(), (segment: VoiceTranscriptSegment, index: number) => {
+                      ListItem() {
+                        this.buildSegmentListItem(segment, index)
+                      }
+                    }, (segment: VoiceTranscriptSegment, index: number) =>
+                      `seg_${index}_${segment.startMs}`)
+                  }
+                  ListItem() {
+                    Column()
+                      .width('100%')
+                      .height(120)
+                  }
+                }
+                .width('100%')
+                .height(this.scrollViewportH > 120 ? this.scrollViewportH : 280)
+                .scrollBar(BarState.Off)
+                .edgeEffect(EdgeEffect.Spring)
+                .nestedScroll({
+                  scrollForward: NestedScrollMode.PARENT_FIRST,
+                  scrollBackward: NestedScrollMode.SELF_FIRST
+                })
+                .onDidScroll((_scrollOffset: number, _scrollState: ScrollState): void => {
+                  this.onInnerListScroll('transcriptOnly')
+                })
               }
-              Blank().height(120)
             }
             .width('100%')
-            .padding({ top: 15 })
             .alignItems(HorizontalAlign.Start)
             .justifyContent(FlexAlign.Start)
           }
           .align(Alignment.TopStart)
           .layoutWeight(1)
           .width('100%')
-          .scrollBar(BarState.Auto)
+          .scrollBar(BarState.Off)
+          .edgeEffect(EdgeEffect.Spring)
+          .onAreaChange((_: Area, area: Area) => {
+            const h = Number.parseFloat(`${area.height}`) || 0
+            if (h > 0 && Math.abs(h - this.scrollViewportH) >= 1) {
+              this.scrollViewportH = h
+              this.logStickyMetrics('viewportH')
+            }
+          })
+          .onDidScroll((_scrollOffset: number, _scrollState: ScrollState): void => {
+            this.onOuterScroll()
+          })
+          .onScrollStop((): void => {
+            this.onOuterScroll()
+            this.logStickyMetrics('outerScrollStop')
+          })
         }
       }
       .width('100%')
