@@ -29,6 +29,8 @@
     "pages/Flowchart",
     "pages/AppLockPin",
     "pages/VoiceNote",
-    "pages/VoiceNoteDetail"
+    "pages/VoiceNoteDetail",
+    "pages/LinkExtract",
+    "pages/LinkExtractProgress"
   ]
 }

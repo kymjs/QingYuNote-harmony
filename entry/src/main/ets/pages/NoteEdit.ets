@@ -12,10 +12,6 @@ import {
   buildEditorLinkInsertDialogContent,
   type EditorLinkInsertDialogParams
 } from '../dialogs/EditorLinkInsertDialog'
-import {
-  buildEditorAiLinkExtractDialogContent,
-  type EditorAiLinkExtractDialogParams
-} from '../dialogs/EditorAiLinkExtractDialog'
 import type { Note } from '../common/model/Note'
 import { isExtractStatusPending } from '../common/model/Note'
 import { NoteRepository } from '../services/NoteRepository'
@@ -447,7 +443,7 @@ struct NoteEdit {
         symbolIcon: new SymbolGlyphModifier($r('sys.symbol.link')),
         action: (): void => {
           if (!this.aiNoteWorking) {
-            void this.openAiLinkExtractDialog()
+            void this.openAiLinkExtractPage()
           }
         }
       })
@@ -1112,7 +1108,16 @@ struct NoteEdit {
         if (!this.lifecycle.isActive()) {
           return
         }
-        void this.maybeStartExtractPolling()
+        void this.getUIContext().getRouter().replaceUrl({
+          url: 'pages/LinkExtractProgress',
+          params: {
+            noteId: note.id,
+            kind: 'linkExtract',
+            url: note.sourceUrl.trim()
+          }
+        }).catch((err: Error) => {
+          console.error(`redirect extract progress: ${JSON.stringify(err)}`)
+        })
       }, 0)
     }
   }
@@ -1135,7 +1140,7 @@ struct NoteEdit {
         return
       }
       if (action === 'aiLinkExtract') {
-        void this.openAiLinkExtractDialog(true)
+        void this.openAiLinkExtractPage()
       } else if (action === 'insertImage') {
         void this.insertImage()
       } else if (action === 'generateNoteFromImage') {
@@ -2596,7 +2601,7 @@ struct NoteEdit {
     }
   }
 
-  private async openAiLinkExtractDialog(switchToPreviewOnSuccess: boolean = false): Promise<void> {
+  private async openAiLinkExtractPage(): Promise<void> {
     if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
       return
     }
@@ -2607,37 +2612,15 @@ struct NoteEdit {
     if (!(await svc.ensureNoPendingExtractOrNotify())) {
       return
     }
-    const ui = this.getUIContext()
-    let holder: ComponentContent<EditorAiLinkExtractDialogParams> | undefined = undefined
-    const params: EditorAiLinkExtractDialogParams = {
-      onCancel: (): void => {
-        if (holder !== undefined) {
-          try {
-            ui.getPromptAction().closeCustomDialog(holder)
-          } catch (_) {
-            // ignore
-          }
-        }
-      },
-      onConfirm: (url: string, summarize: number): void => {
-        if (holder !== undefined) {
-          try {
-            ui.getPromptAction().closeCustomDialog(holder)
-          } catch (_) {
-            // ignore
-          }
-        }
-        void this.onAiExtractLink(url, switchToPreviewOnSuccess, summarize)
-      }
-    }
-    holder = new ComponentContent(ui, wrapBuilder(buildEditorAiLinkExtractDialogContent), params)
     try {
-      ui.getPromptAction().openCustomDialog(holder, {
-        alignment: DialogAlignment.Center,
-        autoCancel: false
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/LinkExtract',
+        params: {
+          noteId: this.noteId.length > 0 ? this.noteId : undefined
+        }
       })
     } catch (error) {
-      Logger.warn('NoteEdit', `openAiLinkExtractDialog: ${JSON.stringify(error)}`)
+      Logger.warn('NoteEdit', `openAiLinkExtractPage: ${JSON.stringify(error)}`)
     }
   }
 

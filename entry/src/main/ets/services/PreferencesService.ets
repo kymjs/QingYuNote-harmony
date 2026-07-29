@@ -46,8 +46,6 @@ const BETA_TEST_INVITE_DIALOG_SHOWN_KEY = 'beta_test_invite_dialog_shown'
 const MEMBERSHIP_EXPIRY_REMINDER_LAST_SHOWN_YMD_KEY = 'membership_expiry_reminder_last_shown_ymd'
 /** 与 Flutter `prefAiMembershipGateDialogShownKey` 一致：AI 会员拦截弹窗已展示过则不再弹出 */
 const AI_MEMBERSHIP_GATE_DIALOG_SHOWN_KEY = 'ai_membership_gate_dialog_shown'
-/** 与 Flutter `prefAiLinkExtractSummaryEnabledKey` 一致：AI 提取链接默认摘要（开）或全文（关） */
-const AI_LINK_EXTRACT_SUMMARY_ENABLED_KEY = 'ai_link_extract_summary_enabled'
 /** 与 Flutter `AppConst.prefShareCardThemeKey` 一致 */
 const SHARE_CARD_THEME_KEY = 'share_card_theme'
 /** 与 Flutter `prefThemeModeKey` 一致：`system` | `light` | `dark` */
@@ -788,26 +786,25 @@ export class PreferencesService {
     }
   }
 
-  /** AI 提取链接是否使用摘要模式（默认开启）；`false` 为全文提取。 */
-  async isAiLinkExtractSummaryEnabled(): Promise<boolean> {
+  /** 通用字符串读写（链接提取历史等按 userId 隔离的本地数据）。 */
+  async getPreferenceString(key: string): Promise<string> {
     try {
-      const store = this.ensureStore()
-      return store.getSync(AI_LINK_EXTRACT_SUMMARY_ENABLED_KEY, true) as boolean
+      return `${this.ensureStore().getSync(key, '') ?? ''}`
     } catch (error) {
       Logger.warn('PreferencesService',
-        `isAiLinkExtractSummaryEnabled failed: ${this.describeError(error as Object)}`)
-      return true
+        `getPreferenceString failed: ${this.describeError(error as Object)}`)
+      return ''
     }
   }
 
-  async setAiLinkExtractSummaryEnabled(value: boolean): Promise<void> {
+  async setPreferenceString(key: string, value: string): Promise<void> {
     try {
       const store = this.ensureStore()
-      store.putSync(AI_LINK_EXTRACT_SUMMARY_ENABLED_KEY, value)
+      store.putSync(key, value)
       await store.flush()
     } catch (error) {
       Logger.warn('PreferencesService',
-        `setAiLinkExtractSummaryEnabled failed: ${this.describeError(error as Object)}`)
+        `setPreferenceString failed: ${this.describeError(error as Object)}`)
     }
   }
 

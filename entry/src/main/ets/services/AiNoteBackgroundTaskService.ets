@@ -581,7 +581,7 @@ export class AiNoteBackgroundTaskService {
     this.inFlight = false
     this.activeNoteIdInternal = ''
     this.notifyListeners()
-    return result.success && result.noteId === noteId
+    return result.success && (noteId.trim().length === 0 || result.noteId === noteId.trim())
   }
 
   private notifyListeners(): void {

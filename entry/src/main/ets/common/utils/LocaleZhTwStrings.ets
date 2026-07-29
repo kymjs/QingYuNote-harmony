@@ -617,6 +617,7 @@ export const LOCALE_ZH_TW_MAP: Record<string, string> = {
   '转写文字': '轉寫文字',
   '语音笔记': '語音筆記',
   '转为普通笔记': '轉爲普通筆記',
+  '音频内容': '音頻內容',
   '语音转文字失败，请稍后重试': '語音轉文字失敗，請稍後重試',
   '语音转文字未返回有效内容': '語音轉文字未返回有效內容',
   '说明传到服务端的可能不是 Sign in with Apple 的 identityToken（请勿与其它登录 JWT 混淆）。': '說明傳到服務端的可能不是 Sign in with Apple 的 identityToken（請勿與其它登錄 JWT 混淆）。',

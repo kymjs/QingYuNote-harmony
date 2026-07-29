@@ -617,6 +617,7 @@ export const LOCALE_JA_MAP: Record<string, string> = {
   '转写文字': '文字起こし',
   '语音笔记': '音声ノート',
   '转为普通笔记': '通常ノートに変換',
+  '音频内容': '音声内容',
   '语音转文字失败，请稍后重试': '语音转文字に失敗しました。後でもう一度お試しください',
   '语音转文字未返回有效内容': '语音转文字未返回有效内容',
   '说明传到服务端的可能不是 Sign in with Apple 的 identityToken（请勿与其它登录 JWT 混淆）。': '说明传到服务端的可能不是 Sign in with Apple 的 identityToken（请勿与其它登录 JWT 混淆）。',

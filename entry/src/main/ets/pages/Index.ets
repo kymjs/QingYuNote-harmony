@@ -656,7 +656,11 @@ struct Index {
     if (!(await svc.ensureNoPendingExtractOrNotify())) {
       return
     }
-    await this.openEditor(undefined, false, 'aiLinkExtract')
+    try {
+      await this.getUIContext().getRouter().pushUrl({ url: 'pages/LinkExtract' })
+    } catch (error) {
+      console.error(`open LinkExtract: ${JSON.stringify(error)}`)
+    }
   }
 
   private closeMoreOptionsSheet(): void {
@@ -905,6 +909,29 @@ struct Index {
     if (note.type_ === 2) {
       const q = this.searchQuery.trim()
       await this.openFlowchart(note.id, q)
+      return
+    }
+    if (isExtractStatusPending(note.extractStatus) ||
+      note.extractStatus === 'failed' ||
+      note.voiceTranscribeStatus === 'running' ||
+      note.voiceTranscribeStatus === 'failed') {
+      const kind = note.sourceUrl.trim().length === 0 &&
+        note.extractStatus !== 'failed' &&
+        !isExtractStatusPending(note.extractStatus)
+        ? 'voiceTranscribe'
+        : 'linkExtract'
+      try {
+        await this.getUIContext().getRouter().pushUrl({
+          url: 'pages/LinkExtractProgress',
+          params: {
+            noteId: note.id,
+            kind: kind,
+            url: note.sourceUrl.trim()
+          }
+        })
+      } catch (error) {
+        console.error(`open LinkExtractProgress: ${JSON.stringify(error)}`)
+      }
       return
     }
     if (`${note.audioId ?? ''}`.trim().length > 0) {

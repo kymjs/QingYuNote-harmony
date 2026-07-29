@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit'
+import { pasteboard } from '@kit.BasicServicesKit'
 import { SymbolGlyphModifier } from '@kit.ArkUI'
 import { AudioConstants } from '../common/constants/AudioConstants'
 import { Note, isExtractStatusPending } from '../common/model/Note'
@@ -42,6 +43,13 @@ interface VoiceNoteDetailParams {
   pendingVoicePath?: string
 }
 
+interface TranscriptRowAnchor {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 @Entry
 @Component
 struct VoiceNoteDetail {
@@ -61,9 +69,25 @@ struct VoiceNoteDetail {
   @State private aiTagCreating: boolean = false
   @State private tagBarX: number = 0
   @State private tagBarY: number = 0
-  @State private tagBarWidth: number = 120
-  @State private tagBarHeight: number = 32
-  @State private tagBarInitialized: boolean = false
+  @State private tagBarWidth: number = 36
+  @State private tagBarHeight: number = 36
+  @State private transcriptMenuVisible: boolean = false
+  @State private transcriptMenuIndex: number = -1
+  @State private transcriptMenuX: number = 0
+  @State private transcriptMenuY: number = 0
+  @State private editingSegmentIndex: number = -1
+  @State private editingSegmentText: string = ''
+  /** 进入编辑时锁定的段落高度，保证编辑框与原段落同高。 */
+  @State private editingSegmentHeight: number = 0
+  /** 段落编辑框相对页面顶部的 Y，用于点击外部结束编辑。 */
+  @State private editingSegmentTop: number = 0
+  @State private editingSegmentBottom: number = 0
+  /** 标题编辑 dismiss 遮罩的顶部 Y（标题底边之下，不盖住标题）。 */
+  @State private titleDismissTop: number = 120
+  /** 笔记标题块高度，用于顶栏标题滚动淡入。 */
+  @State private titleBlockH: number = 48
+  /** 顶栏标题透明度：0 隐藏，1 完全显示，随外层滚动连续变化。 */
+  @State private toolbarTitleOpacity: number = 0
   @State private pageWidth: number = 0
   @State private pageHeight: number = 0
 
@@ -110,8 +134,6 @@ struct VoiceNoteDetail {
   private pendingVoicePath: string = ''
   private bootstrapStarted: boolean = false
   private pendingVoiceHandled: boolean = false
-  private lastPanOffsetX: number = 0
-  private lastPanOffsetY: number = 0
   private waveTimer: number = -1
   private initGeneration: number = 0
   private loadedAudioId: string = ''
@@ -121,6 +143,7 @@ struct VoiceNoteDetail {
   private filesDirCache: string = ''
   private extractPollTimer: number = -1
   private lastAudioSyncAttemptMs: number = 0
+  private transcriptRowAnchors: Map<number, TranscriptRowAnchor> = new Map()
 
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
@@ -163,6 +186,36 @@ struct VoiceNoteDetail {
 
   private transcriptPlainText(): string {
     return this.note?.content.trim() ?? ''
+  }
+
+  private renderSegments(): VoiceTranscriptSegment[] {
+    const timed = this.segments()
+    if (timed.length > 0) {
+      return timed
+    }
+    const content = this.transcriptPlainText()
+    if (content.length === 0) {
+      return []
+    }
+    const parts = content
+      .split(/\n\s*\n|\n/g)
+      .map((part: string) => part.trim())
+      .filter((part: string) => part.length > 0)
+    return parts.map((part: string, index: number): VoiceTranscriptSegment => ({
+      startMs: index === 0 ? 0 : index * 1000,
+      text: part
+    }))
+  }
+
+  private transcriptMenuTarget(): VoiceTranscriptSegment | null {
+    if (!this.transcriptMenuVisible || this.transcriptMenuIndex < 0) {
+      return null
+    }
+    const segs = this.renderSegments()
+    if (this.transcriptMenuIndex >= segs.length) {
+      return null
+    }
+    return segs[this.transcriptMenuIndex]
   }
 
   aboutToAppear(): void {
@@ -232,9 +285,65 @@ struct VoiceNoteDetail {
       return
     }
     this.bootstrapStarted = true
+
+    const n = this.note
+    if (n !== null && this.shouldOpenLinkExtractProgress(n)) {
+      const kind = n.sourceUrl.trim().length === 0 &&
+        !isExtractStatusPending(n.extractStatus) &&
+        n.extractStatus !== 'failed'
+        ? 'voiceTranscribe'
+        : 'linkExtract'
+      try {
+        await this.getUIContext().getRouter().replaceUrl({
+          url: 'pages/LinkExtractProgress',
+          params: {
+            noteId: this.noteId,
+            kind: kind,
+            url: n.sourceUrl.trim()
+          }
+        })
+      } catch (error) {
+        console.error(`redirect LinkExtractProgress: ${JSON.stringify(error)}`)
+      }
+      return
+    }
+
+    const pending = this.pendingVoicePath.trim()
+    if (pending.length > 0 && !this.pendingVoiceHandled) {
+      this.pendingVoiceHandled = true
+      this.pendingVoicePath = ''
+      if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+        return
+      }
+      void AiNoteBackgroundTaskService.getInstance().runVoiceTranscribe(this.noteId, pending)
+      try {
+        await this.getUIContext().getRouter().replaceUrl({
+          url: 'pages/LinkExtractProgress',
+          params: {
+            noteId: this.noteId,
+            kind: 'voiceTranscribe',
+            url: ''
+          }
+        })
+      } catch (error) {
+        console.error(`redirect voice progress: ${JSON.stringify(error)}`)
+      }
+      return
+    }
+
     await this.refreshTagPool()
     await this.ensureVoicePipeline()
     this.ensureExtractOrAudioPoll()
+  }
+
+  private shouldOpenLinkExtractProgress(n: Note): boolean {
+    if (isExtractStatusPending(n.extractStatus) || n.extractStatus === 'failed') {
+      return true
+    }
+    if (n.voiceTranscribeStatus === 'running' || n.voiceTranscribeStatus === 'failed') {
+      return true
+    }
+    return false
   }
 
   private clearExtractPollTimer(): void {
@@ -325,19 +434,7 @@ struct VoiceNoteDetail {
     }
     const pending = this.pendingVoicePath.trim()
     if (pending.length > 0 && !this.pendingVoiceHandled) {
-      this.pendingVoiceHandled = true
-      this.pendingVoicePath = ''
-      if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
-        return
-      }
-      this.aiWorking = true
-      this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 处理中…', 'AI processing…', 'AI処理中…')
-      const svc = AiNoteBackgroundTaskService.getInstance()
-      await svc.runVoiceTranscribe(this.noteId, pending)
-      if (!this.lifecycle.isActive()) {
-        return
-      }
-      await this.reloadNote(true)
+      // 新录音转写已在 bootstrap 中跳转进度页。
       return
     }
 
@@ -516,7 +613,7 @@ struct VoiceNoteDetail {
   }
 
   private activeSegmentIndex(): number {
-    const segs = this.segments()
+    const segs = this.renderSegments()
     if (segs.length === 0) {
       return -1
     }
@@ -551,13 +648,9 @@ struct VoiceNoteDetail {
     })
   }
 
-  private onSegmentTap(segment: VoiceTranscriptSegment): void {
-    const segs = this.segments()
-    const index = segs.findIndex((s: VoiceTranscriptSegment) =>
-      s.startMs === segment.startMs && s.text === segment.text)
-    const active = this.playing ? this.activeSegmentIndex() : -1
-    if (this.playing && index === active) {
-      void this.playbackService.pause()
+  private playFromSegment(segment: VoiceTranscriptSegment): void {
+    this.closeTranscriptMenu()
+    if (this.editingSegmentIndex >= 0) {
       return
     }
     void this.playbackService.seekTo(segment.startMs).then((): void => {
@@ -581,6 +674,138 @@ struct VoiceNoteDetail {
       return
     }
     await this.reloadNote(false)
+  }
+
+  private closeTranscriptMenu(): void {
+    this.transcriptMenuVisible = false
+    this.transcriptMenuIndex = -1
+  }
+
+  private showTranscriptMenu(index: number): void {
+    const menuWidth = 300
+    const menuHeight = 62
+    const anchor = this.transcriptRowAnchors.get(index)
+    const fallbackX = Math.max(12, (this.pageWidth - menuWidth) / 2)
+    const fallbackY = Math.max(72, this.pageHeight * 0.24)
+    this.transcriptMenuIndex = index
+    this.transcriptMenuVisible = true
+    this.transcriptMenuX = anchor
+      ? Math.max(12, Math.min(anchor.x + (anchor.width - menuWidth) / 2, this.pageWidth - menuWidth - 12))
+      : fallbackX
+    this.transcriptMenuY = anchor
+      ? Math.max(12, Math.min(anchor.y - menuHeight - 16, this.pageHeight - menuHeight - 18))
+      : fallbackY
+  }
+
+  private recordTranscriptRowAnchor(index: number, area: Area): void {
+    const width = Number.parseFloat(`${area.width}`)
+    const height = Number.parseFloat(`${area.height}`)
+    if (width <= 0 || height <= 0) {
+      return
+    }
+    const globalX = Number.parseFloat(`${area.globalPosition?.x ?? Number.NaN}`)
+    const globalY = Number.parseFloat(`${area.globalPosition?.y ?? Number.NaN}`)
+    const localX = Number.parseFloat(`${area.position?.x ?? 0}`) || 0
+    const localY = Number.parseFloat(`${area.position?.y ?? 0}`) || 0
+    const anchor: TranscriptRowAnchor = {
+      x: Number.isFinite(globalX) ? globalX : 16 + localX,
+      y: Number.isFinite(globalY) ? globalY : localY,
+      width: width,
+      height: height
+    }
+    this.transcriptRowAnchors.set(index, anchor)
+    if (this.editingSegmentIndex === index) {
+      this.editingSegmentTop = anchor.y
+      this.editingSegmentBottom = anchor.y + anchor.height
+      if (this.editingSegmentHeight <= 0) {
+        this.editingSegmentHeight = Math.max(48, anchor.height - 16)
+      }
+    }
+  }
+
+  private async copyTranscriptSegment(text: string): Promise<void> {
+    const trimmed = text.trim()
+    if (trimmed.length === 0) {
+      this.showToast(LocaleService.loc('内容为空', 'Content is empty', '内容が空です'))
+      return
+    }
+    try {
+      const pasteData = pasteboard.createPlainTextData(trimmed)
+      const systemPasteboard = pasteboard.getSystemPasteboard()
+      await systemPasteboard.setData(pasteData)
+      this.showToast(LocaleService.loc('已复制', 'Copied', 'コピーしました'))
+    } catch (error) {
+      Logger.warn('VoiceNoteDetail', `copyTranscriptSegment failed: ${JSON.stringify(error)}`)
+      this.showToast(LocaleService.loc('复制失败', 'Copy failed', 'コピーに失敗しました'))
+    }
+  }
+
+  private beginEditSegment(index: number): void {
+    const segs = this.renderSegments()
+    if (index < 0 || index >= segs.length) {
+      return
+    }
+    const anchor = this.transcriptRowAnchors.get(index)
+    this.closeTranscriptMenu()
+    this.editingSegmentIndex = index
+    this.editingSegmentText = segs[index].text
+    this.editingSegmentHeight = Math.max(48, (anchor?.height ?? 0) - 16)
+    this.editingSegmentTop = anchor?.y ?? 0
+    this.editingSegmentBottom = (anchor?.y ?? 0) + (anchor?.height ?? 0)
+    setTimeout((): void => {
+      if (this.editingSegmentIndex !== index || !this.lifecycle.isActive()) {
+        return
+      }
+      try {
+        this.getUIContext().getFocusController().requestFocus('voice_note_segment_input')
+      } catch (error) {
+        Logger.warn('VoiceNoteDetail', `requestFocus segment failed: ${JSON.stringify(error)}`)
+      }
+    }, 32)
+  }
+
+  private async commitSegmentEdit(): Promise<void> {
+    const index = this.editingSegmentIndex
+    if (index < 0 || this.noteId.length === 0) {
+      return
+    }
+    const segs = [...this.renderSegments()]
+    if (index >= segs.length) {
+      this.editingSegmentIndex = -1
+      this.editingSegmentHeight = 0
+      return
+    }
+    const nextText = this.editingSegmentText.trim()
+    const previous = segs[index]
+    this.editingSegmentIndex = -1
+    this.editingSegmentHeight = 0
+    if (nextText.length === 0) {
+      this.showToast(LocaleService.loc('内容不能为空', 'Content cannot be empty', '内容は空にできません'))
+      return
+    }
+    if (nextText === previous.text.trim()) {
+      return
+    }
+    segs[index] = {
+      startMs: previous.startMs,
+      text: nextText
+    }
+    const content = segs.map((segment: VoiceTranscriptSegment) => segment.text.trim()).join('\n\n')
+    await NoteRepository.getInstance().saveDraft(this.noteId, {
+      content: content,
+      voiceSegmentsJson: VoiceSegmentSplitter.encodeJson(segs),
+      skipTitleAutoFill: true
+    })
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    await this.reloadNote(false)
+  }
+
+  private dismissSegmentEditing(): void {
+    if (this.editingSegmentIndex >= 0) {
+      void this.commitSegmentEdit()
+    }
   }
 
   private normalizeTags(tags?: string[]): string[] {
@@ -704,10 +929,14 @@ struct VoiceNoteDetail {
     }
   }
 
-  private resolveShareBody(): string {
+  private resolveShareBody(bodyOverride?: string): string {
     const current = this.note
     if (current === null) {
       return ''
+    }
+    const override = (bodyOverride ?? '').trim()
+    if (override.length > 0) {
+      return override
     }
     if (this.hasSummary() && this.contentTabIndex === 1) {
       return current.voiceSummary
@@ -741,6 +970,17 @@ struct VoiceNoteDetail {
 
   private beginEditTitle(): void {
     this.titleEditing = true
+    // defaultFocus 仅在页面首次创建时生效；动态切换编辑态需主动 requestFocus。
+    setTimeout((): void => {
+      if (!this.titleEditing || !this.lifecycle.isActive()) {
+        return
+      }
+      try {
+        this.getUIContext().getFocusController().requestFocus('voice_note_title_input')
+      } catch (error) {
+        Logger.warn('VoiceNoteDetail', `requestFocus title failed: ${JSON.stringify(error)}`)
+      }
+    }, 32)
   }
 
   private async handleConvertToNormalNote(): Promise<void> {
@@ -893,14 +1133,14 @@ struct VoiceNoteDetail {
     return new NoteShareExportFlow(this.shareExportDelegate())
   }
 
-  private async runShareNote(): Promise<void> {
+  private async runShareNote(bodyOverride?: string): Promise<void> {
     if (this.sharePreviewPreparing || this.sharePreviewRegenerating || this.note === null) {
       return
     }
     this.sharePreviewPreparing = true
     this.showToast(EditorUiStrings.loc('正在生成长图…', 'Generating long image…', '長画像を生成中…'))
     try {
-      this.refreshSharePreviewBlocks(this.resolveShareBody())
+      this.refreshSharePreviewBlocks(this.resolveShareBody(bodyOverride))
       this.shareProfile = await NoteApiClient.getInstance().fetchProfile()
       const avatarUrl = (this.shareProfile?.avatar_url ?? '').trim()
       if (avatarUrl.length > 0) {
@@ -939,14 +1179,17 @@ struct VoiceNoteDetail {
 
   private async regenerateSharePreview(
     captureTheme?: ShareCardTheme,
-    captureTone?: ShareCardTone
+    captureTone?: ShareCardTone,
+    bodyOverride?: string
   ): Promise<void> {
     const theme = captureTheme ?? this.shareTheme
     const tone = captureTone ?? this.shareTone
     this.shareTheme = theme
     this.shareTone = tone
     this.sharePreviewRegenerating = true
-    this.refreshSharePreviewBlocks(this.resolveShareBody())
+    this.refreshSharePreviewBlocks(this.shareBodyMd.length > 0
+      ? this.shareBodyMd
+      : this.resolveShareBody(bodyOverride))
     const path = await this.shareExportFlow().exportShareImageToCache(theme, tone)
     this.sharePreviewRegenerating = false
     if (path && path.length > 0) {
@@ -1065,8 +1308,8 @@ struct VoiceNoteDetail {
       .key(`share_export_${this.shareExportMountKey()}`)
   }
 
-  private async handleShare(): Promise<void> {
-    await this.runShareNote()
+  private async handleShare(bodyOverride?: string): Promise<void> {
+    await this.runShareNote(bodyOverride)
   }
 
   private syncAiWorkingFromBackgroundTask(): void {
@@ -1117,16 +1360,28 @@ struct VoiceNoteDetail {
   private tagMenuPosY(): number {
     const itemHeight = 44
     const menuHeight = Math.min(320, 56 + this.tagPool.length * itemHeight)
-    const buttonCenterY = this.tagBarY + this.tagBarHeight / 2
-    if (buttonCenterY > this.pageHeight / 2) {
-      return this.tagBarY - menuHeight - 8
+    // 顶栏按钮始终在上方，菜单默认向下展开。
+    const below = this.tagBarY + this.tagBarHeight + 8
+    if (below + menuHeight <= this.pageHeight) {
+      return below
     }
-    return this.tagBarY + this.tagBarHeight + 8
+    return Math.max(0, this.tagBarY - menuHeight - 8)
+  }
+
+  private toggleTagMenu(): void {
+    if (this.aiTagCreating) {
+      return
+    }
+    const opening = !this.tagMenuVisible
+    this.tagMenuVisible = opening
+    if (opening) {
+      void this.refreshTagPool()
+    }
   }
 
   @Builder
   private buildHeader() {
-    // 与关于页一致：左侧圆角返回、标题区 layoutWeight；移动端右侧「更多」菜单。
+    // 与关于页一致：左侧圆角返回、标题区 layoutWeight；右侧标签井号 + 更多菜单。
     Row() {
       Row() {
         SymbolGlyph($r('sys.symbol.arrow_left'))
@@ -1143,20 +1398,64 @@ struct VoiceNoteDetail {
       .backgroundColor($r('app.color.surface_muted'))
       .borderRadius($r('app.float.pill_radius'))
       .onClick((): void => {
+        this.dismissTitleEditing()
         this.handleToolbarBack()
       })
 
       Row() {
-        Text(LocaleService.loc('语音笔记', 'Voice note', '音声ノート'))
-          .fontSize($r('app.float.title_font_size'))
-          .fontWeight(FontWeight.Bold)
+        Text(this.title.trim().length > 0
+          ? this.title
+          : LocaleService.loc('新录音', 'New recording', '新規録音'))
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.primary_text'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
           .textAlign(TextAlign.Center)
+          .width('100%')
+          .opacity(this.toolbarTitleOpacity)
       }
       .layoutWeight(1)
       .height('100%')
+      .padding({ left: 8, right: 8 })
+      .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
-      .justifyContent(FlexAlign.Start)
+
+      Row() {
+        if (this.aiTagCreating) {
+          LoadingProgress()
+            .width(18)
+            .height(18)
+            .color($r('app.color.accent'))
+        } else {
+          Text('#')
+            .fontSize(18)
+            .fontStyle(FontStyle.Italic)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.primary_text'))
+        }
+      }
+      .height('100%')
+      .padding({
+        left: $r('app.float.toolbar_icon_button_padding_h'),
+        right: $r('app.float.toolbar_icon_button_padding_h')
+      })
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .enabled(this.note !== null && !this.aiTagCreating)
+      .onClick((): void => {
+        this.dismissTitleEditing()
+        this.toggleTagMenu()
+      })
+      .onAreaChange((_oldArea: Area, area: Area): void => {
+        this.tagBarWidth = Number.parseFloat(`${area.width}`) || 36
+        this.tagBarHeight = Number.parseFloat(`${area.height}`) || 36
+        // position 相对父布局；外层 Column 有左右 padding，叠加得到页内坐标。
+        const localX = Number.parseFloat(`${area.position.x}`) || 0
+        const localY = Number.parseFloat(`${area.position.y}`) || 0
+        this.tagBarX = 16 + localX
+        this.tagBarY = localY
+      })
 
       Row() {
         SymbolGlyph($r('sys.symbol.more'))
@@ -1172,6 +1471,9 @@ struct VoiceNoteDetail {
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
       .enabled(this.note !== null)
+      .onClick((): void => {
+        this.dismissTitleEditing()
+      })
     }
     .width('100%')
     .height($r('app.float.toolbar_height'))
@@ -1180,43 +1482,57 @@ struct VoiceNoteDetail {
 
   @Builder
   private buildTitleBlock() {
-    if (this.titleEditing) {
-      // 浅色底 + 描边高亮，强调可编辑；caret 使用 accent。
-      TextInput({ text: this.title })
-        .width('100%')
-        .height(48)
-        .fontSize(22)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.primary_text'))
-        .backgroundColor($r('app.color.surface_muted'))
-        .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-        .border({ width: 1.5, color: $r('app.color.accent') })
-        .borderRadius(8)
-        .showUnderline(false)
-        .caretColor($r('app.color.accent'))
-        .clip(false)
-        .onChange((value: string): void => {
-          this.title = value
-        })
-        .onBlur((): void => {
-          void this.commitTitle()
-        })
-        .onSubmit((): void => {
-          void this.commitTitle()
-        })
-    } else {
-      Text(this.title.trim().length > 0
-        ? this.title
-        : LocaleService.loc('新录音', 'New recording', '新規録音'))
-        .fontSize(22)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.primary_text'))
-        .width('100%')
-        .lineHeight(30)
-        .onClick((): void => {
-          this.beginEditTitle()
-        })
+    Column() {
+      if (this.titleEditing) {
+        // 浅色底 + 描边高亮；主动聚焦弹出键盘与光标。
+        TextInput({ text: this.title })
+          .id('voice_note_title_input')
+          .width('100%')
+          .height(48)
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.primary_text'))
+          .backgroundColor($r('app.color.surface_muted'))
+          .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+          .border({ width: 1.5, color: $r('app.color.accent') })
+          .borderRadius(8)
+          .showUnderline(false)
+          .caretColor($r('app.color.accent'))
+          .clip(false)
+          .defaultFocus(true)
+          .enableKeyboardOnFocus(true)
+          .focusable(true)
+          .onChange((value: string): void => {
+            this.title = value
+          })
+          .onBlur((): void => {
+            void this.commitTitle()
+          })
+          .onSubmit((): void => {
+            void this.commitTitle()
+          })
+      } else {
+        Text(this.title.trim().length > 0
+          ? this.title
+          : LocaleService.loc('新录音', 'New recording', '新規録音'))
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.primary_text'))
+          .width('100%')
+          .lineHeight(30)
+          .onClick((): void => {
+            this.beginEditTitle()
+          })
+      }
     }
+    .width('100%')
+    .onAreaChange((_oldArea: Area, area: Area): void => {
+      const h = Number.parseFloat(`${area.height}`) || 48
+      this.titleBlockH = h
+      // 顶栏 56 + sticky padding 15 + 标题高度；不盖住标题本身。
+      this.titleDismissTop = 56 + 15 + h
+      this.updateToolbarTitleOpacity(this.lastOuterOffsetY)
+    })
   }
 
   @Builder
@@ -1375,7 +1691,24 @@ struct VoiceNoteDetail {
   private onOuterScroll(): void {
     const y = this.outerScroller.currentOffset().yOffset
     this.lastOuterOffsetY = y
+    this.updateToolbarTitleOpacity(y)
     this.logStickyMetrics('outerScroll')
+  }
+
+  /** sticky 顶 padding 15 之后标题开始滑出；按标题高度线性映射透明度。 */
+  private updateToolbarTitleOpacity(scrollY: number): void {
+    const fadeStart = 15
+    const h = Math.max(1, this.titleBlockH)
+    let opacity = (scrollY - fadeStart) / h
+    if (opacity < 0) {
+      opacity = 0
+    } else if (opacity > 1) {
+      opacity = 1
+    }
+    if (Math.abs(opacity - this.toolbarTitleOpacity) < 0.01) {
+      return
+    }
+    this.toolbarTitleOpacity = opacity
   }
 
   private lastEarlyHandoffLogMs: number = 0
@@ -1399,27 +1732,63 @@ struct VoiceNoteDetail {
   @Builder
   private buildSegmentListItem(segment: VoiceTranscriptSegment, index: number) {
     Row() {
-      Text(this.formatClock(segment.startMs))
-        .fontSize(12)
-        .fontColor($r('app.color.secondary_text'))
-        .width(48)
-      Text(segment.text)
-        .fontSize(15)
-        .fontColor(this.playing && index === this.activeSegmentIndex()
-          ? $r('app.color.accent')
-          : $r('app.color.primary_text'))
-        .fontWeight(this.playing && index === this.activeSegmentIndex()
-          ? FontWeight.Medium
-          : FontWeight.Normal)
-        .lineHeight(23)
+      if (this.segments().length > 0) {
+        Text(this.formatClock(segment.startMs))
+          .fontSize(12)
+          .fontColor($r('app.color.secondary_text'))
+          .width(48)
+      }
+      if (this.editingSegmentIndex === index) {
+        TextArea({ text: this.editingSegmentText })
+          .id('voice_note_segment_input')
+          .layoutWeight(1)
+          .height(Math.max(48, this.editingSegmentHeight))
+          .fontSize(15)
+          .fontColor($r('app.color.primary_text'))
+          .backgroundColor($r('app.color.surface_muted'))
+          .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+          .border({ width: 1.5, color: $r('app.color.accent') })
+          .borderRadius(12)
+          .caretColor($r('app.color.accent'))
+          .defaultFocus(true)
+          .enableKeyboardOnFocus(true)
+          .focusable(true)
+          .onChange((value: string): void => {
+            this.editingSegmentText = value
+          })
+          .onBlur((): void => {
+            void this.commitSegmentEdit()
+          })
+      } else {
+        Column() {
+          NoteEditMarkdownBlocksView({
+            blocks: MarkdownUtils.parseBlocks(segment.text),
+            filesDirCache: this.filesDirCache,
+            onLinkToast: (href: string): void => {
+              this.showToast(href)
+            },
+            onCheckboxToggle: (_lineIndex: number, _checked: boolean): void => {
+            },
+            onImageTap: (_src: string): void => {
+            }
+          })
+        }
         .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
     }
     .width('100%')
     .alignItems(VerticalAlign.Top)
     .padding({ top: 8, bottom: 8 })
-    .onClick((): void => {
-      this.onSegmentTap(segment)
+    .onAreaChange((_: Area, area: Area): void => {
+      this.recordTranscriptRowAnchor(index, area)
     })
+    .priorityGesture(
+      LongPressGesture({ repeat: false, duration: 450 })
+        .onAction((): void => {
+          this.showTranscriptMenu(index)
+        })
+    )
   }
 
   @Builder
@@ -1436,17 +1805,8 @@ struct VoiceNoteDetail {
             .fontColor($r('app.color.secondary_text'))
             .margin({ top: 20 })
         }
-      } else if (this.segments().length === 0) {
-        ListItem() {
-          Text(this.transcriptPlainText())
-            .fontSize(15)
-            .fontColor($r('app.color.primary_text'))
-            .lineHeight(24)
-            .width('100%')
-            .margin({ top: 16 })
-        }
       } else {
-        ForEach(this.segments(), (segment: VoiceTranscriptSegment, index: number) => {
+        ForEach(this.renderSegments(), (segment: VoiceTranscriptSegment, index: number) => {
           ListItem() {
             this.buildSegmentListItem(segment, index)
           }
@@ -1516,7 +1876,7 @@ struct VoiceNoteDetail {
   private buildTabBar() {
     Row() {
       Column() {
-        Text(LocaleService.loc('转写文字', 'Transcript', '文字起こし'))
+        Text(LocaleService.loc('音频内容', 'Audio content', '音声内容'))
           .fontSize(15)
           .fontWeight(this.contentTabIndex === 0 ? FontWeight.Medium : FontWeight.Normal)
           .fontColor(this.contentTabIndex === 0 ? $r('app.color.accent') : $r('app.color.secondary_text'))
@@ -1636,123 +1996,183 @@ struct VoiceNoteDetail {
   }
 
   @Builder
-  private buildDraggableTagBar() {
-    Stack() {
-      Row({ space: 4 }) {
-        Row() {
-          if (this.aiTagCreating) {
-            LoadingProgress()
-              .width(22)
-              .height(22)
-              .color($r('app.color.accent'))
-          } else {
-            Row({ space: 4 }) {
-              Text('#')
-                .fontSize(14)
-                .fontColor($r('app.color.secondary_text'))
-                .fontWeight(FontWeight.Medium)
-              if (this.noteTags.length === 0) {
-                Text(EditorUiStrings.loc('标签', 'Tags', 'タグ'))
-                  .fontSize(12)
-                  .fontColor($r('app.color.secondary_text'))
-              } else {
-                NoteEditTagChip({ tag: this.noteTags[0] })
-                if (this.noteTags.length > 1) {
-                  Text('...')
-                    .fontSize(12)
-                    .fontColor($r('app.color.secondary_text'))
-                }
-              }
-            }
-            SymbolGlyph($r('sys.symbol.chevron_down'))
-              .fontSize(14)
-              .fontColor([$r('app.color.secondary_text')])
-          }
-        }
-        .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-        .backgroundColor($r('app.color.surface_muted'))
-        .borderRadius(18)
+  private buildTagMenuOverlay() {
+    if (this.tagMenuVisible) {
+      // 全屏透明层：点击弹窗外先关闭菜单（需低于下拉 zIndex）。
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#00000000')
         .onClick((): void => {
-          if (this.aiTagCreating) {
-            return
+          this.tagMenuVisible = false
+          if (this.titleEditing) {
+            void this.commitTitle()
           }
-          void this.refreshTagPool()
-          this.tagMenuVisible = !this.tagMenuVisible
         })
-        .shadow({
-          radius: 18,
-          color: '#2A000000',
-          offsetX: 0,
-          offsetY: 3
-        })
-      }
-      .onAreaChange((_, currentArea: Area) => {
-        this.tagBarWidth = Number.parseFloat(`${currentArea.width}`) || 120
-        this.tagBarHeight = Number.parseFloat(`${currentArea.height}`) || 32
-        if (!this.tagBarInitialized && this.pageWidth > 0) {
-          this.tagBarX = Math.max(0, this.pageWidth - this.tagBarWidth - 26)
-          this.tagBarY = Math.max(120, this.pageHeight - 160)
-          this.tagBarInitialized = true
-        }
-      })
-      .position({ x: this.tagBarX, y: this.tagBarY })
-      .gesture(
-        PanGesture()
-          .onActionStart((event: GestureEvent) => {
-            this.lastPanOffsetX = event.offsetX
-            this.lastPanOffsetY = event.offsetY
-          })
-          .onActionUpdate((event: GestureEvent) => {
-            const safeAreaTop = 44
-            const safeAreaBottom = 34
-            const screenHeight = this.pageHeight > 0 ? this.pageHeight : 780
-            const deltaX = event.offsetX - this.lastPanOffsetX
-            const deltaY = event.offsetY - this.lastPanOffsetY
-            this.lastPanOffsetX = event.offsetX
-            this.lastPanOffsetY = event.offsetY
-            let newX = this.tagBarX + deltaX
-            let newY = this.tagBarY + deltaY
-            if (newX < 0) {
-              newX = 0
-            }
-            if (newX > this.pageWidth - this.tagBarWidth) {
-              newX = this.pageWidth - this.tagBarWidth
-            }
-            if (newY < safeAreaTop) {
-              newY = safeAreaTop
-            }
-            if (newY > screenHeight - this.tagBarHeight - safeAreaBottom) {
-              newY = screenHeight - this.tagBarHeight - safeAreaBottom
-            }
-            this.tagBarX = newX
-            this.tagBarY = newY
-          })
-          .onActionEnd((_event: GestureEvent) => {
-            this.lastPanOffsetX = 0
-            this.lastPanOffsetY = 0
-          })
-      )
+        .zIndex(998)
 
-      if (this.tagMenuVisible) {
-        Column() {
-          NoteEditTagDropdown({
-            tagPool: this.tagPool,
-            noteTags: this.noteTags,
-            aiTagCreating: this.aiTagCreating,
-            onTagChecked: (tag: string, selected: boolean) => {
-              void this.onTagChecked(tag, selected)
-            },
-            onAiCreateTag: () => {
-              void this.onAiCreateTag()
-            },
-            onOpenTagManage: () => {
-              void this.openTagManage()
-            }
-          })
-        }
-        .position({ x: this.floatMenuPosX(), y: this.tagMenuPosY() })
-        .zIndex(999)
+      Column() {
+        NoteEditTagDropdown({
+          tagPool: this.tagPool,
+          noteTags: this.noteTags,
+          aiTagCreating: this.aiTagCreating,
+          onTagChecked: (tag: string, selected: boolean) => {
+            void this.onTagChecked(tag, selected)
+          },
+          onAiCreateTag: () => {
+            void this.onAiCreateTag()
+          },
+          onOpenTagManage: () => {
+            void this.openTagManage()
+          }
+        })
       }
+      .position({ x: this.floatMenuPosX(), y: this.tagMenuPosY() })
+      .zIndex(999)
+    }
+  }
+
+  @Builder
+  private buildTranscriptMenuOverlay() {
+    if (this.transcriptMenuVisible && this.transcriptMenuIndex >= 0) {
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#00000000')
+        .onClick((): void => {
+          this.closeTranscriptMenu()
+        })
+        .zIndex(1000)
+
+      if (this.transcriptMenuTarget() !== null) {
+        Column() {
+          Row() {
+            Text(LocaleService.loc('复制', 'Copy', 'コピー'))
+              .fontSize(16)
+              .fontColor(Color.White)
+              .layoutWeight(1)
+              .textAlign(TextAlign.Center)
+              .padding({ top: 18, bottom: 18 })
+              .onClick((): void => {
+                // 先取出段落文本，再关菜单；closeTranscriptMenu 后 target 会变为 null。
+                const text = this.transcriptMenuTarget()?.text ?? ''
+                this.closeTranscriptMenu()
+                void this.copyTranscriptSegment(text)
+              })
+            Column()
+              .width(1)
+              .height(22)
+              .backgroundColor('#29FFFFFF')
+            Text(LocaleService.loc('编辑', 'Edit', '編集'))
+              .fontSize(16)
+              .fontColor(Color.White)
+              .layoutWeight(1)
+              .textAlign(TextAlign.Center)
+              .padding({ top: 18, bottom: 18 })
+              .onClick((): void => {
+                this.beginEditSegment(this.transcriptMenuIndex)
+              })
+            Column()
+              .width(1)
+              .height(22)
+              .backgroundColor('#29FFFFFF')
+            Text(LocaleService.loc('分享', 'Share', '共有'))
+              .fontSize(16)
+              .fontColor(Color.White)
+              .layoutWeight(1)
+              .textAlign(TextAlign.Center)
+              .padding({ top: 18, bottom: 18 })
+              .onClick((): void => {
+                const text = (this.transcriptMenuTarget()?.text ?? '').trim()
+                this.closeTranscriptMenu()
+                void this.handleShare(text)
+              })
+            Column()
+              .width(1)
+              .height(22)
+              .backgroundColor('#29FFFFFF')
+            Text(LocaleService.loc('听当前', 'Listen', 'ここを聴く'))
+              .fontSize(16)
+              .fontColor(Color.White)
+              .layoutWeight(1)
+              .textAlign(TextAlign.Center)
+              .padding({ top: 18, bottom: 18 })
+              .onClick((): void => {
+                const target = this.transcriptMenuTarget()
+                this.closeTranscriptMenu()
+                if (target !== null) {
+                  this.playFromSegment(target)
+                }
+              })
+          }
+          .width(300)
+          .backgroundColor('#FF2B2B2D')
+          .borderRadius(20)
+          .border({ width: 1, color: '#10FFFFFF' })
+
+          Column()
+            .width(12)
+            .height(12)
+            .backgroundColor('#FF2B2B2D')
+            .rotate({ angle: 45 })
+            .margin({ top: -6 })
+        }
+        .position({ x: this.transcriptMenuX, y: this.transcriptMenuY })
+        .zIndex(1001)
+      }
+    }
+  }
+
+  @Builder
+  private buildTitleDismissOverlay() {
+    // 仅覆盖标题以下区域，标题内可点击移动光标。
+    if (this.titleEditing && !this.tagMenuVisible) {
+      Column()
+        .width('100%')
+        .height(Math.max(0, this.pageHeight - Math.max(56, this.titleDismissTop)))
+        .backgroundColor('#00000000')
+        .position({ x: 0, y: Math.max(56, this.titleDismissTop) })
+        .onClick((): void => {
+          this.dismissTitleEditing()
+        })
+        .zIndex(50)
+    }
+  }
+
+  @Builder
+  private buildSegmentEditDismissOverlay() {
+    // 分段覆盖编辑框上下方；中间留白不拦截点击，点外部结束编辑并保存。
+    if (this.editingSegmentIndex >= 0 && !this.tagMenuVisible && !this.transcriptMenuVisible) {
+      Column() {
+        Column()
+          .width('100%')
+          .height(Math.max(0, this.editingSegmentTop))
+          .backgroundColor('#00000000')
+          .onClick((): void => {
+            this.dismissSegmentEditing()
+          })
+        Column()
+          .width('100%')
+          .height(Math.max(0, this.editingSegmentBottom - this.editingSegmentTop))
+          .hitTestBehavior(HitTestMode.None)
+        Column()
+          .width('100%')
+          .layoutWeight(1)
+          .backgroundColor('#00000000')
+          .onClick((): void => {
+            this.dismissSegmentEditing()
+          })
+      }
+      .width('100%')
+      .height('100%')
+      .hitTestBehavior(HitTestMode.Transparent)
+      .zIndex(50)
+    }
+  }
+
+  private dismissTitleEditing(): void {
+    if (this.titleEditing) {
+      void this.commitTitle()
     }
   }
 
@@ -1863,7 +2283,10 @@ struct VoiceNoteDetail {
       })
 
       if (!this.loading) {
-        this.buildDraggableTagBar()
+        this.buildTitleDismissOverlay()
+        this.buildSegmentEditDismissOverlay()
+        this.buildTagMenuOverlay()
+        this.buildTranscriptMenuOverlay()
       }
 
       if (this.showBlockingOverlay()) {
@@ -1911,6 +2334,11 @@ struct VoiceNoteDetail {
       if (this.tagMenuVisible) {
         this.tagMenuVisible = false
       }
+      if (this.transcriptMenuVisible) {
+        this.closeTranscriptMenu()
+      }
+      this.dismissTitleEditing()
+      this.dismissSegmentEditing()
     })
   }
 }
