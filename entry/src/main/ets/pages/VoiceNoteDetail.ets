@@ -604,12 +604,14 @@ struct VoiceNoteDetail {
   }
 
   private playerTimeLabel(): string {
-    const showElapsed =
-      !this.playbackCompleted && (this.playing || this.positionMs > 0)
-    if (showElapsed) {
+    if (this.shouldHighlightActiveSegment()) {
       return `${this.formatClock(this.positionMs)} / ${this.formatClock(this.durationMs)}`
     }
     return this.formatClock(this.durationMs)
+  }
+
+  private shouldHighlightActiveSegment(): boolean {
+    return !this.playbackCompleted && (this.playing || this.positionMs > 0)
   }
 
   private activeSegmentIndex(): number {
@@ -627,6 +629,13 @@ struct VoiceNoteDetail {
       }
     }
     return active
+  }
+
+  private highlightedSegmentIndex(): number {
+    if (!this.shouldHighlightActiveSegment()) {
+      return -1
+    }
+    return this.activeSegmentIndex()
   }
 
   private togglePlay(): void {
@@ -1764,6 +1773,7 @@ struct VoiceNoteDetail {
           NoteEditMarkdownBlocksView({
             blocks: MarkdownUtils.parseBlocks(segment.text),
             filesDirCache: this.filesDirCache,
+            forceAccentText: this.highlightedSegmentIndex() === index,
             onLinkToast: (href: string): void => {
               this.showToast(href)
             },
@@ -1811,7 +1821,7 @@ struct VoiceNoteDetail {
             this.buildSegmentListItem(segment, index)
           }
         }, (segment: VoiceTranscriptSegment, index: number) =>
-          `seg_${index}_${segment.startMs}`)
+          `seg_${index}_${segment.startMs}_${this.highlightedSegmentIndex() === index ? 1 : 0}`)
       }
       ListItem() {
         Column()
@@ -2227,7 +2237,7 @@ struct VoiceNoteDetail {
                         this.buildSegmentListItem(segment, index)
                       }
                     }, (segment: VoiceTranscriptSegment, index: number) =>
-                      `seg_${index}_${segment.startMs}`)
+                      `seg_${index}_${segment.startMs}_${this.highlightedSegmentIndex() === index ? 1 : 0}`)
                   }
                   ListItem() {
                     Column()

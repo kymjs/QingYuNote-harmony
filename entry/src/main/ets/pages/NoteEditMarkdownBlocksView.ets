@@ -24,6 +24,8 @@ export struct NoteEditMarkdownBlocksView {
   @Prop shareBackgroundOverride: string = ''
   /** 主题/色调变更时递增，用于强制 Markdown 块重建。 */
   @Prop shareStyleKey: string = ''
+  /** 语音笔记播放高亮：非分享场景下将正文主色改为 accent。 */
+  @Prop forceAccentText: boolean = false
   onLinkToast: (href: string) => void = (_href: string) => {
   }
   onCheckboxToggle: (lineIndex: number, checked: boolean) => void =
@@ -36,14 +38,20 @@ export struct NoteEditMarkdownBlocksView {
     if (this.forShareExport && this.shareTextOverride.length > 0) {
       return this.shareTextOverride
     }
-    return this.forShareExport ? $r('app.color.share_text') : $r('app.color.primary_text')
+    if (this.forShareExport) {
+      return $r('app.color.share_text')
+    }
+    return this.forceAccentText ? $r('app.color.accent') : $r('app.color.primary_text')
   }
 
   private secondaryTextColor(): ResourceColor {
     if (this.forShareExport && this.shareTextOverride.length > 0) {
       return this.shareTextOverride
     }
-    return this.forShareExport ? $r('app.color.share_text') : $r('app.color.secondary_text')
+    if (this.forShareExport) {
+      return $r('app.color.share_text')
+    }
+    return this.forceAccentText ? $r('app.color.accent') : $r('app.color.secondary_text')
   }
 
   private accentTextColor(): ResourceColor {
@@ -78,7 +86,10 @@ export struct NoteEditMarkdownBlocksView {
     if (this.forShareExport && this.shareTextOverride.length > 0) {
       return this.shareTextOverride
     }
-    return this.forShareExport ? $r('app.color.share_text') : $r('app.color.tertiary_text')
+    if (this.forShareExport) {
+      return $r('app.color.share_text')
+    }
+    return this.forceAccentText ? $r('app.color.accent') : $r('app.color.tertiary_text')
   }
 
   private mathTextColor(): string {
