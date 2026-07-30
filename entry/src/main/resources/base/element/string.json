@@ -113,6 +113,22 @@
       "value": "开始写作，支持 Markdown"
     },
     {
+      "name": "editor_link_card_fallback_title",
+      "value": "网页链接"
+    },
+    {
+      "name": "editor_link_card_fallback_author",
+      "value": "未知来源"
+    },
+    {
+      "name": "editor_link_card_fallback_desc",
+      "value": "暂时无法获取该链接的详细信息"
+    },
+    {
+      "name": "editor_link_card_loading",
+      "value": "加载中…"
+    },
+    {
       "name": "settings_sync_provider_title",
       "value": "云服务提供方"
     },

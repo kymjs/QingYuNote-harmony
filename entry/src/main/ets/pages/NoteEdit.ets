@@ -102,6 +102,9 @@ struct NoteEdit {
   @State content: string = ''
   @State saveStatus: string = '未保存'
   @State previewMode: string = 'split'
+  @State editorEnterEditToken: number = 0
+  @State editorRefreshToken: number = 0
+  @State editorToolbarSignal: string = ''
   @State pageWidth: number = 360
   @State pageHeight: number = 780
   @State lastSavedAt: number = 0
@@ -131,13 +134,24 @@ struct NoteEdit {
   @State folderMovePopupVisible: boolean = false
   @State tagBarX: number = 0
   @State tagBarY: number = 0
-  @State tagBarInitialized: boolean = false
   @State tagBarWidth: number = 120
   @State tagBarHeight: number = 32
-  @State lastPanOffsetX: number = 0
-  @State lastPanOffsetY: number = 0
   /** 标题输入框是否处于焦点（编辑）状态。 */
   @State titleFieldFocused: boolean = false
+  /** 窄屏大标题是否处于点击编辑态（与 VoiceNoteDetail 一致）。 */
+  @State titleEditing: boolean = false
+  /** 顶栏标题透明度：0 隐藏，1 完全显示，随外层滚动连续变化（窄屏）。 */
+  @State toolbarTitleOpacity: number = 0
+  /** 大标题块高度，用于顶栏标题滚动淡入计算。 */
+  @State titleBlockH: number = 48
+  /** 标题编辑 dismiss 遮罩的顶部 Y（标题底边之下，不盖住标题）。 */
+  @State titleDismissTop: number = 120
+  /** 窄屏编辑/预览 Tab 当前下标：0=编辑，1=预览，与 previewMode 同步。 */
+  @State contentTabIndex: number = 0
+  /** 窄屏外层 Scroll 视口高；吸顶 TabBar 高；Swiper = viewport - tabBar。 */
+  @State scrollViewportH: number = 0
+  @State tabBarH: number = 48
+  @State stickyHeaderH: number = 0
   /** 笔记设置：是否展示输入法上方快捷操作栏。 */
   @State quickActionBarEnabled: boolean = true
   @State folderModeEnabled: boolean = false
@@ -159,6 +173,10 @@ struct NoteEdit {
     this.keyboardHeightVp = heightPx > 0 ? this.getUIContext().px2vp(heightPx) : 0
   }
   private shareScroller: Scroller = new Scroller()
+  /** 窄屏外层 Scroll（吸顶标题+Tab）；与 VoiceNoteDetail outerScroller 同构。 */
+  private outerScroller: Scroller = new Scroller()
+  private lastOuterOffsetY: number = 0
+  private swiperController: SwiperController = new SwiperController()
   private pathCaptionScroller: Scroller = new Scroller()
   private pathCaptionMarqueeToken: number = 0
   private pathCaptionMarqueeTimer: number = -1
@@ -253,6 +271,7 @@ struct NoteEdit {
       if (savedMode === 'preview') {
         this.preparePreviewForCurrentMode(this.content, true)
       }
+      this.syncContentTabIndexFromPreviewMode()
     }
   }
 
@@ -416,6 +435,15 @@ struct NoteEdit {
       hasEditorTitleOrBody(this.title, this.content)
   }
 
+  /** 从更多菜单打开「移动本文至」弹层：展开虚拟根目录，与顶栏点击一致。 */
+  private openMoveFolderPopup(): void {
+    this.folderMovePopupVisible = true
+    if (!this.expandedFolderIds.includes(NoteFolderTree.VIRTUAL_ROOT_FOLDER_ID)) {
+      this.expandedFolderIds = [...this.expandedFolderIds, NoteFolderTree.VIRTUAL_ROOT_FOLDER_ID]
+    }
+    this.tagMenuVisible = false
+  }
+
   private buildToolbarMoreMenuItems(): Array<MenuElement> {
     const items: Array<MenuElement> = [
       {
@@ -426,6 +454,15 @@ struct NoteEdit {
         }
       }
     ]
+    if (this.folderModeEnabled) {
+      items.push({
+        value: EditorUiStrings.loc('移动本文至', 'Move this note to', 'このノートを移動'),
+        symbolIcon: new SymbolGlyphModifier($r('sys.symbol.folder')),
+        action: (): void => {
+          this.openMoveFolderPopup()
+        }
+      })
+    }
     if (this.shouldShowMobileToolbarAi()) {
       items.push({
         value: this.aiNoteWorking
@@ -435,15 +472,6 @@ struct NoteEdit {
         action: (): void => {
           if (!this.aiNoteWorking) {
             void this.onAiOptimizeContent()
-          }
-        }
-      })
-      items.push({
-        value: EditorUiStrings.loc('AI提取链接', 'AI extract link', 'AIでリンク抽出'),
-        symbolIcon: new SymbolGlyphModifier($r('sys.symbol.link')),
-        action: (): void => {
-          if (!this.aiNoteWorking) {
-            void this.openAiLinkExtractPage()
           }
         }
       })
@@ -460,12 +488,6 @@ struct NoteEdit {
       }
     }
     return items
-  }
-
-  private shouldShowMobileTagBar(): boolean {
-    return !this.isSplitMode() &&
-      hasEditorTitleOrBody(this.title, this.content) &&
-      this.sidebarFilterMode !== 'folder'
   }
 
   private static readonly FLOAT_MENU_WIDTH: number = 154
@@ -524,10 +546,6 @@ struct NoteEdit {
     this.aiUndoAvailable = false
     this.handleContentChange()
     this.showPreviewMessage(EditorUiStrings.loc('已撤回 AI 修改', 'AI edit undone', 'AI編集を元に戻しました'))
-  }
-
-  private saveStatusBarClickable(): boolean {
-    return this.folderModeEnabled && this.mobileFullPreviewChrome()
   }
 
   private async initKeyboardAvoidArea(): Promise<void> {
@@ -607,14 +625,17 @@ struct NoteEdit {
     }, 120) as number
   }
 
-  private applyContentInsertViaController(diff: EditorTextDiff): boolean {
-    if (diff.end > diff.start) {
-      this.textAreaController.deleteText({ start: diff.start, end: diff.end })
-    }
-    if (diff.insert.length > 0) {
-      this.textAreaController.addText(diff.insert, { offset: diff.start })
-    }
-    return true
+  private applyContentInsertViaController(_diff: EditorTextDiff): boolean {
+    // 正文已切换为 RichEditor，不再通过 TextAreaController 增量改字。
+    return false
+  }
+
+  private bumpEditorRefresh(): void {
+    this.editorRefreshToken = this.editorRefreshToken + 1
+  }
+
+  private signalToolbarEmbed(kind: string, label: string, url: string): void {
+    this.editorToolbarSignal = `${kind}|${label}|${url}@${Date.now()}`
   }
 
   private applyContentInsert(result: EditorInsertResult): void {
@@ -626,27 +647,10 @@ struct NoteEdit {
       return
     }
 
-    const diff = EditorMarkdownInsert.computeTextDiff(oldText, newText)
     this.suppressContentCaretSync = true
     this.contentCaretIndex = caret
-    let appliedByController = false
-    try {
-      appliedByController = this.applyContentInsertViaController(diff)
-    } catch (_) {
-      appliedByController = false
-    }
-
-    if (!appliedByController) {
-      this.content = newText
-    } else {
-      setTimeout(() => {
-        if (this.content !== newText) {
-          this.suppressContentCaretSync = true
-          this.content = newText
-          this.scheduleApplyCaret(caret, newText.length)
-        }
-      }, 0)
-    }
+    this.content = newText
+    this.bumpEditorRefresh()
     this.scheduleApplyCaret(caret, newText.length)
     this.scheduleSave()
     if (this.shouldRenderPreview()) {
@@ -721,6 +725,7 @@ struct NoteEdit {
           url
         )
         this.applyContentInsert(result)
+        this.signalToolbarEmbed('link', label, url)
       }
     }
     holder = new ComponentContent(ui, wrapBuilder(buildEditorLinkInsertDialogContent), params)
@@ -1060,6 +1065,7 @@ struct NoteEdit {
     }
     if (!this.noteId) {
       this.previewMode = this.pageWidth >= 600 ? 'split' : 'edit'
+      this.syncContentTabIndexFromPreviewMode()
       this.preparePreviewForCurrentMode(this.content)
       void this.refreshAllNotes()
       this.runInitialActionIfNeeded()
@@ -1095,6 +1101,13 @@ struct NoteEdit {
       this.previewMode = this.isSplitMode() ? 'split' : 'preview'
     } else {
       this.previewMode = this.isSplitMode() ? 'split' : 'edit'
+    }
+    this.syncContentTabIndexFromPreviewMode()
+    // 编辑/分屏：强制富文本编辑器按正文重建（aboutToAppear 时可能还是空 content）
+    if (this.previewMode === 'edit' || this.previewMode === 'split') {
+      this.editorEnterEditToken = this.editorEnterEditToken + 1
+      Logger.info('NoteEdit',
+        `loadNote bump enterEditToken=${this.editorEnterEditToken} contentLen=${note.content.length} mode=${this.previewMode}`)
     }
     this.preparePreviewForCurrentMode(note.content)
     void this.refreshAllNotes()
@@ -1337,10 +1350,6 @@ struct NoteEdit {
     this.saveStatus = '已保存'
   }
 
-  private mobileFullPreviewChrome(): boolean {
-    return !this.isSplitMode() && this.previewMode === 'preview'
-  }
-
   private onToggleFolderExpand(folderId: string): void {
     if (folderId === NoteFolderTree.VIRTUAL_ROOT_FOLDER_ID) {
       if (this.expandedFolderIds.includes(NoteFolderTree.VIRTUAL_ROOT_FOLDER_ID)) {
@@ -1412,7 +1421,7 @@ struct NoteEdit {
     this.stopPathCaptionTimer()
     this.pathCaptionScroller.scrollTo({ xOffset: 0, yOffset: 0, animation: false })
     this.pathCaptionMarqueeTimer = setInterval(() => {
-      if (token !== this.pathCaptionMarqueeToken || !this.mobileFullPreviewChrome()) {
+      if (token !== this.pathCaptionMarqueeToken || this.isSplitMode()) {
         this.stopPathCaptionTimer()
         return
       }
@@ -1425,7 +1434,7 @@ struct NoteEdit {
   }
 
   private tryStartPathCaptionMarqueeFromMeasure(): void {
-    if (!this.mobileFullPreviewChrome()) {
+    if (this.isSplitMode()) {
       return
     }
     if (this.pathCaptionContentWidthVp <= 0 || this.pathCaptionViewportWidthVp <= 0) {
@@ -1498,8 +1507,7 @@ struct NoteEdit {
     .enableScrollInteraction(false)
     .clip(true)
     .align(Alignment.Start)
-    .width('100%')
-    .padding({ left: 13, bottom: 8 })
+    .constraintSize({ maxWidth: '100%' })
     .onAreaChange((_: Area, area: Area) => {
       this.onPathCaptionViewportAreaChange(area)
     })
@@ -1515,25 +1523,41 @@ struct NoteEdit {
     return this.pageWidth >= 600
   }
 
-  /** 顶部保存状态 + 预览/编辑模式（与 Flutter `_saveStatusDisplay` 对齐）；中间为「空格减号空格」。 */
-  private saveStatusDisplay(): string {
-    return EditorUiStrings.saveStatusDisplay(this.saveStatus, this.previewMode)
-  }
-
   private switchMode(mode: string): void {
     if (this.previewMode === mode) {
       if (mode === 'preview') {
         this.preparePreviewForCurrentMode(this.content, true)
       }
+      this.syncContentTabIndexFromPreviewMode()
       return
     }
+    const wasEditing = this.previewMode === 'edit' || this.previewMode === 'split'
+    const willEdit = mode === 'edit' || mode === 'split'
     this.previewMode = mode
     if (mode === 'preview') {
       this.preparePreviewForCurrentMode(this.content, true)
     } else if (mode === 'edit') {
       this.tagMenuVisible = false
-      this.folderMovePopupVisible = false
-      this.stopPathCaptionMarquee()
+    }
+    if (willEdit && !wasEditing) {
+      this.editorEnterEditToken = this.editorEnterEditToken + 1
+    }
+    this.syncContentTabIndexFromPreviewMode()
+  }
+
+  /** 窄屏：contentTabIndex 与 previewMode 保持一致，并驱动 Swiper 切页。 */
+  private syncContentTabIndexFromPreviewMode(): void {
+    if (this.isSplitMode()) {
+      return
+    }
+    const index = this.previewMode === 'preview' ? 1 : 0
+    if (this.contentTabIndex !== index) {
+      this.contentTabIndex = index
+    }
+    try {
+      this.swiperController.changeIndex(index, true)
+    } catch (error) {
+      Logger.warn('NoteEdit', `swiperController.changeIndex failed: ${JSON.stringify(error)}`)
     }
   }
 
@@ -1675,6 +1699,7 @@ struct NoteEdit {
       } else {
         this.content = `${text}${imageMarkdown}\n`
       }
+      this.signalToolbarEmbed('image', '图片', relativePath)
       this.suppressContentCaretSync = true
       this.scheduleApplyCaret(this.content.length)
       this.scheduleSave()
@@ -2767,304 +2792,614 @@ struct NoteEdit {
     })
   }
 
+  private toggleTagMenu(): void {
+    if (this.aiTagCreating) {
+      return
+    }
+    const opening = !this.tagMenuVisible
+    this.tagMenuVisible = opening
+    if (opening) {
+      void this.refreshTagPool()
+    }
+  }
+
+  private beginEditTitle(): void {
+    this.titleEditing = true
+    // defaultFocus 仅在组件首次创建时生效；动态切换编辑态需主动 requestFocus。
+    setTimeout((): void => {
+      if (!this.titleEditing || !this.lifecycle.isActive()) {
+        return
+      }
+      try {
+        this.getUIContext().getFocusController().requestFocus('note_edit_title_input')
+      } catch (error) {
+        Logger.warn('NoteEdit', `requestFocus title failed: ${JSON.stringify(error)}`)
+      }
+    }, 32)
+  }
+
+  private dismissTitleEditing(): void {
+    if (this.titleEditing) {
+      this.titleEditing = false
+      this.onTitleFieldBlur()
+    }
+  }
+
+  private swiperContentHeight(): number {
+    const tabH = this.tabBarH > 0 ? this.tabBarH : 48
+    const quickH = (this.shouldShowQuickActionBar() && this.contentTabIndex === 0)
+      ? 40
+      : 0
+    const h = this.scrollViewportH - tabH - quickH
+    return h > 120 ? h : 280
+  }
+
+  private onOuterScroll(): void {
+    const y = this.outerScroller.currentOffset().yOffset
+    this.lastOuterOffsetY = y
+    this.updateToolbarTitleOpacity(y)
+  }
+
+  /** sticky 顶 padding 15 之后标题开始滑出；按标题高度线性映射透明度（与 VoiceNoteDetail 一致）。 */
+  private updateToolbarTitleOpacity(scrollY: number): void {
+    const fadeStart = 15
+    const h = Math.max(1, this.titleBlockH)
+    let opacity = (scrollY - fadeStart) / h
+    if (opacity < 0) {
+      opacity = 0
+    } else if (opacity > 1) {
+      opacity = 1
+    }
+    if (Math.abs(opacity - this.toolbarTitleOpacity) < 0.01) {
+      return
+    }
+    this.toolbarTitleOpacity = opacity
+  }
+
+  /** 窄屏顶栏：返回、居中淡入标题、标签按钮、更多菜单（对齐 VoiceNoteDetail.buildHeader）。 */
   @Builder
-  buildDraggableTagBar() {
-    Stack() {
-      Row({ space: 4 }) {
-        Row() {
-          if (this.aiTagCreating) {
-            LoadingProgress()
-              .width(22)
-              .height(22)
-              .color($r('app.color.accent'))
-          } else {
-            Row({ space: 4 }) {
-              Text('#')
-                .fontSize(14)
-                .fontColor($r('app.color.secondary_text'))
-                .fontWeight(FontWeight.Medium)
-              if (this.noteTagsSafe().length === 0) {
-                Text(EditorUiStrings.loc('标签', 'Tags', 'タグ'))
-                  .fontSize(12)
-                  .fontColor($r('app.color.secondary_text'))
-              } else {
-                NoteEditTagChip({ tag: this.noteTagsSafe()[0] })
-                if (this.noteTagsSafe().length > 1) {
-                  Text('...')
-                    .fontSize(12)
-                    .fontColor($r('app.color.secondary_text'))
-                }
-              }
-            }
-            SymbolGlyph($r('sys.symbol.chevron_down'))
-              .fontSize(14)
-              .fontColor([$r('app.color.secondary_text')])
-          }
-        }
-        .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-        .backgroundColor($r('app.color.surface_muted'))
-        .borderRadius(18)
-        .onClick(() => {
-          if (this.aiTagCreating) {
-            return
-          }
-          void this.refreshTagPool()
-          this.tagMenuVisible = !this.tagMenuVisible
-        })
-        .shadow({
-          radius: 18,
-          color: '#2A000000',
-          offsetX: 0,
-          offsetY: 3
-        })
+  private buildMobileHeader() {
+    Row() {
+      Row() {
+        SymbolGlyph($r('sys.symbol.arrow_left'))
+          .fontSize(18)
+          .fontColor([$r('app.color.primary_text')])
       }
-
-      .onAreaChange((_, currentArea: Area) => {
-        this.tagBarWidth = Number.parseFloat(`${currentArea.width}`) || 120
-        this.tagBarHeight = Number.parseFloat(`${currentArea.height}`) || 32
-        if (!this.tagBarInitialized) {
-          const cardPadding = 18
-          const toolbarHeight = 69
-          const safeAreaTop = 44
-          const defaultRight = 8
-          this.tagBarX = this.pageWidth - this.tagBarWidth - cardPadding - defaultRight
-          this.tagBarY = toolbarHeight + safeAreaTop - 1.5 * this.tagBarHeight
-          this.tagBarInitialized = true
-        }
+      .height('100%')
+      .padding({
+        left: $r('app.float.toolbar_icon_button_padding_h'),
+        right: $r('app.float.toolbar_icon_button_padding_h')
       })
-      .position({ x: this.tagBarX, y: this.tagBarY })
-      .gesture(
-        PanGesture()
-          .onActionStart((event: GestureEvent) => {
-            this.lastPanOffsetX = event.offsetX
-            this.lastPanOffsetY = event.offsetY
-          })
-          .onActionUpdate((event: GestureEvent) => {
-            const safeAreaTop = 44
-            const safeAreaBottom = 34
-            const screenHeight = this.pageHeight > 0 ? this.pageHeight : 780
-            // 计算增量：当前偏移 - 上次偏移
-            const deltaX = event.offsetX - this.lastPanOffsetX
-            const deltaY = event.offsetY - this.lastPanOffsetY
-            this.lastPanOffsetX = event.offsetX
-            this.lastPanOffsetY = event.offsetY
-            let newX = this.tagBarX + deltaX
-            let newY = this.tagBarY + deltaY
-            if (newX < 0) {
-              newX = 0
-            }
-            if (newX > this.pageWidth - this.tagBarWidth) {
-              newX = this.pageWidth - this.tagBarWidth
-            }
-            if (newY < safeAreaTop) {
-              newY = safeAreaTop
-            }
-            if (newY > screenHeight - this.tagBarHeight - safeAreaBottom) {
-              newY = screenHeight - this.tagBarHeight - safeAreaBottom
-            }
-            this.tagBarX = newX
-            this.tagBarY = newY
-          })
-          .onActionEnd((_: GestureEvent) => {
-            this.lastPanOffsetX = 0
-            this.lastPanOffsetY = 0
-          })
-      )
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .backgroundColor($r('app.color.surface_muted'))
+      .borderRadius($r('app.float.pill_radius'))
+      .onClick((): void => {
+        this.dismissTitleEditing()
+        this.handleBack()
+      })
 
-      if (this.tagMenuVisible) {
-        Column() {
-          NoteEditTagDropdown({
-            tagPool: this.tagPool,
-            noteTags: this.noteTagsSafe(),
-            aiTagCreating: this.aiTagCreating,
-            onTagChecked: (tag: string, selected: boolean) => {
-              void this.onTagChecked(tag, selected)
-            },
-            onAiCreateTag: () => {
-              void this.onAiCreateTag()
-            },
-            onOpenTagManage: () => {
-              this.tagMenuVisible = false
-              void this.openTagManage()
-            }
-          })
-        }
-        .position({ x: this.floatMenuPosX(), y: this.tagMenuPosY() })
-        .zIndex(999)
+      Row() {
+        Text(this.title.trim().length > 0 ? this.title : $r('app.string.editor_title_placeholder'))
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.primary_text'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .textAlign(TextAlign.Center)
+          .width('100%')
+          .opacity(this.toolbarTitleOpacity)
       }
+      .layoutWeight(1)
+      .height('100%')
+      .padding({ left: 8, right: 8 })
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+
+      Row() {
+        if (this.aiTagCreating) {
+          LoadingProgress()
+            .width(18)
+            .height(18)
+            .color($r('app.color.accent'))
+        } else {
+          SymbolGlyph($r('sys.symbol.label'))
+            .fontSize(18)
+            .fontColor([$r('app.color.primary_text')])
+        }
+      }
+      .height('100%')
+      .padding({
+        left: $r('app.float.toolbar_icon_button_padding_h'),
+        right: $r('app.float.toolbar_icon_button_padding_h')
+      })
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .enabled(!this.aiTagCreating)
+      .onClick((): void => {
+        this.dismissTitleEditing()
+        this.toggleTagMenu()
+      })
+      .onAreaChange((_oldArea: Area, area: Area): void => {
+        this.tagBarWidth = Number.parseFloat(`${area.width}`) || 36
+        this.tagBarHeight = Number.parseFloat(`${area.height}`) || 36
+        // position 相对父布局；外层窄屏内容左右 padding 6，叠加得到页内坐标。
+        const localX = Number.parseFloat(`${area.position.x}`) || 0
+        const localY = Number.parseFloat(`${area.position.y}`) || 0
+        this.tagBarX = 6 + localX
+        this.tagBarY = localY
+      })
+
+      Row() {
+        SymbolGlyph($r('sys.symbol.more'))
+          .fontSize(18)
+          .fontColor([$r('app.color.primary_text')])
+          .bindMenu(this.buildToolbarMoreMenuItems())
+      }
+      .height('100%')
+      .padding({
+        left: $r('app.float.toolbar_icon_button_padding_h'),
+        right: $r('app.float.toolbar_icon_button_padding_h')
+      })
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+      .onClick((): void => {
+        this.dismissTitleEditing()
+      })
+    }
+    .width('100%')
+    .height($r('app.float.toolbar_height'))
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 6, right: 6 })
+  }
+
+  /** 窄屏大标题：点击进入编辑（对齐 VoiceNoteDetail.buildTitleBlock）。 */
+  @Builder
+  private buildMobileTitleBlock() {
+    Column() {
+      if (this.titleEditing) {
+        TextInput({ text: this.title, placeholder: $r('app.string.editor_title_placeholder') })
+          .id('note_edit_title_input')
+          .width('100%')
+          .height(48)
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.primary_text'))
+          .backgroundColor($r('app.color.surface_muted'))
+          .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+          .border({ width: 1.5, color: $r('app.color.accent') })
+          .borderRadius(8)
+          .showUnderline(false)
+          .caretColor($r('app.color.accent'))
+          .clip(false)
+          .defaultFocus(true)
+          .enableKeyboardOnFocus(true)
+          .focusable(true)
+          .onChange((value: string): void => {
+            this.title = value
+            this.scheduleSave()
+          })
+          .onFocus((): void => {
+            this.onTitleFieldFocus()
+          })
+          .onBlur((): void => {
+            this.titleEditing = false
+            this.onTitleFieldBlur()
+          })
+          .onSubmit((): void => {
+            this.titleEditing = false
+          })
+      } else {
+        Text(this.title.trim().length > 0 ? this.title : $r('app.string.editor_title_placeholder'))
+          .fontSize(22)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.title.trim().length > 0 ? $r('app.color.primary_text') : $r('app.color.tertiary_text'))
+          .width('100%')
+          .lineHeight(30)
+          .onClick((): void => {
+            this.beginEditTitle()
+          })
+      }
+    }
+    .width('100%')
+    .onAreaChange((_oldArea: Area, area: Area): void => {
+      const h = Number.parseFloat(`${area.height}`) || 48
+      this.titleBlockH = h
+      // 顶栏 40 + sticky padding 15 + 标题高度；不盖住标题本身。
+      this.titleDismissTop = 40 + 15 + h
+      this.updateToolbarTitleOpacity(this.lastOuterOffsetY)
+    })
+  }
+
+  /** 窄屏标签 Chip。 */
+  @Builder
+  private buildMobileTagChips() {
+    if (this.noteTagsSafe().length === 0) {
+      Blank()
+    } else {
+      Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Start }) {
+        ForEach(this.noteTagsSafe(), (tag: string) => {
+          NoteEditTagChip({ tag: tag })
+            .margin({ right: 8, bottom: 6 })
+        }, (tag: string) => `note_edit_tag_${tag}`)
+      }
+    }
+  }
+
+  /**
+   * 标签左、路径右（同行）。
+   * 标签在左侧可换行；路径右侧贴边，过长时在 maxWidth 内跑马灯。
+   * 不再用本征宽度测量锁宽，避免路径宽被算成 0 而消失。
+   */
+  @Builder
+  private buildMobileTagsAndPath() {
+    if (this.noteTagsSafe().length === 0 && this.sidebarFilterMode !== 'folder') {
+      Blank()
+    } else if (this.sidebarFilterMode !== 'folder') {
+      Column() {
+        this.buildMobileTagChips()
+      }
+      .width('100%')
+      .margin({ top: 8 })
+      .alignItems(HorizontalAlign.Start)
+    } else if (this.noteTagsSafe().length === 0) {
+      Row() {
+        Blank().layoutWeight(1)
+        this.buildParentPathCaption()
+      }
+      .width('100%')
+      .margin({ top: 8 })
+    } else {
+      Row({ space: 12 }) {
+        Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Start }) {
+          ForEach(this.noteTagsSafe(), (tag: string) => {
+            NoteEditTagChip({ tag: tag })
+              .margin({ right: 8, bottom: 6 })
+          }, (tag: string) => `note_edit_tag_row_${tag}`)
+        }
+        .layoutWeight(1)
+        .constraintSize({ minWidth: 0 })
+
+        Column() {
+          this.buildParentPathCaption()
+        }
+        .flexShrink(0)
+        .constraintSize({ maxWidth: '58%' })
+      }
+      .width('100%')
+      .margin({ top: 8 })
+      .alignItems(VerticalAlign.Top)
+    }
+  }
+
+  /** 吸顶头部：大标题 + 标签/路径。 */
+  @Builder
+  private buildStickyHeaderBlock() {
+    Column() {
+      this.buildMobileTitleBlock()
+      this.buildMobileTagsAndPath()
+    }
+    .width('100%')
+    .padding({ top: 15 })
+    .alignItems(HorizontalAlign.Start)
+    .onAreaChange((_: Area, area: Area) => {
+      const h = Number.parseFloat(`${area.height}`) || 0
+      if (h > 0 && Math.abs(h - this.stickyHeaderH) >= 1) {
+        this.stickyHeaderH = h
+      }
+    })
+  }
+
+  /** 编辑/预览 Tab（吸顶效果由 Swiper 固定高 = viewport - tabBar 实现，同 VoiceNoteDetail）。 */
+  @Builder
+  private buildMobileTabBar() {
+    Row() {
+      Column() {
+        Text(EditorUiStrings.loc('编辑', 'Edit', '編集'))
+          .fontSize(15)
+          .fontWeight(this.contentTabIndex === 0 ? FontWeight.Medium : FontWeight.Normal)
+          .fontColor(this.contentTabIndex === 0 ? $r('app.color.accent') : $r('app.color.secondary_text'))
+        Divider()
+          .strokeWidth(this.contentTabIndex === 0 ? 2 : 0)
+          .color($r('app.color.accent'))
+          .margin({ top: 8 })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Center)
+      .onClick((): void => {
+        this.switchMode('edit')
+      })
+
+      Column() {
+        Text(EditorUiStrings.loc('预览', 'Preview', 'プレビュー'))
+          .fontSize(15)
+          .fontWeight(this.contentTabIndex === 1 ? FontWeight.Medium : FontWeight.Normal)
+          .fontColor(this.contentTabIndex === 1 ? $r('app.color.accent') : $r('app.color.secondary_text'))
+        Divider()
+          .strokeWidth(this.contentTabIndex === 1 ? 2 : 0)
+          .color($r('app.color.accent'))
+          .margin({ top: 8 })
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Center)
+      .onClick((): void => {
+        this.switchMode('preview')
+      })
+    }
+    .width('100%')
+    .padding({ top: 16 })
+    .backgroundColor($r('app.color.app_background'))
+    .onAreaChange((_: Area, area: Area) => {
+      const h = Number.parseFloat(`${area.height}`) || 0
+      if (h > 0 && Math.abs(h - this.tabBarH) >= 1) {
+        this.tabBarH = h
+      }
+    })
+  }
+
+  @Builder
+  private buildMobileEditPage() {
+    // RichEditor 无 nestedScroll：flat 模式拒绝内置 Pan，由本 List 承接手势并 PARENT_FIRST 联动外层。
+    List() {
+      ListItem() {
+        NoteEditEditorPane({
+          title: $title,
+          content: $content,
+          enterEditToken: this.editorEnterEditToken,
+          refreshToken: this.editorRefreshToken,
+          toolbarSignal: this.editorToolbarSignal,
+          filesDir: this.filesDirCache,
+          textAreaController: this.textAreaController,
+          includeTitle: false,
+          flatChrome: true,
+          minContentHeight: this.swiperContentHeight(),
+          onTitleFocus: (): void => {
+            this.onTitleFieldFocus()
+          },
+          onTitleBlur: (): void => {
+            this.onTitleFieldBlur()
+          },
+          onTitleChange: (): void => {
+            this.scheduleSave()
+          },
+          onContentSelectionChange: (selectionStart: number, selectionEnd: number): void => {
+            this.rememberContentCaret(selectionStart, selectionEnd)
+          },
+          onContentChange: (): void => {
+            this.handleContentChange()
+          }
+        })
+          .width('100%')
+      }
+      ListItem() {
+        Column()
+          .width('100%')
+          .height(48)
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .nestedScroll({
+      scrollForward: NestedScrollMode.PARENT_FIRST,
+      scrollBackward: NestedScrollMode.SELF_FIRST
+    })
+  }
+
+  @Builder
+  private buildMobilePreviewPage() {
+    NoteEditPreviewPane({
+      title: this.title,
+      splitMode: false,
+      includeTitle: false,
+      flatChrome: true,
+      showSplitTagRow: false,
+      previewBlocks: this.previewBlocksState,
+      filesDirCache: this.filesDirCache,
+      imageRefreshKey: this.previewImageRefreshKey,
+      onBackgroundTap: (): void => {
+        if (this.tagMenuVisible) {
+          this.tagMenuVisible = false
+        }
+      },
+      onLinkToast: (href: string): void => {
+        this.openPreviewLink(href)
+      },
+      onCheckboxToggle: (lineIndex: number, checked: boolean): void => {
+        this.onPreviewCheckboxToggle(lineIndex, checked)
+      },
+      onImageTap: (src: string): void => {
+        this.openNoteImageGallery(src)
+      }
+    })
+  }
+
+  @Builder
+  private buildMobileTabbedContent() {
+    Column() {
+      this.buildMobileTabBar()
+      if (this.shouldShowQuickActionBar() && this.contentTabIndex === 0) {
+        EditorQuickActionBar({
+          barWidthVp: this.pageWidth,
+          onBeforeAction: (): void => {
+            this.captureContentCaretFromSelection()
+          },
+          onAction: (action: EditorQuickActionType): void => {
+            this.handleQuickAction(action)
+          }
+        })
+      }
+      Swiper(this.swiperController) {
+        this.buildMobileEditPage()
+        this.buildMobilePreviewPage()
+      }
+      .index(this.contentTabIndex)
+      .indicator(false)
+      .loop(false)
+      .width('100%')
+      .height(this.swiperContentHeight())
+      .onChange((index: number): void => {
+        this.switchMode(index === 1 ? 'preview' : 'edit')
+      })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  /** 窄屏正文：外层 Scroll 滚完吸顶头后仅 Tab 吸顶；Swiper 高 = viewport - tabBar（同 VoiceNoteDetail）。 */
+  @Builder
+  private buildMobileBody() {
+    Scroll(this.outerScroller) {
+      Column() {
+        this.buildStickyHeaderBlock()
+        this.buildMobileTabbedContent()
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .justifyContent(FlexAlign.Start)
+    }
+    .align(Alignment.TopStart)
+    .layoutWeight(1)
+    .width('100%')
+    .scrollBar(BarState.Off)
+    .edgeEffect(EdgeEffect.Spring)
+    .onAreaChange((_: Area, area: Area) => {
+      const h = Number.parseFloat(`${area.height}`) || 0
+      if (h > 0 && Math.abs(h - this.scrollViewportH) >= 1) {
+        this.scrollViewportH = h
+      }
+    })
+    .onDidScroll((_scrollOffset: number, _scrollState: ScrollState): void => {
+      this.onOuterScroll()
+    })
+    .onScrollStop((): void => {
+      this.onOuterScroll()
+    })
+  }
+
+  @Builder
+  private buildTitleDismissOverlay() {
+    // 仅覆盖标题以下区域，标题内可点击移动光标（同 VoiceNoteDetail）。
+    if (this.titleEditing && !this.tagMenuVisible) {
+      Column()
+        .width('100%')
+        .height(Math.max(0, this.pageHeight - Math.max(40, this.titleDismissTop)))
+        .backgroundColor('#00000000')
+        .position({ x: 0, y: Math.max(40, this.titleDismissTop) })
+        .onClick((): void => {
+          this.dismissTitleEditing()
+        })
+        .zIndex(50)
+    }
+  }
+
+  @Builder
+  private buildTagMenuOverlay() {
+    if (this.tagMenuVisible && !this.isSplitMode()) {
+      // 全屏透明层：点击弹窗外先关闭菜单。
+      Column()
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#00000000')
+        .onClick((): void => {
+          this.tagMenuVisible = false
+        })
+        .zIndex(998)
+
+      Column() {
+        NoteEditTagDropdown({
+          tagPool: this.tagPool,
+          noteTags: this.noteTagsSafe(),
+          aiTagCreating: this.aiTagCreating,
+          onTagChecked: (tag: string, selected: boolean) => {
+            void this.onTagChecked(tag, selected)
+          },
+          onAiCreateTag: () => {
+            void this.onAiCreateTag()
+          },
+          onOpenTagManage: () => {
+            this.tagMenuVisible = false
+            void this.openTagManage()
+          }
+        })
+      }
+      .position({ x: this.floatMenuPosX(), y: this.tagMenuPosY() })
+      .zIndex(999)
     }
   }
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       Column({ space: 0 }) {
-        Row() {
+        if (this.isSplitMode()) {
           Row() {
-            SymbolGlyph($r('sys.symbol.arrow_left'))
-              .fontSize(22)
-              .fontColor([$r('app.color.primary_text')])
-          }
-          .height('100%')
-          .constraintSize({ minWidth: 48 })
-          .padding({
-            top: 8,
-            bottom: 8,
-            left: 14,
-            right: 14
-          })
-          .justifyContent(FlexAlign.Center)
-          .alignItems(VerticalAlign.Center)
-          .backgroundColor($r('app.color.surface_muted'))
-          .borderRadius($r('app.float.pill_radius'))
-          .onClick(() => {
-            this.handleBack()
-          })
-
-          Column({ space: 4 }) {
-            if (this.saveStatusBarClickable()) {
-              Text() {
-                Span(EditorUiStrings.previewModeLabel('preview'))
-                  .fontSize($r('app.float.caption_font_size'))
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.primary_text'))
-                Span('▼')
-                  .fontSize($r('app.float.caption_font_size'))
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor($r('app.color.secondary_text'))
-              }
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width('100%')
-              .onClick(() => {
-                if (this.folderMovePopupVisible) {
-                  this.folderMovePopupVisible = false
-                } else {
-                  this.folderMovePopupVisible = true
-                  if (!this.expandedFolderIds.includes(NoteFolderTree.VIRTUAL_ROOT_FOLDER_ID)) {
-                    this.expandedFolderIds = [
-                      ...this.expandedFolderIds,
-                      NoteFolderTree.VIRTUAL_ROOT_FOLDER_ID
-                    ]
-                  }
-                }
-              })
-            } else if (!this.isSplitMode()) {
-              Text(EditorUiStrings.previewModeLabel(this.previewMode))
-                .fontSize($r('app.float.caption_font_size'))
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('app.color.primary_text'))
-                .textAlign(TextAlign.Start)
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .width('100%')
-            } else {
-              Text(EditorUiStrings.saveStatus(this.saveStatus))
-                .fontSize($r('app.float.caption_font_size'))
-                .fontWeight(FontWeight.Medium)
-                .fontColor(
-                  this.saveStatus === '已保存' ? $r('app.color.success') :
-                    (this.saveStatus === '保存失败' ? $r('app.color.danger') : $r('app.color.secondary_text'))
-                )
-                .textAlign(TextAlign.Start)
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .width('100%')
-            }
-            if (!this.isSplitMode()) {
-              Text(EditorUiStrings.saveStatus(this.saveStatus))
-                .fontSize(12)
-                .fontWeight(FontWeight.Medium)
-                .fontColor(
-                  this.saveStatus === '已保存' ? $r('app.color.success') :
-                    (this.saveStatus === '保存失败' ? $r('app.color.danger') : $r('app.color.secondary_text'))
-                )
-                .textAlign(TextAlign.Start)
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .width('100%')
-            } else if (this.lastSavedAt > 0) {
-              Text(TimeUtils.format(this.lastSavedAt))
-                .fontSize(12)
-                .fontColor($r('app.color.tertiary_text'))
-                .textAlign(TextAlign.Start)
-                .width('100%')
-            }
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
-          .padding({ left: 8, right: 8 })
-
-          if (this.isSplitMode() && !this.quickActionBarEnabled) {
             Row() {
-              Text(EditorUiStrings.loc('图', 'Image', '画像'))
-                .fontSize(16)
-                .fontColor(Color.White)
-                .width(30)
-                .height(30)
-                .textAlign(TextAlign.Center)
-                .margin({ right: 5 })
-                .onClick(() => {
-                  void this.insertImage()
-                })
-            }
-          }
-
-          if (!this.isSplitMode()) {
-            Row({ space: 6 }) {
-              if (this.previewMode === 'preview') {
-                Button(EditorUiStrings.loc('编辑', 'Edit', '編集'))
-                  .fontSize($r('app.float.caption_font_size'))
-                  .fontWeight(FontWeight.Medium)
-                  .height(30)
-                  .padding({ left: 12, right: 12 })
-                  .borderRadius(18)
-                  .backgroundColor(Color.Transparent)
-                  .fontColor($r('app.color.accent'))
-                  .border({ width: 1, color: $r('app.color.accent') })
-                  .onClick(() => {
-                    this.switchMode('edit')
-                  })
-              } else {
-                Button(EditorUiStrings.loc('预览', 'Preview', 'プレビュー'))
-                  .fontSize($r('app.float.caption_font_size'))
-                  .fontWeight(FontWeight.Medium)
-                  .height(30)
-                  .padding({ left: 12, right: 12 })
-                  .borderRadius(18)
-                  .backgroundColor($r('app.color.accent'))
-                  .fontColor(Color.White)
-                  .onClick(() => {
-                    this.switchMode('preview')
-                  })
-              }
-              SymbolGlyph($r('sys.symbol.more'))
+              SymbolGlyph($r('sys.symbol.arrow_left'))
                 .fontSize(22)
                 .fontColor([$r('app.color.primary_text')])
-                .margin({ right: 5, left: 5 })
-                .padding(3)
-                .bindMenu(this.buildToolbarMoreMenuItems())
             }
+            .height('100%')
+            .constraintSize({ minWidth: 48 })
+            .padding({
+              top: 8,
+              bottom: 8,
+              left: 14,
+              right: 14
+            })
+            .justifyContent(FlexAlign.Center)
             .alignItems(VerticalAlign.Center)
-          }
-        }
-        .width('100%')
-        .height($r('app.float.edit_note_toolbar_height'))
-        .alignItems(VerticalAlign.Center)
-        .padding({
-          left: this.pageWidth >= 600 ? 24 : 6,
-          right: this.pageWidth >= 600 ? 24 : 6
-        })
+            .backgroundColor($r('app.color.surface_muted'))
+            .borderRadius($r('app.float.pill_radius'))
+            .onClick(() => {
+              this.handleBack()
+            })
 
-        if (this.shouldShowQuickActionBar()) {
-          EditorQuickActionBar({
-            barWidthVp: this.pageWidth,
-            onBeforeAction: (): void => {
-              this.captureContentCaretFromSelection()
-            },
-            onAction: (action: EditorQuickActionType): void => {
-              this.handleQuickAction(action)
+            Column({ space: 4 }) {
+              Text(EditorUiStrings.saveStatus(this.saveStatus))
+                .fontSize($r('app.float.caption_font_size'))
+                .fontWeight(FontWeight.Medium)
+                .fontColor(
+                  this.saveStatus === '已保存' ? $r('app.color.success') :
+                    (this.saveStatus === '保存失败' ? $r('app.color.danger') : $r('app.color.secondary_text'))
+                )
+                .textAlign(TextAlign.Start)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .width('100%')
+              if (this.lastSavedAt > 0) {
+                Text(TimeUtils.format(this.lastSavedAt))
+                  .fontSize(12)
+                  .fontColor($r('app.color.tertiary_text'))
+                  .textAlign(TextAlign.Start)
+                  .width('100%')
+              }
             }
-          })
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+            .padding({ left: 8, right: 8 })
+
+            if (!this.quickActionBarEnabled) {
+              Row() {
+                Text(EditorUiStrings.loc('图', 'Image', '画像'))
+                  .fontSize(16)
+                  .fontColor(Color.White)
+                  .width(30)
+                  .height(30)
+                  .textAlign(TextAlign.Center)
+                  .margin({ right: 5 })
+                  .onClick(() => {
+                    void this.insertImage()
+                  })
+              }
+            }
+          }
+          .width('100%')
+          .height($r('app.float.edit_note_toolbar_height'))
+          .alignItems(VerticalAlign.Center)
+          .padding({ left: 24, right: 24 })
+        } else {
+          this.buildMobileHeader()
         }
 
         Column({ space: $r('app.float.toolbar_spacing_content') }) {
@@ -3073,6 +3408,10 @@ struct NoteEdit {
             NoteEditEditorPane({
               title: $title,
               content: $content,
+              enterEditToken: this.editorEnterEditToken,
+              refreshToken: this.editorRefreshToken,
+              toolbarSignal: this.editorToolbarSignal,
+              filesDir: this.filesDirCache,
               textAreaController: this.textAreaController,
               onTitleFocus: (): void => {
                 this.onTitleFieldFocus()
@@ -3118,62 +3457,8 @@ struct NoteEdit {
           }
           .layoutWeight(1)
           .width('100%')
-        } else if (this.previewMode === 'preview') {
-          Column({ space: 0 }) {
-            if (this.sidebarFilterMode === 'folder' && this.mobileFullPreviewChrome()) {
-              this.buildParentPathCaption()
-            }
-            NoteEditPreviewPane({
-              title: this.title,
-              splitMode: this.isSplitMode(),
-              includeTitle: true,
-              showSplitTagRow: hasEditorTitleOrBody(this.title, this.content) && !this.mobileFullPreviewChrome(),
-              previewBlocks: this.previewBlocksState,
-              filesDirCache: this.filesDirCache,
-              imageRefreshKey: this.previewImageRefreshKey,
-              onBackgroundTap: (): void => {
-                if (this.tagMenuVisible) {
-                  this.tagMenuVisible = false
-                }
-              },
-              onLinkToast: (href: string): void => {
-                this.openPreviewLink(href)
-              },
-              onCheckboxToggle: (lineIndex: number, checked: boolean): void => {
-                this.onPreviewCheckboxToggle(lineIndex, checked)
-              },
-              onImageTap: (src: string): void => {
-                this.openNoteImageGallery(src)
-              },
-              tagBarSlot: (): void => {
-                this.noteEditPreviewTagBarSlot()
-              }
-            })
-              .layoutWeight(1)
-          }
-          .layoutWeight(1)
-          .width('100%')
         } else {
-          NoteEditEditorPane({
-            title: $title,
-            content: $content,
-            textAreaController: this.textAreaController,
-            onTitleFocus: (): void => {
-              this.onTitleFieldFocus()
-            },
-            onTitleBlur: (): void => {
-              this.onTitleFieldBlur()
-            },
-            onTitleChange: (): void => {
-              this.scheduleSave()
-            },
-            onContentSelectionChange: (selectionStart: number, selectionEnd: number): void => {
-              this.rememberContentCaret(selectionStart, selectionEnd)
-            },
-            onContentChange: (): void => {
-              this.handleContentChange()
-            }
-          })
+          this.buildMobileBody()
         }
         }
         .width('100%')
@@ -3202,7 +3487,7 @@ struct NoteEdit {
       })
       .backgroundColor($r('app.color.app_background'))
 
-      if (this.folderMovePopupVisible && this.saveStatusBarClickable()) {
+      if (this.folderMovePopupVisible && this.folderModeEnabled) {
         Stack({ alignContent: Alignment.TopStart }) {
           Column()
             .width('100%')
@@ -3238,14 +3523,9 @@ struct NoteEdit {
         .zIndex(1000)
       }
 
-      // 移动端预览/编辑模式均可拖动的悬浮标签栏
-      if (this.shouldShowMobileTagBar()) {
-        Stack() {
-          this.buildDraggableTagBar()
-        }
-          .position({ x: 0, y: 0 })
-          .zIndex(998)
-          .hitTestBehavior(HitTestMode.Transparent)
+      if (!this.isSplitMode()) {
+        this.buildTitleDismissOverlay()
+        this.buildTagMenuOverlay()
       }
 
       if (this.aiNoteWorking) {
@@ -3295,6 +3575,7 @@ struct NoteEdit {
       if (this.tagMenuVisible) {
         this.tagMenuVisible = false
       }
+      this.dismissTitleEditing()
     })
     .onAreaChange((_, value) => {
       const nextWidth = Number.parseFloat(`${value.width}`) || 360
@@ -3311,6 +3592,7 @@ struct NoteEdit {
       if (this.previewMode !== nextPreviewMode) {
         this.previewMode = nextPreviewMode
       }
+      this.syncContentTabIndexFromPreviewMode()
       if ((!wasSplitMode && nextSplitMode) || this.shouldRenderPreview()) {
         this.preparePreviewForCurrentMode(this.content, true)
       }

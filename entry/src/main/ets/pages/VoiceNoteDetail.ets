@@ -4,6 +4,7 @@ import { SymbolGlyphModifier } from '@kit.ArkUI'
 import { AudioConstants } from '../common/constants/AudioConstants'
 import { Note, isExtractStatusPending } from '../common/model/Note'
 import { ensureAiMembershipAccess } from '../common/utils/AiMembershipGateNavigation'
+import { AudioWaveEnvelope } from '../common/utils/AudioWaveEnvelope'
 import { EditorUiStrings } from '../common/utils/EditorUiStrings'
 import { Logger } from '../common/utils/Logger'
 import { MarkdownUtils, type MarkdownBlock } from '../common/utils/MarkdownUtils'
@@ -99,6 +100,12 @@ struct VoiceNoteDetail {
   @State private audioLoading: boolean = true
   @State private audioFailed: boolean = false
   @State private wavePhase: number = 0
+  /** Display envelope when short WAV; empty → procedural bounce (mp3 / long wav). */
+  @State private waveEnvelope: number[] = []
+  /** Bars currently drawn; refreshed each anim tick so ArkUI updates heights. */
+  @State private waveBars: number[] = []
+  /** Bump to force ForEach/Column refresh (same pattern as VoiceNote.visualTick). */
+  @State private waveVisualTick: number = 0
 
   @State private contentTabIndex: number = 0
   @State private aiWorking: boolean = false
@@ -135,6 +142,8 @@ struct VoiceNoteDetail {
   private bootstrapStarted: boolean = false
   private pendingVoiceHandled: boolean = false
   private waveTimer: number = -1
+  /** Last successful PCM envelope parse; display may discard when duration > 1 min. */
+  private parsedEnvelope: number[] = []
   private initGeneration: number = 0
   private loadedAudioId: string = ''
   private lastAppliedAiBgResult: AiNoteBackgroundTaskResult | null = null
@@ -264,11 +273,54 @@ struct VoiceNoteDetail {
 
   private startWaveTimer(): void {
     this.clearWaveTimer()
+    if (this.waveEnvelope.length > 0) {
+      return
+    }
     this.waveTimer = setInterval((): void => {
-      if (this.playing) {
-        this.wavePhase = (this.wavePhase + 0.04) % 1.0
+      if (this.playing && this.waveEnvelope.length === 0) {
+        // Accumulate seconds; never wrap — avoids a seam every cycle.
+        this.wavePhase = this.wavePhase + 0.05
+        this.syncWaveBars()
       }
     }, 50)
+  }
+
+  private syncWaveBars(): void {
+    this.waveBars = this.waveAmplitudes()
+    // Force ForEach rebuild — stable keys alone do not refresh Column.height on Harmony.
+    this.waveVisualTick = this.waveVisualTick + 1
+  }
+
+  private applyEnvelopeForCurrentDuration(): void {
+    if (this.parsedEnvelope.length === 0) {
+      return
+    }
+    const next = this.displayEnvelopeForDuration(this.parsedEnvelope, this.durationMs)
+    if (next.length === this.waveEnvelope.length) {
+      return
+    }
+    this.waveEnvelope = next
+    this.syncWaveBars()
+    if (this.playing) {
+      if (this.waveEnvelope.length === 0) {
+        this.startWaveTimer()
+      } else {
+        this.clearWaveTimer()
+      }
+    }
+  }
+
+  /** Real envelope only for WAV shorter than or equal to 1 minute. */
+  private static readonly REAL_ENVELOPE_MAX_MS: number = 60 * 1000
+
+  private displayEnvelopeForDuration(parsed: number[] | null, durationMs: number): number[] {
+    if (parsed === null || parsed.length === 0) {
+      return []
+    }
+    if (durationMs > VoiceNoteDetail.REAL_ENVELOPE_MAX_MS) {
+      return []
+    }
+    return parsed
   }
 
   private hasSummary(): boolean {
@@ -501,10 +553,15 @@ struct VoiceNoteDetail {
     this.playbackCompleted = false
     this.playing = false
     this.positionMs = 0
+    this.waveEnvelope = []
+    this.waveBars = []
+    this.parsedEnvelope = []
+    this.clearWaveTimer()
     this.playbackService.setCallbacks(
       (position: number, duration: number): void => {
         this.positionMs = position
         this.durationMs = duration
+        this.applyEnvelopeForCurrentDuration()
       },
       (isPlaying: boolean, completed: boolean): void => {
         this.playing = isPlaying
@@ -516,6 +573,7 @@ struct VoiceNoteDetail {
           this.startWaveTimer()
         } else {
           this.clearWaveTimer()
+          this.syncWaveBars()
         }
       }
     )
@@ -538,10 +596,20 @@ struct VoiceNoteDetail {
       if (generation !== this.initGeneration) {
         return
       }
+      const parsed = AudioWaveEnvelope.extractFromFile(path)
+      this.parsedEnvelope = parsed !== null ? parsed : []
       this.durationMs = this.playbackService.getDurationMs()
+      this.waveEnvelope = this.displayEnvelopeForDuration(
+        this.parsedEnvelope.length > 0 ? this.parsedEnvelope : null,
+        this.durationMs
+      )
+      this.syncWaveBars()
       this.loadedAudioId = trimmed
       this.audioLoading = false
       this.audioFailed = false
+      if (this.playing) {
+        this.startWaveTimer()
+      }
     } catch (error) {
       Logger.warn('VoiceNoteDetail', `initPlayer failed: ${JSON.stringify(error)}`)
       if (generation !== this.initGeneration) {
@@ -575,18 +643,23 @@ struct VoiceNoteDetail {
   }
 
   private waveAmplitudes(): number[] {
-    const count = 48
+    if (this.waveEnvelope.length > 0) {
+      return this.waveEnvelope
+    }
+    const count = AudioWaveEnvelope.barCount
     const result: number[] = []
     const t = this.wavePhase
-    const posSeed = this.positionMs / 80.0
     for (let i = 0; i < count; i++) {
+      // Fixed-seed silhouette (hash only over bar index — not time).
+      const base = Math.min(0.95, Math.max(0.12, 0.22 + this.waveNoise(i * 1.7, 0.37) * 0.7))
       if (!this.playing) {
-        const n = this.waveNoise(i * 1.7, 0.37)
-        result.push(Math.min(0.95, Math.max(0.12, 0.22 + n * 0.7)))
+        result.push(base)
       } else {
-        const n1 = this.waveNoise(i * 2.1, t * 6.0 + posSeed)
-        const n2 = this.waveNoise(i * 5.3 + 1.2, t * 11.0 + posSeed * 0.5)
-        result.push(Math.min(1.0, Math.max(0.12, 0.18 + n1 * 0.55 + n2 * 0.27)))
+        // Continuous slow wobble for non-WAV / parse failure (no positional hash).
+        const wobble =
+          0.10 * Math.sin(t * Math.PI * 2 * 3.0 + i * 0.45) +
+          0.05 * Math.sin(t * Math.PI * 2 * 1.5 + i * 1.1)
+        result.push(Math.min(1.0, Math.max(0.12, base + wobble)))
       }
     }
     return result
@@ -1390,7 +1463,7 @@ struct VoiceNoteDetail {
 
   @Builder
   private buildHeader() {
-    // 与关于页一致：左侧圆角返回、标题区 layoutWeight；右侧标签井号 + 更多菜单。
+    // 与关于页一致：左侧圆角返回、标题区 layoutWeight；右侧标签图标 + 更多菜单。
     Row() {
       Row() {
         SymbolGlyph($r('sys.symbol.arrow_left'))
@@ -1437,11 +1510,9 @@ struct VoiceNoteDetail {
             .height(18)
             .color($r('app.color.accent'))
         } else {
-          Text('#')
+          SymbolGlyph($r('sys.symbol.label'))
             .fontSize(18)
-            .fontStyle(FontStyle.Italic)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.primary_text'))
+            .fontColor([$r('app.color.primary_text')])
         }
       }
       .height('100%')
@@ -1563,7 +1634,7 @@ struct VoiceNoteDetail {
   @Builder
   private buildWaveBars() {
     Row({ space: 2 }) {
-      ForEach(this.waveAmplitudes(), (amp: number, index: number) => {
+      ForEach(this.waveBars, (amp: number, index: number) => {
         Column()
           .width(3)
           .height(Math.max(6, amp * 32))
@@ -1571,8 +1642,7 @@ struct VoiceNoteDetail {
             ? $r('app.color.accent')
             : '#FFD1D5DB')
           .borderRadius(2)
-      }, (_: number, index: number) =>
-        `wave_${index}_${this.wavePhase.toFixed(2)}_${this.positionMs}_${this.playing}_${this.playbackCompleted}`)
+      }, (_: number, index: number) => `wave_bar_${index}_${this.waveVisualTick}`)
     }
     .width('100%')
     .height(32)

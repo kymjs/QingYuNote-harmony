@@ -334,7 +334,7 @@ struct LinkExtractProgress {
       return [
         this.loc('解析音频', 'Parse audio', '音声解析'),
         this.loc('提取正文', 'Extract text', '本文抽出'),
-        this.loc('优化语气词', 'Clean fillers', 'フィラー除去'),
+        this.loc('优化用词', 'Clean fillers', 'フィラー除去'),
         this.loc('生成摘要', 'Generate summary', '要約生成')
       ]
     }

@@ -12,6 +12,8 @@ export struct NoteEditPreviewPane {
   /** 为 false 时标题由页面顶栏展示（窄屏全屏预览）。 */
   @Prop includeTitle: boolean = true
   @Prop showSplitTagRow: boolean = false
+  /** 窄屏：去掉边框阴影卡片。 */
+  @Prop flatChrome: boolean = false
   @Prop previewBlocks: MarkdownBlock[] = []
   @Prop filesDirCache: string = ''
   @Prop imageRefreshKey: number = 0
@@ -58,12 +60,18 @@ export struct NoteEditPreviewPane {
       .width('100%')
       .justifyContent(FlexAlign.Start)
       .alignItems(HorizontalAlign.Start)
-      .padding(18)
-      .margin({ bottom: 16 })
-      .backgroundColor($r('app.color.preview_background'))
-      .borderRadius($r('app.float.card_radius'))
-      .border({ width: 1, color: $r('app.color.card_border') })
-      .shadow({
+      .padding(this.flatChrome ? { top: 8, bottom: 16 } : 18)
+      .margin({ bottom: this.flatChrome ? 0 : 16 })
+      .backgroundColor(this.flatChrome ? Color.Transparent : $r('app.color.preview_background'))
+      .borderRadius(this.flatChrome ? 0 : $r('app.float.card_radius'))
+      .border(this.flatChrome ? { width: 0, color: Color.Transparent } :
+        { width: 1, color: $r('app.color.card_border') })
+      .shadow(this.flatChrome ? {
+        radius: 0,
+        color: Color.Transparent,
+        offsetX: 0,
+        offsetY: 0
+      } : {
         radius: 16,
         color: $r('app.color.shadow_color'),
         offsetX: 0,
@@ -75,5 +83,9 @@ export struct NoteEditPreviewPane {
     .width('100%')
     .height('100%')
     .align(Alignment.TopStart)
+    .nestedScroll({
+      scrollForward: NestedScrollMode.PARENT_FIRST,
+      scrollBackward: NestedScrollMode.SELF_FIRST
+    })
   }
 }
