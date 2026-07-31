@@ -9,6 +9,7 @@ let flowchartNavigationInFlight: boolean = false
 export interface FlowchartNavParams {
   noteId: string
   focusQuery?: string
+  initialMindMap?: boolean
 }
 
 /** 知识图谱页单例导航（RouterMode.Single）。 */
@@ -25,7 +26,8 @@ export async function navigateToFlowchart(
       url: FLOWCHART_URL,
       params: {
         noteId: params.noteId,
-        focusQuery: params.focusQuery ?? ''
+        focusQuery: params.focusQuery ?? '',
+        initialMindMap: params.initialMindMap === true ? '1' : '0'
       }
     }, router.RouterMode.Single)
   } catch (err) {

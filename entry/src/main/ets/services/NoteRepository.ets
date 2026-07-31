@@ -83,6 +83,11 @@ export class NoteRepository {
     this.bumpVersion()
   }
 
+  /** 仅丢弃列表内存缓存（不抬版本），用于首页强制重读磁盘。 */
+  discardCachedNoteLists(): void {
+    this.invalidateListCaches()
+  }
+
   private async noteForDisplay(note: Note): Promise<Note> {
     const userId = await NoteContentEncryptionService.getInstance().resolveUserId()
     if (userId === null) {
@@ -236,21 +241,30 @@ export class NoteRepository {
   async listNotes(): Promise<Note[]> {
     await this.init()
     if (this.cachedActiveNotesVersion === this.notesVersion && this.cachedActiveNotes) {
+      Logger.info('DashHomeLoad',
+        `listNotes CACHE HIT version=${this.notesVersion} cached=${this.cachedActiveNotes.length}`)
       const notes: Note[] = []
       for (const note of this.cachedActiveNotes) {
         notes.push(await this.noteForDisplay(this.cloneNote(note)))
       }
       return notes
     }
+    Logger.info('DashHomeLoad',
+      `listNotes CACHE MISS version=${this.notesVersion} cachedVer=${this.cachedActiveNotesVersion}`)
     const notes = (await this.loadAllNotes()).filter((note: Note) => !note.deleted && note.deletedTime === 0)
     const sortedNotes = NoteSortUtils.sortByLastEditedDesc(notes)
     const displayNotes: Note[] = []
+    let skipped = 0
     for (const note of sortedNotes) {
       if (!(await this.shouldIncludeNoteInHomeList(note))) {
+        skipped += 1
         continue
       }
       displayNotes.push(await this.noteForDisplay(this.cloneNote(note)))
     }
+    Logger.info('DashHomeLoad',
+      `listNotes DONE loaded=${notes.length} skipped=${skipped} display=${displayNotes.length} ` +
+      `sample=${displayNotes.slice(0, 3).map((n: Note) => n.id.substring(0, 8)).join(',')}`)
     this.cachedActiveNotes = displayNotes
     this.cachedActiveNotesVersion = this.notesVersion
     return this.cloneNotes(displayNotes)

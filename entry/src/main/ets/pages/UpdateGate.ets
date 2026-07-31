@@ -39,7 +39,7 @@ struct UpdateGate {
       }
       const loggedIn = await PreferencesService.getInstance().isUserLoggedIn()
       const guest = await PreferencesService.getInstance().isGuestMode()
-      const target = (loggedIn || guest) ? 'pages/Index' : 'pages/Login'
+      const target = (loggedIn || guest) ? 'pages/MainShell' : 'pages/Login'
       await this.getUIContext().getRouter().replaceUrl({ url: target })
     } catch (e) {
       console.error(`UpdateGate routeToAppEntry: ${JSON.stringify(e)}`)

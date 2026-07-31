@@ -3,5 +3,6 @@ export type NoteEditorEntryAction =
   | 'aiLinkExtract'
   | 'insertImage'
   | 'generateNoteFromImage'
+  | 'bookScan'
   | 'todoList'
   | 'voiceMemo'

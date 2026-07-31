@@ -44,6 +44,11 @@ export class FileService {
     return `${this.baseDir}/${noteId}${NOTE_FILE_SUFFIX}`
   }
 
+  /** 诊断用：笔记目录绝对路径。 */
+  getNotesBaseDir(): string {
+    return this.baseDir
+  }
+
   getFlowchartPath(noteId: string): string {
     return `${this.baseDir}/${noteId}${FLOWCHART_FILE_SUFFIX}`
   }
@@ -261,6 +266,7 @@ export class FileService {
     try {
       await this.ensureBaseDir()
       if (!fs.accessSync(this.baseDir)) {
+        Logger.warn('DashHomeLoad', `listNoteIds baseDir missing: ${this.baseDir}`)
         return []
       }
       const entries = fs.listFileSync(this.baseDir, {
@@ -268,12 +274,18 @@ export class FileService {
         listNum: 0
       }) as string[]
       const noteIds: string[] = []
+      let mdCount = 0
       for (const entry of entries) {
+        if (entry.endsWith(NOTE_FILE_SUFFIX)) {
+          mdCount += 1
+        }
         if (!NOTE_FILE_NAME_REGEX.test(entry)) {
           continue
         }
         noteIds.push(entry.slice(0, -NOTE_FILE_SUFFIX.length))
       }
+      Logger.info('DashHomeLoad',
+        `listNoteIds baseDir=${this.baseDir} entries=${entries.length} md=${mdCount} matchedIds=${noteIds.length}`)
       return noteIds
     } catch (error) {
       Logger.warn('FileService', `listNoteIds failed: ${this.describeError(error as Object)}`)

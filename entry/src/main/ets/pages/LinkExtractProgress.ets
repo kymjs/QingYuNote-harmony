@@ -274,7 +274,7 @@ struct LinkExtractProgress {
     this.navigatingAway = true
     this.clearTimers()
     try {
-      void this.getUIContext().getRouter().replaceUrl({ url: 'pages/Index' })
+      void this.getUIContext().getRouter().replaceUrl({ url: 'pages/MainShell' })
     } catch (_) {
       this.getUIContext().getRouter().back()
     }

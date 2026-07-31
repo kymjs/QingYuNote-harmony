@@ -152,6 +152,8 @@ struct FlowchartPage {
   private lifecycle = new PageLifecycle()
   private dirty: boolean = false
   private initialHadNodes: boolean = false
+  private initialMindMap: boolean = false
+  private initialMindMapApplied: boolean = false
   private settings: RenderingContextSettings = new RenderingContextSettings(true)
   private canvasContext: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.settings)
 
@@ -160,6 +162,8 @@ struct FlowchartPage {
     const params = this.getUIContext().getRouter().getParams() as Record<string, Object>
     this.noteId = `${params?.noteId ?? ''}`
     this.focusQuery = `${params?.focusQuery ?? ''}`
+    this.initialMindMap = `${params?.initialMindMap ?? ''}` === '1'
+    this.initialMindMapApplied = false
     void this.loadGraph()
   }
 
@@ -171,7 +175,9 @@ struct FlowchartPage {
     const params = this.getUIContext().getRouter().getParams() as Record<string, Object>
     const nextNoteId = `${params?.noteId ?? ''}`
     const nextFocus = `${params?.focusQuery ?? ''}`
-    if (nextNoteId === this.noteId && nextFocus === this.focusQuery) {
+    const nextMindMap = `${params?.initialMindMap ?? ''}` === '1'
+    if (nextNoteId === this.noteId && nextFocus === this.focusQuery &&
+      nextMindMap === this.initialMindMap) {
       return
     }
     await this.saveIfDirty()
@@ -180,6 +186,8 @@ struct FlowchartPage {
     }
     this.noteId = nextNoteId
     this.focusQuery = nextFocus
+    this.initialMindMap = nextMindMap
+    this.initialMindMapApplied = false
     this.loading = true
     void this.loadGraph()
   }
@@ -253,6 +261,10 @@ struct FlowchartPage {
         this.markNodeEdited(nodeId)
       } else if (loaded.nodes.length > 0) {
         this.lastEditedNodeId = loaded.nodes[loaded.nodes.length - 1].id
+      }
+      if (this.initialMindMap && !this.initialMindMapApplied && isPlaceholderFlowchartGraph(graph)) {
+        this.initialMindMapApplied = true
+        this.enterMindMapMode()
       }
     }
   }

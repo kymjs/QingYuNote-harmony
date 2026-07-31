@@ -100,7 +100,7 @@ struct Login {
           if (routerWithClear.clear !== undefined) {
             routerWithClear.clear()
           }
-          await router.replaceUrl({ url: 'pages/Index' })
+          await router.replaceUrl({ url: 'pages/MainShell' })
         } catch (e2) {
           console.error(`Login navigateAfterLogin replaceUrl fallback failed: ${JSON.stringify(e2)}`)
         }
@@ -113,7 +113,7 @@ struct Login {
       if (routerWithClear.clear !== undefined) {
         routerWithClear.clear()
       }
-      await router.replaceUrl({ url: 'pages/Index' })
+      await router.replaceUrl({ url: 'pages/MainShell' })
     } catch (e) {
       console.error(`Login navigateAfterLogin replaceUrl failed: ${JSON.stringify(e)}`)
     }

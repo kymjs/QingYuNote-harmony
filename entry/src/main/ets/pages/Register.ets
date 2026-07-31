@@ -84,7 +84,7 @@ struct Register {
           if (routerWithClear.clear !== undefined) {
             routerWithClear.clear()
           }
-          await router.replaceUrl({ url: 'pages/Index' })
+          await router.replaceUrl({ url: 'pages/MainShell' })
         } catch (e2) {
           console.error(`Register navigateAfterRegister replaceUrl fallback failed: ${JSON.stringify(e2)}`)
         }
@@ -97,7 +97,7 @@ struct Register {
       if (routerWithClear.clear !== undefined) {
         routerWithClear.clear()
       }
-      await router.replaceUrl({ url: 'pages/Index' })
+      await router.replaceUrl({ url: 'pages/MainShell' })
     } catch (e) {
       console.error(`Register navigateAfterRegister replaceUrl failed: ${JSON.stringify(e)}`)
     }

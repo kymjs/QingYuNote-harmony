@@ -1192,6 +1192,8 @@ struct NoteEdit {
         void this.insertImage()
       } else if (action === 'generateNoteFromImage') {
         void this.insertImage(true, true)
+      } else if (action === 'bookScan') {
+        void this.insertImage()
       } else if (action === 'todoList') {
         this.applyTodoListEntryDefaults()
       }
@@ -3081,11 +3083,11 @@ struct NoteEdit {
       .alignItems(HorizontalAlign.Start)
     } else if (this.noteTagsSafe().length === 0) {
       Row() {
-        Blank().layoutWeight(1)
         this.buildParentPathCaption()
       }
       .width('100%')
       .margin({ top: 8 })
+      .justifyContent(FlexAlign.Start)
     } else {
       Row({ space: 12 }) {
         Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Start }) {

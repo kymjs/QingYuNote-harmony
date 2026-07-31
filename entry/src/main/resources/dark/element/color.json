@@ -147,6 +147,14 @@
     {
       "name": "sheet_background",
       "value": "#EB141A22"
+    },
+    {
+      "name": "dashboard_header_top",
+      "value": "#FF163528"
+    },
+    {
+      "name": "dashboard_header_mid",
+      "value": "#FF0F1612"
     }
   ]
 }

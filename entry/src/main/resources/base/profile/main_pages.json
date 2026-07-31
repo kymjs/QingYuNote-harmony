@@ -5,6 +5,7 @@
     "pages/Register",
     "pages/ChangePassword",
     "pages/BindPhone",
+    "pages/MainShell",
     "pages/Index",
     "pages/NoteEdit",
     "pages/Settings",
