@@ -37,6 +37,10 @@ export function linkOgLoading(anchorLabel: string): LinkOgMeta {
   }
 }
 
+const BROWSER_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+
 /** 客户端直拉目标页解析 OG（失败走方案 A）。 */
 export class LinkOgMetaService {
   private static instance?: LinkOgMetaService
@@ -84,8 +88,9 @@ export class LinkOgMetaService {
       const resp = await req.request(url, {
         method: http.RequestMethod.GET,
         header: {
-          'User-Agent': 'Mozilla/5.0 (compatible; QingyuNote/1.0)',
-          'Accept': 'text/html,application/xhtml+xml'
+          'User-Agent': BROWSER_UA,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
         },
         expectDataType: http.HttpDataType.STRING,
         connectTimeout: 10000,
@@ -95,16 +100,20 @@ export class LinkOgMetaService {
       const code = resp.responseCode
       const body = typeof resp.result === 'string' ? resp.result as string : ''
       if (code < 200 || code >= 400 || body.length === 0) {
-        return this.store(url, linkOgFallback())
+        return linkOgFallback()
       }
-      return this.store(url, this.parseHtml(body, anchorLabel))
+      return this.storeIfSuccess(url, this.parseHtml(body, url, anchorLabel))
     } catch (e) {
       Logger.warn('LinkOgMetaService', `fetch failed: ${JSON.stringify(e)}`)
-      return this.store(url, linkOgFallback())
+      return linkOgFallback()
     }
   }
 
-  private store(url: string, meta: LinkOgMeta): LinkOgMeta {
+  /** 仅缓存成功解析结果；fallback 不入缓存，便于下次重试。 */
+  private storeIfSuccess(url: string, meta: LinkOgMeta): LinkOgMeta {
+    if (meta.isFallback) {
+      return meta
+    }
     this.cache.set(url, meta)
     if (this.cache.size > LinkOgMetaService.MAX_CACHE) {
       const first = this.cache.keys().next().value as string
@@ -113,7 +122,7 @@ export class LinkOgMetaService {
     return meta
   }
 
-  private parseHtml(html: string, anchorLabel: string): LinkOgMeta {
+  private parseHtml(html: string, pageUrl: string, anchorLabel: string): LinkOgMeta {
     const og = (prop: string): string => {
       const re1 = new RegExp(`property=["']og:${prop}["'][^>]*content=["']([^"']+)["']`, 'i')
       const re2 = new RegExp(`content=["']([^"']+)["'][^>]*property=["']og:${prop}["']`, 'i')
@@ -138,7 +147,7 @@ export class LinkOgMetaService {
     let title = LinkOgMetaService.decodeHtml(og('title') || (titleMatch ? titleMatch[1] : '') ||
       anchorLabel).trim()
     let description = LinkOgMetaService.decodeHtml(og('description') || metaName('description')).trim()
-    const imageUrl = (og('image') || '').trim()
+    const imageUrl = LinkOgMetaService.resolveUrl(pageUrl, (og('image') || '').trim())
     let author = LinkOgMetaService.decodeHtml(
       og('site_name') || metaName('author') || metaName('article:author')
     ).trim()
@@ -156,6 +165,37 @@ export class LinkOgMetaService {
       description: description.length > 0 ? description : fb.description,
       imageUrl: imageUrl,
       isFallback: false
+    }
+  }
+
+  private static resolveUrl(pageUrl: string, raw: string): string {
+    if (raw.length === 0) {
+      return ''
+    }
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      return raw
+    }
+    try {
+      // 简易相对路径解析：以页面目录为基准。
+      if (raw.startsWith('//')) {
+        const scheme = pageUrl.startsWith('https') ? 'https:' : 'http:'
+        return scheme + raw
+      }
+      const schemeHostMatch = /^(https?:\/\/[^/?#]+)/i.exec(pageUrl)
+      if (!schemeHostMatch) {
+        return raw
+      }
+      const origin = schemeHostMatch[1]
+      if (raw.startsWith('/')) {
+        return origin + raw
+      }
+      const pathMatch = /^(https?:\/\/[^?#]*)/i.exec(pageUrl)
+      const basePath = pathMatch ? pathMatch[1] : pageUrl
+      const slash = basePath.lastIndexOf('/')
+      const dir = slash > origin.length - 1 ? basePath.substring(0, slash + 1) : origin + '/'
+      return dir + raw
+    } catch (_) {
+      return raw
     }
   }
 

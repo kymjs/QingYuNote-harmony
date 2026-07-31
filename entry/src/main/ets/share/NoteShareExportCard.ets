@@ -6,6 +6,7 @@ import { CachedNetworkImage } from '../components/CachedNetworkImage'
 import { NoteEditMarkdownBlocksView } from '../pages/NoteEditMarkdownBlocksView'
 import { ImageCacheService } from '../services/ImageCacheService'
 import { FileService } from '../services/FileService'
+import { AppContextHolder } from '../services/AppContextHolder'
 import {
   DEFAULT_SHARE_CONTENT_PADDING,
   ShareCardTheme,
@@ -206,7 +207,15 @@ export struct NoteShareExportCard {
     if (src.startsWith('/')) {
       return src
     }
-    return `${this.filesDirCache}/${src}`
+    let base = this.filesDirCache
+    if (base.length === 0) {
+      try {
+        base = AppContextHolder.getContext().filesDir
+      } catch (_) {
+        base = ''
+      }
+    }
+    return base.length > 0 ? `${base}/${src}` : src
   }
 
   private resolveImageSrc(src: string): string {

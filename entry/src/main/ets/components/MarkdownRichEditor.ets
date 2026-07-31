@@ -3,8 +3,7 @@ import { MarkdownEditSession } from '../common/utils/MarkdownEditSession'
 import { MarkdownEmbedKind, MarkdownEmbedMatcher } from '../common/utils/MarkdownEmbedMatcher'
 import {
   MarkdownSyntaxHighlighter,
-  MarkdownSyntaxTokenType,
-  MARKDOWN_EDIT_QUOTE_COLOR
+  MarkdownSyntaxTokenType
 } from '../common/utils/MarkdownSyntaxHighlighter'
 import { EditorLinkCard } from './EditorLinkCard'
 import { CachedNetworkImage } from './CachedNetworkImage'
@@ -41,11 +40,23 @@ interface ProjectedMarkdown {
   bindings: EmbedBinding[]
 }
 
+/** 窄屏 flat：按正文估高铺满，供外层 Scroll 整体滚动（编辑区自身不竖滑）。 */
+export function estimateMarkdownEditorHeight(content: string, minContentHeight: number): number {
+  const minH = minContentHeight > 0 ? minContentHeight : 280
+  const text = content.length > 0 ? content : ''
+  const lines = Math.max(1, text.split('\n').length)
+  const imageCount = (text.match(/!\[[^\]]*]\([^)]+\)/g) ?? []).length
+  // 行高约 28，图片块约 220，段落余量 + 底部缓冲；宁高勿低，避免裁切后无法内滚补偿。
+  const estimated = lines * 28 + 200 + Math.floor(text.length / 60) * 10 + imageCount * 220
+  return Math.max(minH, Math.min(estimated, 20000))
+}
+
 /**
  * 编辑态单一富文本：RichEditor + 语法高亮 + 图片/链接 BuilderSpan。
  * - enterEditToken：进入编辑 / 预览切回 → onEnterEdit + 重建
  * - refreshToken：工具栏插入后重建（保留会话）
  * - toolbarSignal：`image|label|url` 或 `link|label|url`，触发 onToolbarInsert
+ * - colorModeToken：深浅色切换后重建 span 色
  */
 @Component
 export struct MarkdownRichEditor {
@@ -53,10 +64,11 @@ export struct MarkdownRichEditor {
   @Prop @Watch('onEnterEditToken') enterEditToken: number = 0
   @Prop @Watch('onRefreshToken') refreshToken: number = 0
   @Prop @Watch('onToolbarSignal') toolbarSignal: string = ''
+  @Prop @Watch('onColorModeToken') colorModeToken: number = 0
   @Prop filesDir: string = ''
   /** 窄屏扁平：透明底、无圆角。 */
   @Prop flatChrome: boolean = false
-  /** flatChrome 时最小高度（Swiper 可视高）。 */
+  /** flatChrome 时最小高度（外层视口铺满高）。 */
   @Prop minContentHeight: number = 280
   onContentChange: () => void = () => {
   }
@@ -130,6 +142,11 @@ export struct MarkdownRichEditor {
     this.requestRebuild('toolbar')
   }
 
+  onColorModeToken(): void {
+    Logger.info(LOG_TAG, `onColorModeToken=${this.colorModeToken}`)
+    this.requestRebuild('colorMode')
+  }
+
   private requestRebuild(reason: string): void {
     if (!this.editorReady) {
       this.pendingRebuildAfterBusy = true
@@ -144,19 +161,13 @@ export struct MarkdownRichEditor {
     this.rebuildFromContent()
   }
 
-  /** flatChrome：按正文估高并略放大，避免低估后正文被裁且内滚被关掉。 */
+  /** flatChrome：估高铺满全文，外层 Scroll 整体滚动。 */
   private flatEditorHeight(): number {
-    const minH = this.minContentHeight > 0 ? this.minContentHeight : 280
-    const text = this.content.length > 0 ? this.content : ''
-    const lines = Math.max(1, text.split('\n').length)
-    const imageCount = (text.match(/!\[[^\]]*]\([^)]+\)/g) ?? []).length
-    // 行高约 26，图片块约 220，另加段落余量；宁高勿低。
-    const estimated = lines * 28 + 160 + Math.floor(text.length / 60) * 10 + imageCount * 220
-    return Math.max(minH, Math.min(estimated, 20000))
+    return estimateMarkdownEditorHeight(this.content, this.minContentHeight)
   }
 
   /**
-   * RichEditor 无 nestedScroll；拒绝内置竖滑后，手势由外层 List 承接并与页面 Scroll 联动。
+   * 拒绝内置竖滑：编辑区不可滚，手势交给外层页面 Scroll（单一滚动整体）。
    * 点击聚焦、输入仍保留。
    */
   private rejectBuiltInPan(
@@ -170,9 +181,18 @@ export struct MarkdownRichEditor {
     return GestureJudgeResult.CONTINUE
   }
 
+  private notifySelectionRange(start: number, end: number): void {
+    if (this.rebuilding || start < 0) {
+      return
+    }
+    const s = start
+    const e = end >= 0 ? end : s
+    this.onContentSelectionChange(s, e)
+  }
+
   build() {
     if (this.flatChrome) {
-      // 估高铺开 + 拒绝内置 Pan：滚动交给外层 List.nestedScroll（同 VoiceNoteDetail）。
+      // 估高铺开 + 拒绝内置 Pan：全部竖滑由外层 Scroll 承担。
       RichEditor(this.options)
         .width('100%')
         .height(this.flatEditorHeight())
@@ -204,6 +224,11 @@ export struct MarkdownRichEditor {
           }
           this.scheduleSyncFromEditor()
         })
+        .onSelectionChange((value: RichEditorRange) => {
+          const start = value.start !== undefined ? value.start : -1
+          const end = value.end !== undefined ? value.end : start
+          this.notifySelectionRange(start, end)
+        })
     } else {
       RichEditor(this.options)
         .width('100%')
@@ -233,6 +258,11 @@ export struct MarkdownRichEditor {
             return
           }
           this.scheduleSyncFromEditor()
+        })
+        .onSelectionChange((value: RichEditorRange) => {
+          const start = value.start !== undefined ? value.start : -1
+          const end = value.end !== undefined ? value.end : start
+          this.notifySelectionRange(start, end)
         })
     }
   }
@@ -406,7 +436,7 @@ export struct MarkdownRichEditor {
         }
         if (this.content.length > 0) {
           this.controller.addTextSpan(this.content, {
-            style: { fontColor: Color.Black, fontSize: 16 }
+            style: { fontColor: $r('app.color.primary_text'), fontSize: 16 }
           })
           this.bindings = []
           Logger.info(LOG_TAG, `fallback plain text added len=${this.content.length}`)
@@ -509,8 +539,6 @@ export struct MarkdownRichEditor {
       return
     }
     const tokens = MarkdownSyntaxHighlighter.tokenize(segment)
-    const accent = '#0DAA4A'
-    const primary = '#111827'
     for (let i = 0; i < tokens.length; i++) {
       const t = tokens[i]
       const slice = segment.substring(t.start, t.end)
@@ -518,26 +546,33 @@ export struct MarkdownRichEditor {
         continue
       }
       this.controller.addTextSpan(slice, {
-        style: this.styleFor(t.type, accent, primary)
+        style: this.styleFor(t.type)
       })
     }
   }
 
-  private styleFor(type: MarkdownSyntaxTokenType, accent: string, primary: string): RichEditorTextStyle {
-    // 使用 Color / 明确字号，避免部分机型对纯字符串色值不绘制
+  private styleFor(type: MarkdownSyntaxTokenType): RichEditorTextStyle {
     if (type === 'h1') {
-      return { fontColor: Color.Black, fontWeight: FontWeight.Bold, fontSize: 16 }
+      return {
+        fontColor: $r('app.color.primary_text'),
+        fontWeight: FontWeight.Bold,
+        fontSize: 16
+      }
     }
     if (type === 'quote') {
-      return { fontColor: '#666666', fontSize: 16 }
+      return { fontColor: $r('app.color.secondary_text'), fontSize: 16 }
     }
     if (type === 'italic') {
-      return { fontColor: '#0DAA4A', fontStyle: FontStyle.Italic, fontSize: 16 }
+      return {
+        fontColor: $r('app.color.accent'),
+        fontStyle: FontStyle.Italic,
+        fontSize: 16
+      }
     }
     if (type === 'plain') {
-      return { fontColor: Color.Black, fontSize: 16 }
+      return { fontColor: $r('app.color.primary_text'), fontSize: 16 }
     }
-    return { fontColor: '#0DAA4A', fontSize: 16 }
+    return { fontColor: $r('app.color.accent'), fontSize: 16 }
   }
 
   private addEmbedBuilder(binding: EmbedBinding): void {

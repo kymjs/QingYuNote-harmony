@@ -22,7 +22,7 @@ export struct EditorQuickActionBar {
 
   private static readonly BAR_HEIGHT: number = 40
   private static readonly SLOT_SIZE: number = 40
-  private static readonly BAR_PADDING_H: number = 8
+  private static readonly BAR_PADDING_H: number = 0
   private static readonly ICON_COUNT: number = 10
   private static readonly ICON_VISUAL_SIZE: number = EditorQuickActionBar.SLOT_SIZE * 0.7
   /** 加粗/斜体/删除线图标视觉缩小 15%，点击区域仍用 ICON_VISUAL_SIZE 计算。 */

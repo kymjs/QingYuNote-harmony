@@ -1,8 +1,5 @@
 import { CachedNetworkImage } from './CachedNetworkImage'
-import {
-  LinkOgMeta,
-  linkOgMetaLine
-} from '../services/LinkOgMetaService'
+import { LinkOgMeta } from '../services/LinkOgMetaService'
 import { ImageCacheService } from '../services/ImageCacheService'
 
 @Component
@@ -26,12 +23,6 @@ export struct EditorLinkCard {
           .fontSize(14)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.primary_text'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .width('100%')
-        Text(linkOgMetaLine(this.meta))
-          .fontSize(12)
-          .fontColor($r('app.color.tertiary_text'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')

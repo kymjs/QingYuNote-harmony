@@ -1741,7 +1741,7 @@ struct VoiceNoteDetail {
         .fontColor($r('app.color.secondary_text'))
     }
     .width('100%')
-    .padding({ top: 10 })
+    .padding({ top: 10, bottom: 4 })
   }
 
   private swiperContentHeight(): number {
@@ -1995,7 +1995,7 @@ struct VoiceNoteDetail {
       })
     }
     .width('100%')
-    .padding({ top: 16 })
+    .padding({ top: 4 })
     .backgroundColor($r('app.color.app_background'))
     .onAreaChange((_: Area, area: Area) => {
       const h = Number.parseFloat(`${area.height}`) || 0

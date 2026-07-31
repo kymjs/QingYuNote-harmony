@@ -9,12 +9,13 @@ export struct NoteEditEditorPane {
   @Prop enterEditToken: number = 0
   @Prop refreshToken: number = 0
   @Prop toolbarSignal: string = ''
+  @Prop colorModeToken: number = 0
   @Prop filesDir: string = ''
   /** 窄屏语音式布局：标题在页面 header，此处只编辑正文。 */
   @Prop includeTitle: boolean = true
   /** 窄屏：去掉边框阴影卡片。 */
   @Prop flatChrome: boolean = false
-  /** flatChrome 时传给 RichEditor 的最小高度（Swiper 可视高）。 */
+  /** flatChrome 时传给 RichEditor 的最小高度（外层视口铺满高）。 */
   @Prop minContentHeight: number = 280
   textAreaController: TextAreaController = new TextAreaController()
   onTitleChange: () => void = () => {
@@ -43,6 +44,7 @@ export struct NoteEditEditorPane {
           enterEditToken: this.enterEditToken,
           refreshToken: this.refreshToken,
           toolbarSignal: this.toolbarSignal,
+          colorModeToken: this.colorModeToken,
           filesDir: this.filesDir,
           flatChrome: true,
           minContentHeight: this.minContentHeight,
@@ -87,6 +89,7 @@ export struct NoteEditEditorPane {
           enterEditToken: this.enterEditToken,
           refreshToken: this.refreshToken,
           toolbarSignal: this.toolbarSignal,
+          colorModeToken: this.colorModeToken,
           filesDir: this.filesDir,
           flatChrome: false,
           onContentChange: (): void => {

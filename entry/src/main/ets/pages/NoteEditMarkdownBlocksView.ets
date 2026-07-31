@@ -1,12 +1,14 @@
 import type { MarkdownBlock, MarkdownCheckboxItem, MarkdownInline } from '../common/utils/MarkdownUtils'
 import { CodeHighlight, type CodeHighlightToken, type CodeHighlightTokenKind } from '../common/utils/CodeHighlight'
 import { CachedNetworkImage } from '../components/CachedNetworkImage'
+import { PreviewStandaloneLinkCard } from '../components/PreviewStandaloneLinkCard'
 import { KatexFormulaPreview } from '../components/KatexFormulaPreview'
 import { ImageCacheService } from '../services/ImageCacheService'
 import { KatexUtils } from '../common/utils/KatexUtils'
 import { fileUri } from '@kit.CoreFileKit'
 import display from '@ohos.display'
 import { FileService } from '../services/FileService'
+import { AppContextHolder } from '../services/AppContextHolder'
 
 /** 笔记预览/分享卡片共用的 Markdown 块渲染，独立于编辑页以缩小状态失效范围。 */
 @Component
@@ -123,6 +125,40 @@ export struct NoteEditMarkdownBlocksView {
     return inlines.some((inline: MarkdownInline) => inline.type === 'math_inline')
   }
 
+  /** 整段仅含一个链接（可忽略空白 text）时返回该 link，否则 null。 */
+  private standaloneLinkInline(inlines: MarkdownInline[]): MarkdownInline | null {
+    let found: MarkdownInline | null = null
+    for (let i = 0; i < inlines.length; i++) {
+      const inline = inlines[i]
+      if (inline.type === 'text' && inline.content.trim().length === 0) {
+        continue
+      }
+      if (inline.type === 'link' && inline.href.trim().length > 0) {
+        if (found !== null) {
+          return null
+        }
+        found = inline
+        continue
+      }
+      return null
+    }
+    return found
+  }
+
+  private isStandaloneLinkParagraph(inlines: MarkdownInline[]): boolean {
+    return this.standaloneLinkInline(inlines) !== null
+  }
+
+  private standaloneLinkHref(inlines: MarkdownInline[]): string {
+    const link = this.standaloneLinkInline(inlines)
+    return link !== null ? link.href : ''
+  }
+
+  private standaloneLinkLabel(inlines: MarkdownInline[]): string {
+    const link = this.standaloneLinkInline(inlines)
+    return link !== null ? link.content : ''
+  }
+
   private hasAnyMath(): boolean {
     for (const block of this.blocks) {
       if (block.type === 'math_display') {
@@ -186,8 +222,15 @@ export struct NoteEditMarkdownBlocksView {
     if (src.startsWith('/')) {
       return src
     }
-    const base = this.filesDirCache
-    return `${base}/${src}`
+    let base = this.filesDirCache
+    if (base.length === 0) {
+      try {
+        base = AppContextHolder.getContext().filesDir
+      } catch (_) {
+        base = ''
+      }
+    }
+    return base.length > 0 ? `${base}/${src}` : src
   }
 
   private resolveImageSrc(src: string): string {
@@ -767,6 +810,11 @@ export struct NoteEditMarkdownBlocksView {
         .alignItems(HorizontalAlign.Center)
         .backgroundColor(this.codeBackgroundColor())
         .borderRadius(12)
+        .onClick(() => {
+          if (!this.forShareExport) {
+            this.onImageTap(block.language)
+          }
+        })
       } else if (ImageCacheService.isNetworkImageUrl(block.language)) {
         CachedNetworkImage({
           url: block.language,
@@ -800,6 +848,14 @@ export struct NoteEditMarkdownBlocksView {
         displayBlock: true
       })
         .key(`math_display:${block.content.slice(0, 48)}`)
+    } else if (this.isStandaloneLinkParagraph(block.inlines)) {
+      PreviewStandaloneLinkCard({
+        href: this.standaloneLinkHref(block.inlines),
+        label: this.standaloneLinkLabel(block.inlines),
+        onCardTap: (): void => {
+          this.onLinkToast(this.standaloneLinkHref(block.inlines))
+        }
+      })
     } else {
       this.buildInlineText(block.inlines, block.content, $r('app.float.body_font_size'), this.primaryTextColor(),
         this.contentLineHeight(24))

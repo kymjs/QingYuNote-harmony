@@ -25,7 +25,7 @@ import { APP_LOCALE_REVISION_KEY } from '../services/LocaleService'
 import componentSnapshot from '@ohos.arkui.componentSnapshot'
 import { image } from '@kit.ImageKit'
 import { fileIo, fileUri } from '@kit.CoreFileKit'
-import { common } from '@kit.AbilityKit'
+import { common, Configuration } from '@kit.AbilityKit'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import { NoteEditEditorPane } from './NoteEditEditorPane'
 import { NoteEditFolderMovePanel } from '../components/NoteEditFolderMovePanel'
@@ -105,6 +105,8 @@ struct NoteEdit {
   @State editorEnterEditToken: number = 0
   @State editorRefreshToken: number = 0
   @State editorToolbarSignal: string = ''
+  /** 深浅色切换后递增，驱动 RichEditor span 色重建。 */
+  @State editorColorModeToken: number = 0
   @State pageWidth: number = 360
   @State pageHeight: number = 780
   @State lastSavedAt: number = 0
@@ -152,13 +154,15 @@ struct NoteEdit {
   @State scrollViewportH: number = 0
   @State tabBarH: number = 48
   @State stickyHeaderH: number = 0
-  /** 笔记设置：是否展示输入法上方快捷操作栏。 */
+  /** 笔记设置：是否展示编辑 Tab 下方快捷操作栏。 */
   @State quickActionBarEnabled: boolean = true
   @State folderModeEnabled: boolean = false
   /** 首页侧栏筛选模式（本地偏好 `home_sidebar_filter_mode`）。 */
   @State sidebarFilterMode: HomeSidebarFilterMode = 'tag'
-  /** 软键盘占用高度（vp），用于快捷栏贴键盘定位。 */
+  /** 软键盘占用高度（vp）；快捷栏仅在键盘可见时展示。 */
   @State keyboardHeightVp: number = 0
+  /** 上一帧键盘高度（px），用于检测显隐后重建富文本 spans。 */
+  private lastKeyboardHeightPx: number = 0
   /** 正文上次已知光标位置；点击快捷栏时 TextArea 失焦，getCaretOffset 常误报文末。 */
   private contentCaretIndex: number = 0
   private previousContent: string = ''
@@ -170,7 +174,23 @@ struct NoteEdit {
   private keyboardWindow?: window.Window
   /** 软键盘真实高度回调（px），与 caret 滚动导致的 avoidArea 膨胀解耦。 */
   private readonly onKeyboardHeightChange = (heightPx: number): void => {
+    const prev = this.lastKeyboardHeightPx
+    this.lastKeyboardHeightPx = heightPx
     this.keyboardHeightVp = heightPx > 0 ? this.getUIContext().px2vp(heightPx) : 0
+    const inEdit = this.previewMode === 'edit' || this.previewMode === 'split'
+    // 键盘显隐后 RichEditor ImageSpan/BuilderSpan 可能丢失，延迟刷新重建。
+    if (prev > 0 && heightPx <= 0 && inEdit) {
+      setTimeout((): void => {
+        this.editorRefreshToken = this.editorRefreshToken + 1
+      }, 50)
+      setTimeout((): void => {
+        this.editorRefreshToken = this.editorRefreshToken + 1
+      }, 200)
+    } else if (prev <= 0 && heightPx > 0 && inEdit) {
+      setTimeout((): void => {
+        this.editorRefreshToken = this.editorRefreshToken + 1
+      }, 100)
+    }
   }
   private shareScroller: Scroller = new Scroller()
   /** 窄屏外层 Scroll（吸顶标题+Tab）；与 VoiceNoteDetail outerScroller 同构。 */
@@ -260,6 +280,15 @@ struct NoteEdit {
     void this.loadFolderModePref()
     void this.loadSidebarFilterModePref()
     void this.onNoteEditPageShow()
+    this.bumpEditorColorModeToken()
+  }
+
+  onConfigurationUpdate(_config: Configuration): void {
+    this.bumpEditorColorModeToken()
+  }
+
+  private bumpEditorColorModeToken(): void {
+    this.editorColorModeToken = this.editorColorModeToken + 1
   }
 
   private async onNoteEditPageShow(): Promise<void> {
@@ -576,13 +605,18 @@ struct NoteEdit {
     this.contentCaretIndex = Math.max(0, Math.min(index, this.content.length))
   }
 
-  /** 在快捷栏 TouchDown 或插入前抓取选区（失焦后 getCaretOffset 不可靠）。 */
+  /**
+   * 快捷栏 TouchDown：优先保留 RichEditor onSelectionChange 已缓存的光标。
+   * TextAreaController 不再驱动正文，仅在仍能读到有效选区时更新缓存。
+   */
   private captureContentCaretFromSelection(): void {
     try {
       const range = this.textAreaController.getSelection()
-      const start = range.start !== undefined && range.start >= 0 ? range.start : 0
+      const start = range.start !== undefined && range.start >= 0 ? range.start : -1
       const end = range.end !== undefined && range.end >= 0 ? range.end : start
-      this.rememberContentCaret(start, end)
+      if (start >= 0) {
+        this.rememberContentCaret(start, end)
+      }
     } catch (_) {
       // 保留 contentCaretIndex
     }
@@ -2825,6 +2859,9 @@ struct NoteEdit {
     }
   }
 
+  /**
+   * 视口 − Tab − 快捷栏：固定 Swiper 高，标题滚走后 Tab（及快捷栏）吸顶。
+   */
   private swiperContentHeight(): number {
     const tabH = this.tabBarH > 0 ? this.tabBarH : 48
     const quickH = (this.shouldShowQuickActionBar() && this.contentTabIndex === 0)
@@ -3127,7 +3164,7 @@ struct NoteEdit {
       })
     }
     .width('100%')
-    .padding({ top: 16 })
+    .padding({ top: 4 })
     .backgroundColor($r('app.color.app_background'))
     .onAreaChange((_: Area, area: Area) => {
       const h = Number.parseFloat(`${area.height}`) || 0
@@ -3139,15 +3176,16 @@ struct NoteEdit {
 
   @Builder
   private buildMobileEditPage() {
-    // RichEditor 无 nestedScroll：flat 模式拒绝内置 Pan，由本 List 承接手势并 PARENT_FIRST 联动外层。
-    List() {
-      ListItem() {
+    // 固定视口内滚正文；RichEditor 估高+拒竖滑；外层滚标题后 Tab/快捷栏吸顶（同预览 nestedScroll）。
+    Scroll() {
+      Column() {
         NoteEditEditorPane({
           title: $title,
           content: $content,
           enterEditToken: this.editorEnterEditToken,
           refreshToken: this.editorRefreshToken,
           toolbarSignal: this.editorToolbarSignal,
+          colorModeToken: this.editorColorModeToken,
           filesDir: this.filesDirCache,
           textAreaController: this.textAreaController,
           includeTitle: false,
@@ -3170,17 +3208,18 @@ struct NoteEdit {
           }
         })
           .width('100%')
-      }
-      ListItem() {
         Column()
           .width('100%')
           .height(48)
       }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring)
+    .align(Alignment.TopStart)
     .nestedScroll({
       scrollForward: NestedScrollMode.PARENT_FIRST,
       scrollBackward: NestedScrollMode.SELF_FIRST
@@ -3247,7 +3286,7 @@ struct NoteEdit {
     .alignItems(HorizontalAlign.Start)
   }
 
-  /** 窄屏正文：外层 Scroll 滚完吸顶头后仅 Tab 吸顶；Swiper 高 = viewport - tabBar（同 VoiceNoteDetail）。 */
+  /** 窄屏正文：外层 Scroll 滚完吸顶头后 Tab（及快捷栏）吸顶；Swiper 高 = viewport - tab - quick。 */
   @Builder
   private buildMobileBody() {
     Scroll(this.outerScroller) {
@@ -3411,6 +3450,7 @@ struct NoteEdit {
               enterEditToken: this.editorEnterEditToken,
               refreshToken: this.editorRefreshToken,
               toolbarSignal: this.editorToolbarSignal,
+              colorModeToken: this.editorColorModeToken,
               filesDir: this.filesDirCache,
               textAreaController: this.textAreaController,
               onTitleFocus: (): void => {
