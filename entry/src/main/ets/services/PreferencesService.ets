@@ -64,6 +64,20 @@ const YOUDAO_API_KEY = 'youdao_api_key'
 const YINXIANG_API_KEY = 'yinxiang_api_key'
 /** 与 Flutter `AppConst.prefYinxiangNoteStoreUrlKey` 一致：印象笔记 NoteStore URL */
 const YINXIANG_NOTE_STORE_URL = 'yinxiang_note_store_url'
+/** 与 Flutter `AppConst.prefNotesTabDisplayModeKey` 一致 */
+const NOTES_TAB_DISPLAY_MODE_KEY = 'notes_tab_display_mode'
+/** 与 Flutter `AppConst.prefNotesTabSortKey` 一致 */
+const NOTES_TAB_SORT_KEY = 'notes_tab_sort'
+/** 与 Flutter `AppConst.prefNotesTabCollapsedGroupIdsKey` 一致 */
+const NOTES_TAB_COLLAPSED_GROUP_IDS_KEY = 'notes_tab_collapsed_group_ids'
+/** 与 Flutter `AppConst.prefNotesTabLastManageEntryKey` 一致 */
+const NOTES_TAB_LAST_MANAGE_ENTRY_KEY = 'notes_tab_last_manage_entry'
+/** 与 Flutter `AppConst.prefCalendarViewModeKey` 一致 */
+const CALENDAR_VIEW_MODE_KEY = 'calendar_view_mode'
+/** 与 Flutter `AppConst.prefDashHomeContinueHiddenKey` 一致 */
+const DASH_HOME_CONTINUE_HIDDEN_KEY = 'dash_home_continue_hidden'
+/** 与 Flutter `AppConst.prefDashHomeLatestHiddenKey` 一致 */
+const DASH_HOME_LATEST_HIDDEN_KEY = 'dash_home_latest_hidden'
 
 export interface LegacyNoteSettingsFlags {
   quick: boolean
@@ -1172,6 +1186,286 @@ export class PreferencesService {
       await store.flush()
     } catch (error) {
       Logger.warn('PreferencesService', `setAppThemeMode failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  /** 笔记 Tab：`none` | `folder` | `tag`，默认 `none`。 */
+  async getNotesTabDisplayMode(): Promise<string> {
+    try {
+      const store = this.ensureStore()
+      const raw = `${store.getSync(NOTES_TAB_DISPLAY_MODE_KEY, 'none') ?? 'none'}`.trim()
+      if (raw === 'folder' || raw === 'tag' || raw === 'none') {
+        return raw
+      }
+      return 'none'
+    } catch (error) {
+      Logger.warn('PreferencesService', `getNotesTabDisplayMode failed: ${this.describeError(error as Object)}`)
+      return 'none'
+    }
+  }
+
+  async setNotesTabDisplayMode(mode: string): Promise<void> {
+    const value = mode === 'folder' || mode === 'tag' || mode === 'none' ? mode : 'none'
+    try {
+      const store = this.ensureStore()
+      store.putSync(NOTES_TAB_DISPLAY_MODE_KEY, value)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setNotesTabDisplayMode failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  /** 日历 Tab：`month` | `week`，默认 `month`。 */
+  async getCalendarViewMode(): Promise<string> {
+    try {
+      const store = this.ensureStore()
+      const raw = `${store.getSync(CALENDAR_VIEW_MODE_KEY, 'month') ?? 'month'}`.trim()
+      if (raw === 'week' || raw === 'month') {
+        return raw
+      }
+      return 'month'
+    } catch (error) {
+      Logger.warn('PreferencesService', `getCalendarViewMode failed: ${this.describeError(error as Object)}`)
+      return 'month'
+    }
+  }
+
+  async setCalendarViewMode(mode: string): Promise<void> {
+    const value = mode === 'week' ? 'week' : 'month'
+    try {
+      const store = this.ensureStore()
+      store.putSync(CALENDAR_VIEW_MODE_KEY, value)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setCalendarViewMode failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  /** 笔记 Tab 排序：`modified` | `created` | `type`，默认 `modified`。 */
+  async getNotesTabSort(): Promise<string> {
+    try {
+      const store = this.ensureStore()
+      const raw = `${store.getSync(NOTES_TAB_SORT_KEY, 'modified') ?? 'modified'}`.trim()
+      if (raw === 'created' || raw === 'type' || raw === 'modified') {
+        return raw
+      }
+      return 'modified'
+    } catch (error) {
+      Logger.warn('PreferencesService', `getNotesTabSort failed: ${this.describeError(error as Object)}`)
+      return 'modified'
+    }
+  }
+
+  async setNotesTabSort(sort: string): Promise<void> {
+    const value = sort === 'created' || sort === 'type' || sort === 'modified' ? sort : 'modified'
+    try {
+      const store = this.ensureStore()
+      store.putSync(NOTES_TAB_SORT_KEY, value)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setNotesTabSort failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  async getNotesTabCollapsedGroupIds(): Promise<string[]> {
+    try {
+      const store = this.ensureStore()
+      const raw = `${store.getSync(NOTES_TAB_COLLAPSED_GROUP_IDS_KEY, '[]') ?? '[]'}`.trim()
+      if (raw.length === 0) {
+        return []
+      }
+      try {
+        const parsed = JSON.parse(raw) as Object
+        if (!Array.isArray(parsed)) {
+          return []
+        }
+        const ids: string[] = []
+        for (const item of parsed as string[]) {
+          const id = `${item ?? ''}`.trim()
+          if (id.length > 0) {
+            ids.push(id)
+          }
+        }
+        return ids
+      } catch (_) {
+        return []
+      }
+    } catch (error) {
+      Logger.warn('PreferencesService', `getNotesTabCollapsedGroupIds failed: ${this.describeError(error as Object)}`)
+      return []
+    }
+  }
+
+  async setNotesTabCollapsedGroupIds(ids: string[]): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      const normalized: string[] = []
+      const seen: Set<string> = new Set()
+      for (const raw of ids) {
+        const id = `${raw ?? ''}`.trim()
+        if (id.length === 0 || seen.has(id)) {
+          continue
+        }
+        seen.add(id)
+        normalized.push(id)
+      }
+      store.putSync(NOTES_TAB_COLLAPSED_GROUP_IDS_KEY, JSON.stringify(normalized))
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setNotesTabCollapsedGroupIds failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  async getNotesTabLastManageEntry(): Promise<string> {
+    try {
+      const store = this.ensureStore()
+      const raw = `${store.getSync(NOTES_TAB_LAST_MANAGE_ENTRY_KEY, 'folder') ?? 'folder'}`.trim()
+      return raw === 'tag' ? 'tag' : 'folder'
+    } catch (error) {
+      Logger.warn('PreferencesService', `getNotesTabLastManageEntry failed: ${this.describeError(error as Object)}`)
+      return 'folder'
+    }
+  }
+
+  async setNotesTabLastManageEntry(entry: string): Promise<void> {
+    const value = entry === 'tag' ? 'tag' : 'folder'
+    try {
+      const store = this.ensureStore()
+      store.putSync(NOTES_TAB_LAST_MANAGE_ENTRY_KEY, value)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setNotesTabLastManageEntry failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  /** 首页「最近编辑」隐藏：noteId -> 隐藏时的 updatedAt。 */
+  async getDashHomeContinueHidden(): Promise<Record<string, number>> {
+    try {
+      const store = this.ensureStore()
+      const raw = `${store.getSync(DASH_HOME_CONTINUE_HIDDEN_KEY, '{}') ?? '{}'}`.trim()
+      if (raw.length === 0) {
+        return {}
+      }
+      const parsed: Object = JSON.parse(raw) as Object
+      const out: Record<string, number> = {}
+      const keys = Object.keys(parsed as Record<string, Object>)
+      for (const key of keys) {
+        const id = `${key}`.trim()
+        if (id.length === 0) {
+          continue
+        }
+        const v = (parsed as Record<string, Object>)[key]
+        const ms = typeof v === 'number' ? v : Number(`${v}`)
+        if (!Number.isNaN(ms) && ms > 0) {
+          out[id] = ms
+        }
+      }
+      return out
+    } catch (error) {
+      Logger.warn('PreferencesService', `getDashHomeContinueHidden failed: ${this.describeError(error as Object)}`)
+      return {}
+    }
+  }
+
+  async setDashHomeContinueHidden(map: Record<string, number>): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(DASH_HOME_CONTINUE_HIDDEN_KEY, JSON.stringify(map))
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setDashHomeContinueHidden failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  async hideDashHomeContinueNote(noteId: string, updatedAt: number): Promise<void> {
+    const id = noteId.trim()
+    if (id.length === 0) {
+      return
+    }
+    const map = await this.getDashHomeContinueHidden()
+    map[id] = updatedAt > 0 ? updatedAt : Date.now()
+    await this.setDashHomeContinueHidden(map)
+  }
+
+  /** 首页「最新笔记」永久隐藏的 noteId 列表。 */
+  async getDashHomeLatestHidden(): Promise<string[]> {
+    try {
+      const store = this.ensureStore()
+      const raw = `${store.getSync(DASH_HOME_LATEST_HIDDEN_KEY, '[]') ?? '[]'}`.trim()
+      if (raw.length === 0) {
+        return []
+      }
+      const parsed: Object = JSON.parse(raw) as Object
+      if (!Array.isArray(parsed)) {
+        return []
+      }
+      const out: string[] = []
+      for (const item of parsed as Object[]) {
+        const id = `${item}`.trim()
+        if (id.length > 0) {
+          out.push(id)
+        }
+      }
+      return out
+    } catch (error) {
+      Logger.warn('PreferencesService', `getDashHomeLatestHidden failed: ${this.describeError(error as Object)}`)
+      return []
+    }
+  }
+
+  async setDashHomeLatestHidden(ids: string[]): Promise<void> {
+    try {
+      const seen = new Set<string>()
+      const unique: string[] = []
+      for (const raw of ids) {
+        const id = `${raw}`.trim()
+        if (id.length === 0 || seen.has(id)) {
+          continue
+        }
+        seen.add(id)
+        unique.push(id)
+      }
+      const store = this.ensureStore()
+      store.putSync(DASH_HOME_LATEST_HIDDEN_KEY, JSON.stringify(unique))
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setDashHomeLatestHidden failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  async hideDashHomeLatestNote(noteId: string): Promise<void> {
+    const id = noteId.trim()
+    if (id.length === 0) {
+      return
+    }
+    const list = await this.getDashHomeLatestHidden()
+    if (list.indexOf(id) >= 0) {
+      return
+    }
+    list.push(id)
+    await this.setDashHomeLatestHidden(list)
+  }
+
+  async clearDashHomeHiddenForNote(noteId: string): Promise<void> {
+    const id = noteId.trim()
+    if (id.length === 0) {
+      return
+    }
+    const continueMap = await this.getDashHomeContinueHidden()
+    if (continueMap[id] !== undefined) {
+      const next: Record<string, number> = {}
+      const keys = Object.keys(continueMap)
+      for (const key of keys) {
+        if (key !== id) {
+          next[key] = continueMap[key]
+        }
+      }
+      await this.setDashHomeContinueHidden(next)
+    }
+    const latest = await this.getDashHomeLatestHidden()
+    const nextLatest = latest.filter((e: string) => e !== id)
+    if (nextLatest.length !== latest.length) {
+      await this.setDashHomeLatestHidden(nextLatest)
     }
   }
 

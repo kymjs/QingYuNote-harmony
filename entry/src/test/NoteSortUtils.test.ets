@@ -25,6 +25,7 @@ function createNote(overrides: Partial<Note>): Note {
     altitude: overrides.altitude ?? 0,
     author: overrides.author ?? '',
     sourceUrl: overrides.sourceUrl ?? '',
+    isFavorite: overrides.isFavorite ?? 0,
     isTodo: overrides.isTodo ?? 0,
     todoDue: overrides.todoDue ?? 0,
     todoCompleted: overrides.todoCompleted ?? 0,

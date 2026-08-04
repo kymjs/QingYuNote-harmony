@@ -65,7 +65,8 @@ export class NoteStateCodec {
       altitude: note.altitude,
       author: note.author,
       sourceUrl: note.sourceUrl,
-      isTodo: note.isTodo,
+      isFavorite: note.isFavorite ?? 0,
+      isTodo: note.isTodo ?? 0,
       todoDue: note.todoDue,
       todoCompleted: note.todoCompleted,
       source: note.source,
@@ -102,6 +103,7 @@ export class NoteStateCodec {
       `altitude: ${NoteStateCodec.formatDecimal(state.altitude, 4)}`,
       `author: ${state.author}`,
       `source_url: ${state.sourceUrl}`,
+      `is_favorite: ${state.isFavorite}`,
       `is_todo: ${state.isTodo}`,
       `todo_due: ${state.todoDue}`,
       `todo_completed: ${state.todoCompleted}`,
@@ -182,6 +184,7 @@ export class NoteStateCodec {
       altitude: state.altitude,
       author: state.author,
       sourceUrl: state.sourceUrl,
+      isFavorite: state.isFavorite,
       isTodo: state.isTodo,
       todoDue: state.todoDue,
       todoCompleted: state.todoCompleted,
@@ -219,6 +222,7 @@ export class NoteStateCodec {
       altitude: 0,
       author: '',
       sourceUrl: '',
+      isFavorite: 0,
       isTodo: 0,
       todoDue: 0,
       todoCompleted: 0,
@@ -291,6 +295,9 @@ export class NoteStateCodec {
           break
         case 'is_todo':
           parsed.isTodo = NoteStateCodec.parseInteger(value, parsed.isTodo)
+          break
+        case 'is_favorite':
+          parsed.isFavorite = NoteStateCodec.parseInteger(value, parsed.isFavorite)
           break
         case 'todo_due':
           parsed.todoDue = NoteStateCodec.parseInteger(value, parsed.todoDue)

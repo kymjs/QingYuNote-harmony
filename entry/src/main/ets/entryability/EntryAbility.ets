@@ -10,6 +10,7 @@ import { AppScheduler } from '../services/AppScheduler'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { LocaleService, APP_LOCALE_REVISION_KEY } from '../services/LocaleService'
+import { SyncConstants } from '../common/constants/SyncConstants'
 import { recheckForceUpdateOnResume } from '../services/AppUpdateUi'
 
 const DOMAIN = 0x0000
@@ -21,6 +22,7 @@ export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     AppContextHolder.setContext(this.context)
     AppStorage.setOrCreate(APP_LOCALE_REVISION_KEY, 0)
+    AppStorage.setOrCreate(SyncConstants.notesRevisionStorageKey, 0)
     void LocaleService.getInstance().load(this.context)
     void this.applyStoredColorMode()
     void this.prepareCriticalServices().then(() => {

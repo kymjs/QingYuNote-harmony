@@ -159,6 +159,114 @@
     {
       "name": "dashboard_header_mid",
       "value": "#FFF3F4F8"
+    },
+    {
+      "name": "notes_search_fill",
+      "value": "#FFF5F5F5"
+    },
+    {
+      "name": "notes_chip_muted",
+      "value": "#FFF5F5F5"
+    },
+    {
+      "name": "notes_chip_selected",
+      "value": "#FFD6F5E3"
+    },
+    {
+      "name": "notes_filter_pin",
+      "value": "#FFFFFFFF"
+    },
+    {
+      "name": "notes_tag_bg_blue",
+      "value": "#FFE8F1FE"
+    },
+    {
+      "name": "notes_tag_bg_green",
+      "value": "#FFE6F7ED"
+    },
+    {
+      "name": "notes_tag_bg_gray",
+      "value": "#FFF3F4F6"
+    },
+    {
+      "name": "notes_tag_fg_blue",
+      "value": "#FF3B82F6"
+    },
+    {
+      "name": "notes_tag_fg_green",
+      "value": "#FF0DAA4A"
+    },
+    {
+      "name": "notes_tag_fg_gray",
+      "value": "#FF6B7280"
+    },
+    {
+      "name": "warning_subtle",
+      "value": "#24D97706"
+    },
+    {
+      "name": "mine_member_card_bg",
+      "value": "#FFE7F7EE"
+    },
+    {
+      "name": "mine_non_member_card_bg",
+      "value": "#FFFFF1E6"
+    },
+    {
+      "name": "mine_member_card_border",
+      "value": "#470DAA4A"
+    },
+    {
+      "name": "mine_non_member_card_border",
+      "value": "#47E67E22"
+    },
+    {
+      "name": "mine_member_status_bg",
+      "value": "#FFD4F0DE"
+    },
+    {
+      "name": "mine_non_member_status_bg",
+      "value": "#FFFFE0C2"
+    },
+    {
+      "name": "mine_non_member_accent",
+      "value": "#FFE67E22"
+    },
+    {
+      "name": "mine_expiry_bg",
+      "value": "#FFFFF0D6"
+    },
+    {
+      "name": "mine_expiry_fg",
+      "value": "#FFB86A00"
+    },
+    {
+      "name": "mine_unlock_chip_bg",
+      "value": "#FFEEF1F6"
+    },
+    {
+      "name": "calendar_week_block_schedule",
+      "value": "#FFF0EBFB"
+    },
+    {
+      "name": "calendar_week_block_todo",
+      "value": "#FFFEF3E2"
+    },
+    {
+      "name": "calendar_week_block_note",
+      "value": "#FFE6F6ED"
+    },
+    {
+      "name": "calendar_kind_schedule_fg",
+      "value": "#FF8B5CF6"
+    },
+    {
+      "name": "calendar_kind_todo_fg",
+      "value": "#FFF59E0B"
+    },
+    {
+      "name": "calendar_kind_note_fg",
+      "value": "#FF0DAA4A"
     }
   ]
 }

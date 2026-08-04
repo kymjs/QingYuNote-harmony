@@ -31,6 +31,9 @@ import { WebDAVClient } from '../services/WebDAVClient'
 import { NOTE_TYPE_FLOWCHART } from '../common/model/FlowchartGraph'
 import { Logger } from '../common/utils/Logger'
 import { CryptoService } from '../services/CryptoService'
+import { DashboardNotesTab } from './dashboard/DashboardNotesTab'
+import { DashboardCalendarTab } from './dashboard/DashboardCalendarTab'
+import { DashboardMineTab } from './dashboard/DashboardMineTab'
 
 const ACCENT = '#0DAA4A'
 const BLUE = '#3B82F6'
@@ -51,9 +54,10 @@ class DashNoteRow {
   leadingKind: string = 'document'
   thumbUri: string = ''
   openWithPreview: boolean = false
+  updatedAt: number = 0
 
   updatedKey(): string {
-    return `${this.timeLabel}|${this.title}|${this.thumbUri.length}|${this.leadingKind}`
+    return `${this.timeLabel}|${this.title}|${this.thumbUri.length}|${this.leadingKind}|${this.updatedAt}`
   }
 }
 
@@ -61,6 +65,10 @@ class DashNoteRow {
 @Component
 struct MainShell {
   @State shellTabIndex: number = 0
+  /** 从子页返回时递增，驱动笔记 Tab 静默刷新。 */
+  @State notesShellRefreshNonce: number = 0
+  /** 从子页返回时递增，驱动「我的」Tab 刷新。 */
+  @State mineShellRefreshNonce: number = 0
   @State pcLayout: boolean = false
   @State pageWidth: number = 360
   @State pageHeight: number = 800
@@ -103,7 +111,9 @@ struct MainShell {
       Logger.info('DashHomeLoad', 'onPageShow skipped (bootstrap not ready)')
       return
     }
-    Logger.info('DashHomeLoad', 'onPageShow -> reloadDashboard')
+    Logger.info('DashHomeLoad', 'onPageShow -> reloadDashboard + notes/mine refresh')
+    this.notesShellRefreshNonce += 1
+    this.mineShellRefreshNonce += 1
     void this.reloadDashboard()
   }
 
@@ -252,9 +262,20 @@ struct MainShell {
         }
         const byUpdated = notes.slice().sort((a: Note, b: Note) => b.updatedAt - a.updatedAt)
         const byCreated = notes.slice().sort((a: Note, b: Note) => b.createdAt - a.createdAt)
-        const continueRows = this.mapRows(byUpdated.slice(0, 4), true)
-        const recentLimit = this.pcLayout ? 4 : 2
-        const recentRows = this.mapRows(byCreated.slice(0, recentLimit), false)
+        const continueHiddenRaw = await PreferencesService.getInstance().getDashHomeContinueHidden()
+        const continueHidden = await this.pruneContinueHidden(notes, continueHiddenRaw)
+        const latestHiddenList = await PreferencesService.getInstance().getDashHomeLatestHidden()
+        const latestHidden = new Set<string>(latestHiddenList)
+        const continueNotes = byUpdated.filter((n: Note) => {
+          const hiddenAt = continueHidden[n.id]
+          if (hiddenAt === undefined) {
+            return true
+          }
+          return n.updatedAt > hiddenAt
+        })
+        const latestNotes = byCreated.filter((n: Note) => !latestHidden.has(n.id))
+        const continueRows = this.mapRows(continueNotes.slice(0, 4), true)
+        const recentRows = this.mapRows(latestNotes.slice(0, 4), false)
 
         if (generation !== this.reloadGeneration) {
           Logger.info('DashHomeLoad',
@@ -338,6 +359,7 @@ struct MainShell {
       row.isFlowchart = n.type_ === NOTE_TYPE_FLOWCHART
       row.leadingKind = this.leadingKindFor(n)
       row.openWithPreview = n.content.trim().length > 0
+      row.updatedAt = n.updatedAt
       const refs = NoteStateCodec.extractImageRefs(n.content)
       if (refs.length > 0 && this.filesDir.length > 0) {
         const parts = refs[0].split('/')
@@ -392,6 +414,40 @@ struct MainShell {
     return 'document'
   }
 
+  private async pruneContinueHidden(
+    notes: Note[],
+    continueHidden: Record<string, number>
+  ): Promise<Record<string, number>> {
+    const keys = Object.keys(continueHidden)
+    if (keys.length === 0) {
+      return continueHidden
+    }
+    const byId = new Map<string, Note>()
+    for (const n of notes) {
+      byId.set(n.id, n)
+    }
+    const next: Record<string, number> = {}
+    let changed = false
+    for (const id of keys) {
+      const hiddenAt = continueHidden[id]
+      const note = byId.get(id)
+      if (note === undefined) {
+        changed = true
+        continue
+      }
+      if (note.updatedAt > hiddenAt) {
+        changed = true
+        continue
+      }
+      next[id] = hiddenAt
+    }
+    if (changed) {
+      await PreferencesService.getInstance().setDashHomeContinueHidden(next)
+      return next
+    }
+    return continueHidden
+  }
+
   private calcRegistrationDays(registeredAt: string): number {
     const raw = registeredAt.trim()
     if (raw.length < 10) {
@@ -409,36 +465,20 @@ struct MainShell {
     return days < 1 ? 1 : days
   }
 
-  /** 统计所有笔记正文中的待办勾选：`[ ]`（未完成）与 `[-]`（已完成）各计 1。 */
+  /** 统计带标签 Todo 的笔记篇数（一篇待办笔记计 1）。 */
   private countTodoItems(notes: Note[]): number {
     let total = 0
     for (const n of notes) {
-      const content = n.content ?? ''
-      let from = 0
-      while (from < content.length) {
-        const a = content.indexOf('[ ]', from)
-        const b = content.indexOf('[-]', from)
-        let next = -1
-        if (a >= 0 && b >= 0) {
-          next = Math.min(a, b)
-        } else if (a >= 0) {
-          next = a
-        } else if (b >= 0) {
-          next = b
-        }
-        if (next < 0) {
-          break
-        }
+      if ((n.tags ?? []).some((t: string) => `${t ?? ''}`.trim() === 'Todo')) {
         total += 1
-        from = next + 3
       }
     }
     return total
   }
 
-  /** 排查用：抽样打印含待办标记的笔记。 */
+  /** 排查用：抽样打印带标签 Todo 的笔记。 */
   private logTodoScanSample(notes: Note[]): void {
-    let withMarker = 0
+    let withFlag = 0
     let emptyContent = 0
     let logged = 0
     for (const n of notes) {
@@ -446,11 +486,11 @@ struct MainShell {
       if (content.trim().length === 0) {
         emptyContent += 1
       }
-      const has = content.indexOf('[ ]') >= 0 || content.indexOf('[-]') >= 0
-      if (!has) {
+      const hasTodoTag = (n.tags ?? []).some((t: string) => `${t ?? ''}`.trim() === 'Todo')
+      if (!hasTodoTag) {
         continue
       }
-      withMarker += 1
+      withFlag += 1
       if (logged < 3) {
         const snippet = content.replace(/\s+/g, ' ').substring(0, 80)
         Logger.info('DashStats',
@@ -459,7 +499,7 @@ struct MainShell {
       }
     }
     Logger.info('DashStats',
-      `todoScan notes=${notes.length} withMarker=${withMarker} emptyContent=${emptyContent} todoCount=${this.todoCount}`)
+      `todoScan notes=${notes.length} withTodoTag=${withFlag} emptyContent=${emptyContent} todoCount=${this.todoCount}`)
   }
 
   private async resolveCloudConfigured(): Promise<boolean> {
@@ -524,11 +564,9 @@ struct MainShell {
     this.shellTabIndex = index
     if (index === 0) {
       void this.reloadDashboard()
+    } else if (index === 3) {
+      this.mineShellRefreshNonce += 1
     }
-  }
-
-  private async openLegacyHome(): Promise<void> {
-    await this.getUIContext().getRouter().pushUrl({ url: 'pages/Index' })
   }
 
   private async onSyncAction(): Promise<void> {
@@ -608,6 +646,39 @@ struct MainShell {
     void this.reloadDashboard()
   }
 
+  private async removeFromDashList(row: DashNoteRow, fromContinue: boolean): Promise<void> {
+    if (fromContinue) {
+      await PreferencesService.getInstance().hideDashHomeContinueNote(row.id, row.updatedAt)
+    } else {
+      await PreferencesService.getInstance().hideDashHomeLatestNote(row.id)
+    }
+    await this.reloadDashboard()
+  }
+
+  private async deleteDashNote(row: DashNoteRow): Promise<void> {
+    try {
+      await NoteRepository.getInstance().deleteNote(row.id, Date.now())
+      await PreferencesService.getInstance().clearDashHomeHiddenForNote(row.id)
+      try {
+        this.getUIContext().getPromptAction().showToast({
+          message: LocaleService.loc('已删除', 'Deleted', '削除しました'),
+          duration: 2500
+        })
+      } catch (_) {
+      }
+      await this.reloadDashboard()
+    } catch (e) {
+      Logger.error('MainShell', `deleteDashNote failed: ${JSON.stringify(e)}`)
+      try {
+        this.getUIContext().getPromptAction().showToast({
+          message: LocaleService.loc('删除失败', 'Delete failed', '削除失敗'),
+          duration: 2500
+        })
+      } catch (_) {
+      }
+    }
+  }
+
   private async quickWrite(): Promise<void> {
     await navigateToNoteEdit(this.getUIContext(), {})
   }
@@ -645,12 +716,35 @@ struct MainShell {
 
   build() {
     Column() {
-      Column() {
-        if (this.shellTabIndex === 0) {
+      // 与 Flutter IndexedStack 一致：Tab 保活，避免切回笔记页反复销毁重建并闪「加载中」。
+      Stack() {
+        Column() {
           this.buildDashboard()
-        } else {
-          this.buildPlaceholder()
         }
+        .width('100%')
+        .height('100%')
+        .visibility(this.shellTabIndex === 0 ? Visibility.Visible : Visibility.None)
+
+        DashboardNotesTab({
+          visible: this.shellTabIndex === 1,
+          shellRefreshNonce: this.notesShellRefreshNonce
+        })
+          .width('100%')
+          .height('100%')
+          .visibility(this.shellTabIndex === 1 ? Visibility.Visible : Visibility.None)
+
+        DashboardCalendarTab({ visible: this.shellTabIndex === 2 })
+          .width('100%')
+          .height('100%')
+          .visibility(this.shellTabIndex === 2 ? Visibility.Visible : Visibility.None)
+
+        DashboardMineTab({
+          visible: this.shellTabIndex === 3,
+          shellRefreshNonce: this.mineShellRefreshNonce
+        })
+          .width('100%')
+          .height('100%')
+          .visibility(this.shellTabIndex === 3 ? Visibility.Visible : Visibility.None)
       }
       .width('100%')
       .layoutWeight(1)
@@ -679,27 +773,6 @@ struct MainShell {
         void this.reloadDashboard()
       }
     })
-  }
-
-  @Builder
-  buildPlaceholder() {
-    Column({ space: 16 }) {
-      Text(this.shellTabIndex === 1 ?
-        LocaleService.loc('笔记', 'Notes', 'ノート') :
-        this.shellTabIndex === 2 ?
-          LocaleService.loc('日历', 'Calendar', 'カレンダー') :
-          LocaleService.loc('我的', 'Mine', 'マイページ'))
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-      Button(LocaleService.loc('打开旧首页', 'Open classic home', '旧ホームを開く'))
-        .onClick(() => {
-          void this.openLegacyHome()
-        })
-    }
-    .width('100%')
-    .layoutWeight(1)
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
   }
 
   @Builder
@@ -1045,8 +1118,8 @@ struct MainShell {
     Column({ space: 4 }) {
       Row() {
         Text(kind === 'continue' ?
-          LocaleService.loc('继续编辑', 'Continue editing', '編集を続ける') :
-          LocaleService.loc('最近笔记', 'Recent notes', '最近のノート'))
+          LocaleService.loc('最近编辑', 'Recently edited', '最近の編集') :
+          LocaleService.loc('最新笔记', 'Latest notes', '最新のノート'))
           .fontSize(16)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.primary_text'))
@@ -1068,7 +1141,7 @@ struct MainShell {
             .margin({ top: 12, bottom: 12 })
         } else {
           ForEach(this.continueEditing, (row: DashNoteRow) => {
-            this.noteRow(row, showThumb)
+            this.noteRow(row, showThumb, true)
           }, (row: DashNoteRow) => `c-${row.id}-${row.updatedKey()}`)
         }
       } else {
@@ -1079,7 +1152,7 @@ struct MainShell {
             .margin({ top: 12, bottom: 12 })
         } else {
           ForEach(this.recentNotes, (row: DashNoteRow) => {
-            this.noteRow(row, showThumb)
+            this.noteRow(row, showThumb, false)
           }, (row: DashNoteRow) => `r-${row.id}-${row.updatedKey()}`)
         }
       }
@@ -1092,7 +1165,33 @@ struct MainShell {
   }
 
   @Builder
-  noteRow(row: DashNoteRow, showThumb: boolean) {
+  dashNoteContextMenu(row: DashNoteRow, fromContinue: boolean) {
+    Menu() {
+      MenuItem({
+        content: fromContinue ?
+          LocaleService.loc('从最近编辑列表移除', 'Remove from recently edited', '最近の編集から削除') :
+          LocaleService.loc('从最新笔记列表移除', 'Remove from latest notes', '最新ノートから削除')
+      })
+        .onClick(() => {
+          void this.removeFromDashList(row, fromContinue)
+        })
+      MenuItem({
+        content: LocaleService.loc('编辑笔记', 'Edit note', 'ノートを編集')
+      })
+        .onClick(() => {
+          void this.openNote(row)
+        })
+      MenuItem({
+        content: LocaleService.loc('删除笔记', 'Delete note', 'ノートを削除')
+      })
+        .onClick(() => {
+          void this.deleteDashNote(row)
+        })
+    }
+  }
+
+  @Builder
+  noteRow(row: DashNoteRow, showThumb: boolean, fromContinue: boolean) {
     Row({ space: 10 }) {
       Column() {
         if (row.leadingKind === 'mp3') {
@@ -1137,20 +1236,13 @@ struct MainShell {
       Text(row.timeLabel)
         .fontSize(11)
         .fontColor($r('app.color.secondary_text'))
-      if (showThumb) {
-        if (row.thumbUri.length > 0) {
-          Image(row.thumbUri)
-            .width(52)
-            .height(40)
-            .borderRadius(8)
-            .objectFit(ImageFit.Cover)
-        } else {
-          Column()
-            .width(52)
-            .height(40)
-            .borderRadius(8)
-            .backgroundColor($r('app.color.surface_muted'))
-        }
+      if (showThumb && row.thumbUri.length > 0) {
+        Image(row.thumbUri)
+          .width(52)
+          .height(40)
+          .borderRadius(8)
+          .objectFit(ImageFit.Cover)
+          .margin({ left: 8 })
       }
     }
     .width('100%')
@@ -1158,6 +1250,7 @@ struct MainShell {
     .onClick(() => {
       void this.openNote(row)
     })
+    .bindContextMenu(this.dashNoteContextMenu(row, fromContinue), ResponseType.LongPress)
   }
 
   @Builder

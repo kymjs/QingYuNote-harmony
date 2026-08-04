@@ -30,6 +30,8 @@ export class SyncConstants {
   static readonly noteImagesChangedEvent: string = 'note_images_changed'
   /** 笔记设置（快捷操作栏、文件夹模式）本地或远端变更后通知 UI 刷新。 */
   static readonly noteSettingsChangedEvent: string = 'note_settings_changed'
+  /** 笔记列表版本（AppStorage），与 Flutter `notesRevision` 对齐，供笔记 Tab 即时刷新。 */
+  static readonly notesRevisionStorageKey: string = 'appNotesRevision'
   /** 微信读书笔记后台导入完成或失败时 Toast 提示。 */
   static readonly wereadImportToastEvent: string = 'weread_import_toast'
   /** 有道云笔记后台导入完成或失败时 Toast 提示。 */

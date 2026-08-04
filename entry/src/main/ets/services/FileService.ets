@@ -242,6 +242,7 @@ export class FileService {
       altitude: state.altitude,
       author: state.author,
       sourceUrl: state.sourceUrl,
+      isFavorite: state.isFavorite,
       isTodo: state.isTodo,
       todoDue: state.todoDue,
       todoCompleted: state.todoCompleted,

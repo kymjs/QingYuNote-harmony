@@ -25,7 +25,6 @@ function note(id: string, parentId: string = '', title: string = ''): Note {
     altitude: 0,
     author: '',
     sourceUrl: '',
-    isTodo: 0,
     todoDue: 0,
     todoCompleted: 0,
     source: '',

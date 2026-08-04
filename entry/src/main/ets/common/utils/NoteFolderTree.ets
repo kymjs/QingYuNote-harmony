@@ -77,6 +77,61 @@ export class NoteFolderTree {
     return out
   }
 
+  /** 一级文件夹：自身为文件夹，且父级不是文件夹（含子树有笔记即算文件夹）。 */
+  static firstLevelFolderIds(notes: Note[]): string[] {
+    const folderIds = NoteFolderTree.folderNoteIds(notes)
+    if (folderIds.size === 0) {
+      return []
+    }
+    const byId: Map<string, Note> = new Map()
+    for (const note of notes) {
+      byId.set(note.id, note)
+    }
+    const ids: string[] = []
+    folderIds.forEach((id: string) => {
+      const parent = byId.get(id) !== undefined ? `${byId.get(id)?.parentId ?? ''}`.trim() : ''
+      if (parent.length === 0 || !folderIds.has(parent)) {
+        ids.push(id)
+      }
+    })
+    ids.sort((a: string, b: string) => {
+      const titleA = byId.get(a) !== undefined ? NoteFolderTree.folderTitle(byId.get(a)) : '无标题'
+      const titleB = byId.get(b) !== undefined ? NoteFolderTree.folderTitle(byId.get(b)) : '无标题'
+      return titleA.localeCompare(titleB, 'zh-Hans-CN')
+    })
+    return ids
+  }
+
+  /** 笔记所属一级文件夹 id；不属于任何一级文件夹时返回 null。 */
+  static firstLevelFolderIdOf(note: Note, notes: Note[]): string | null {
+    const firstLevels = new Set<string>(NoteFolderTree.firstLevelFolderIds(notes))
+    if (firstLevels.size === 0) {
+      return null
+    }
+    const byId: Map<string, Note> = new Map()
+    for (const n of notes) {
+      byId.set(n.id, n)
+    }
+    let current = `${note.parentId ?? ''}`.trim()
+    const visited: Set<string> = new Set()
+    while (current.length > 0 && !visited.has(current)) {
+      if (firstLevels.has(current)) {
+        return current
+      }
+      visited.add(current)
+      current = byId.get(current) !== undefined ? `${byId.get(current)?.parentId ?? ''}`.trim() : ''
+    }
+    return null
+  }
+
+  static folderTitleOf(folderId: string, notes: Note[]): string {
+    const byId: Map<string, Note> = new Map()
+    for (const note of notes) {
+      byId.set(note.id, note)
+    }
+    return NoteFolderTree.folderTitle(byId.get(folderId))
+  }
+
   static visibleSidebarRows(notes: Note[], expandedFolderIds: Set<string>): FolderSidebarRow[] {
     const byId: Map<string, Note> = new Map()
     for (const note of notes) {

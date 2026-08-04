@@ -48,6 +48,9 @@ export interface NoteStateBlock {
   altitude: number
   author: string
   sourceUrl: string
+  /** 是否收藏：0/1，写入 NOTE_STATE `is_favorite`。 */
+  isFavorite: number
+  /** 是否日程：0/1，写入 NOTE_STATE `is_todo`。 */
   isTodo: number
   todoDue: number
   todoCompleted: number
@@ -108,6 +111,9 @@ export interface Note {
   altitude: number
   author: string
   sourceUrl: string
+  /** 是否收藏：0/1，写入 NOTE_STATE `is_favorite`。 */
+  isFavorite: number
+  /** 是否日程：0/1，写入 NOTE_STATE `is_todo`。 */
   isTodo: number
   todoDue: number
   todoCompleted: number
@@ -201,6 +207,8 @@ export interface UpdateNoteInput {
   voiceSummary?: string
   voiceSegmentsJson?: string
   voiceTranscribeStatus?: VoiceTranscribeStatus
+  /** 是否收藏：0/1；undefined 时不修改。 */
+  isFavorite?: number
 }
 
 /** 仅更新异步链接提取相关字段的 patch。 */

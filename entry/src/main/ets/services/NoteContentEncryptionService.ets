@@ -172,6 +172,7 @@ export class NoteContentEncryptionService {
       altitude: note.altitude,
       author: note.author,
       sourceUrl: note.sourceUrl,
+      isFavorite: note.isFavorite,
       isTodo: note.isTodo,
       todoDue: note.todoDue,
       todoCompleted: note.todoCompleted,

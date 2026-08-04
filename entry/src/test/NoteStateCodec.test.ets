@@ -11,11 +11,13 @@ export default function noteStateCodecTest() {
         Date.parse('2024-10-10T04:35:08.083Z')
       )
       state.tags = ['work', '项目A', 'with:colon']
+      state.isTodo = 1
       const raw = NoteStateCodec.serializeStateBlock(state)
       const payload = NoteStateCodec.parseNoteFile(`正文内容\n\n${raw}`, 'fallback-id')
       expect(payload.hasStateBlock).assertTrue()
       expect(payload.state.id).assertEqual('2f7bef91-443f-4a6c-b0a3-26de4b4bdcdb')
       expect(payload.state.title).assertEqual('独立标题')
+      expect(payload.state.isTodo).assertEqual(1)
       expect(payload.state.tags.length).assertEqual(3)
       expect(payload.state.tags[0]).assertEqual('work')
       expect(payload.state.tags[1]).assertEqual('项目A')

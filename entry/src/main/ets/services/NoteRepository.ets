@@ -3,6 +3,7 @@ import type common from '@ohos.app.ability.common'
 import type { CreateNoteInput, ExtractStatus, Note, NoteFilePayload, NoteStateBlock, NoteSyncState, RecycleBinLoadResult,
   UpdateExtractInfo, UpdateNoteInput } from '../common/model/Note'
 import { isExtractStatusPending } from '../common/model/Note'
+import { SyncConstants } from '../common/constants/SyncConstants'
 import { Logger } from '../common/utils/Logger'
 import { MarkdownUtils, shouldShowTodoNoteInHomeList } from '../common/utils/MarkdownUtils'
 import { NoteFolderTree } from '../common/utils/NoteFolderTree'
@@ -59,6 +60,10 @@ export class NoteRepository {
     await FileService.getInstance().init(resolvedContext)
     this.context = resolvedContext
     this.notesVersion = 0
+    try {
+      AppStorage.setOrCreate(SyncConstants.notesRevisionStorageKey, 0)
+    } catch (_) {
+    }
     this.initialized = true
   }
 
@@ -470,8 +475,10 @@ export class NoteRepository {
     const nextVoiceTranscribeStatus =
       patch.voiceTranscribeStatus !== undefined ? patch.voiceTranscribeStatus : existing.voiceTranscribeStatus
     const voiceStatusChanged = nextVoiceTranscribeStatus !== existing.voiceTranscribeStatus
+    const nextIsFavorite = patch.isFavorite !== undefined ? patch.isFavorite : existing.isFavorite
+    const isFavoriteChanged = nextIsFavorite !== existing.isFavorite
     if (!contentChanged && !titleChanged && !summaryChanged && !tagsChanged && !parentIdChanged && !audioIdChanged &&
-      !sourceUrlChanged && !voiceSummaryChanged && !voiceSegmentsChanged && !voiceStatusChanged) {
+      !sourceUrlChanged && !voiceSummaryChanged && !voiceSegmentsChanged && !voiceStatusChanged && !isFavoriteChanged) {
       return this.cloneNote(existing)
     }
 
@@ -487,6 +494,7 @@ export class NoteRepository {
     updated.voiceSummary = nextVoiceSummary
     updated.voiceSegmentsJson = nextVoiceSegmentsJson
     updated.voiceTranscribeStatus = nextVoiceTranscribeStatus
+    updated.isFavorite = nextIsFavorite
     updated.localModified = now
     updated.deleted = false
     updated.deletedAt = 0
@@ -588,7 +596,8 @@ export class NoteRepository {
       altitude: existing.altitude,
       author: existing.author,
       sourceUrl: existing.sourceUrl,
-      isTodo: existing.isTodo,
+      isFavorite: existing.isFavorite ?? 0,
+      isTodo: existing.isTodo ?? 0,
       todoDue: existing.todoDue,
       todoCompleted: existing.todoCompleted,
       source: existing.source,
@@ -1220,6 +1229,7 @@ export class NoteRepository {
       altitude: base.altitude,
       author: base.author,
       sourceUrl: base.sourceUrl,
+      isFavorite: base.isFavorite,
       isTodo: base.isTodo,
       todoDue: base.todoDue,
       todoCompleted: base.todoCompleted,
@@ -1284,6 +1294,7 @@ export class NoteRepository {
       altitude: state.altitude,
       author: state.author,
       sourceUrl: state.sourceUrl,
+      isFavorite: state.isFavorite,
       isTodo: state.isTodo,
       todoDue: state.todoDue,
       todoCompleted: state.todoCompleted,
@@ -1328,6 +1339,10 @@ export class NoteRepository {
     }
     this.notesVersion += 1
     this.invalidateListCaches()
+    try {
+      AppStorage.setOrCreate(SyncConstants.notesRevisionStorageKey, this.notesVersion)
+    } catch (_) {
+    }
   }
 
   private invalidateListCaches(): void {
@@ -1370,6 +1385,7 @@ export class NoteRepository {
       altitude: note.altitude,
       author: note.author,
       sourceUrl: note.sourceUrl,
+      isFavorite: note.isFavorite,
       isTodo: note.isTodo,
       todoDue: note.todoDue,
       todoCompleted: note.todoCompleted,
