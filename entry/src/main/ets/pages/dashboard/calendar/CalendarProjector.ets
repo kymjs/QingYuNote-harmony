@@ -21,9 +21,15 @@ export class CalendarProjector {
   }
 
   static classify(note: Note): CalendarItemKind {
+    // 日程：is_todo=1（新版日历视图创建）；保留原 0/1 语义不变。
     if ((note.isTodo ?? 0) === 1) {
       return 'schedule'
     }
+    // 待办事项：is_todo=2（新版首页快捷创建）。
+    if ((note.isTodo ?? 0) === 2) {
+      return 'todo'
+    }
+    // 兼容旧版：tag 命中 `Todo` 时视为待办。
     for (let i = 0; i < note.tags.length; i++) {
       if (`${note.tags[i]}`.trim() === 'Todo') {
         return 'todo'
@@ -64,14 +70,56 @@ export class CalendarProjector {
       summary = note.content.trim().replace(/\s+/g, ' ')
     }
     const thumb = note.imageRefs.length > 0 ? note.imageRefs[0] : ''
+    const isTodo = note.isTodo ?? 0
+
+    // 日程（is_todo=1）：直接用 startTime / endTime 作为锚点。
+    if (isTodo === 1 && note.startTime > 0 && note.endTime > note.startTime) {
+      const dt = new Date(note.startTime)
+      return [
+        CalendarProjector.makeOcc(
+          note, kind, title, summary, thumb,
+          note.startTime, note.endTime,
+          dt.getFullYear(), dt.getMonth() + 1, dt.getDate(),
+          false)
+      ]
+    }
+
+    // 待办事项（is_todo=2）：todoDue 作为结束时间，向前 1h 作为开始时间；
+    // 这样日程表上的待办色块固定为 1 小时。
+    if (isTodo === 2 && note.todoDue > 0) {
+      const todoDurationMs = 60 * 60 * 1000
+      const end = note.todoDue
+      const start = end - todoDurationMs
+      const dt = new Date(end)
+      return [
+        CalendarProjector.makeOcc(
+          note, kind, title, summary, thumb,
+          start, end,
+          dt.getFullYear(), dt.getMonth() + 1, dt.getDate(),
+          false)
+      ]
+    }
+
+    // 普通笔记：仍以 createdAt / updatedAt 作为锚点（同日则单点，跨日则两点）。
     const createdKey = CalendarProjector.dayKeyFromMs(note.createdAt)
     const updatedKey = CalendarProjector.dayKeyFromMs(note.updatedAt)
     if (createdKey === updatedKey) {
-      return [CalendarProjector.makeOcc(note, kind, title, summary, thumb, note.createdAt, false)]
+      return [
+        CalendarProjector.makeOcc(
+          note, kind, title, summary, thumb,
+          note.createdAt, undefined, undefined, undefined, undefined,
+          false)
+      ]
     }
     return [
-      CalendarProjector.makeOcc(note, kind, title, summary, thumb, note.createdAt, false),
-      CalendarProjector.makeOcc(note, kind, title, summary, thumb, note.updatedAt, true)
+      CalendarProjector.makeOcc(
+        note, kind, title, summary, thumb,
+        note.createdAt, undefined, undefined, undefined, undefined,
+        false),
+      CalendarProjector.makeOcc(
+        note, kind, title, summary, thumb,
+        note.updatedAt, undefined, undefined, undefined, undefined,
+        true)
     ]
   }
 
@@ -82,6 +130,10 @@ export class CalendarProjector {
     summary: string,
     thumb: string,
     anchorMs: number,
+    endMs: number | undefined,
+    dayY: number | undefined,
+    dayM: number | undefined,
+    dayD: number | undefined,
     isUpdate: boolean
   ): CalendarOccurrence {
     const dt = new Date(anchorMs)
@@ -90,10 +142,10 @@ export class CalendarProjector {
     o.note = note
     o.kind = kind
     o.anchorMs = anchorMs
-    o.endMs = anchorMs + CalendarProjector.DURATION_MS
-    o.dayY = dt.getFullYear()
-    o.dayM = dt.getMonth() + 1
-    o.dayD = dt.getDate()
+    o.endMs = endMs !== undefined ? endMs : (anchorMs + CalendarProjector.DURATION_MS)
+    o.dayY = dayY !== undefined ? dayY : dt.getFullYear()
+    o.dayM = dayM !== undefined ? dayM : dt.getMonth() + 1
+    o.dayD = dayD !== undefined ? dayD : dt.getDate()
     o.title = title
     o.summary = summary
     o.tags = [...note.tags]

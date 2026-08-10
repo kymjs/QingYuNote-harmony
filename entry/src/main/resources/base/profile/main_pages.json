@@ -32,6 +32,7 @@
     "pages/VoiceNote",
     "pages/VoiceNoteDetail",
     "pages/LinkExtract",
-    "pages/LinkExtractProgress"
+    "pages/LinkExtractProgress",
+    "pages/dashboard/todo/TodoEditorPage"
   ]
 }

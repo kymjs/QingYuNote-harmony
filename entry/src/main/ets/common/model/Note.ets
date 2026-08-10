@@ -50,10 +50,34 @@ export interface NoteStateBlock {
   sourceUrl: string
   /** 是否收藏：0/1，写入 NOTE_STATE `is_favorite`。 */
   isFavorite: number
-  /** 是否日程：0/1，写入 NOTE_STATE `is_todo`。 */
+  /** 笔记类型：0 普通 / 1 日程 / 2 待办，写入 NOTE_STATE `is_todo`。 */
   isTodo: number
   todoDue: number
   todoCompleted: number
+  /**
+   * 待办优先级：0=无, 1=低, 2=中, 3=高, 4=紧急，写入 NOTE_STATE `todo_priority`。
+   */
+  todoPriority: number
+  /**
+   * 待办状态：0=进行中, 1=已完成，写入 NOTE_STATE `todo_status`。
+   * 与 [todoCompleted]（兼容旧字段）并存，新建待办以本字段为准。
+   */
+  todoStatus: number
+  /**
+   * 待办提醒提前分钟数：0=不提醒, 否则提前 N 分钟（基于 [todoDue]/[endTime]），
+   * 写入 NOTE_STATE `todo_reminder_minutes`。
+   */
+  todoReminderMinutes: number
+  /**
+   * 日程开始时间（毫秒，NOTE_STATE `start_time`）。
+   * 当 [isTodo] = 1 时作为日程起止；待办（is_todo=2）作为可选开始时间。
+   */
+  startTime: number
+  /**
+   * 日程结束时间（毫秒，NOTE_STATE `end_time`）。
+   * 当 [isTodo] = 1 时作为日程起止；待办（is_todo=2）作为截止时间（与 [todoDue] 同步）。
+   */
+  endTime: number
   source: string
   order: number
   userData: string
@@ -113,10 +137,20 @@ export interface Note {
   sourceUrl: string
   /** 是否收藏：0/1，写入 NOTE_STATE `is_favorite`。 */
   isFavorite: number
-  /** 是否日程：0/1，写入 NOTE_STATE `is_todo`。 */
+  /** 笔记类型：0 普通 / 1 日程 / 2 待办，写入 NOTE_STATE `is_todo`。 */
   isTodo: number
   todoDue: number
   todoCompleted: number
+  /** 待办优先级：0=无, 1=低, 2=中, 3=高, 4=紧急。 */
+  todoPriority: number
+  /** 待办状态：0=进行中, 1=已完成。 */
+  todoStatus: number
+  /** 待办提醒提前分钟数：0=不提醒。 */
+  todoReminderMinutes: number
+  /** 日程开始时间（毫秒）。仅当 [isTodo] = 1 时使用。 */
+  startTime: number
+  /** 日程结束时间（毫秒）。仅当 [isTodo] = 1 时使用。 */
+  endTime: number
   source: string
   order: number
   userData: string
@@ -190,6 +224,21 @@ export interface CreateNoteInput {
   userData?: string
   /** 链接来源 URL；写入 state `source_url`，用于 AI 链接提取等需要回溯链接的场景。 */
   sourceUrl?: string
+  /**
+   * 笔记类型：0 普通 / 1 日程 / 2 待办。
+   * 不传时按 0 处理；为 1 时应同时给出 [startTime] / [endTime]；为 2 时使用 [todoDue]。
+   */
+  isTodo?: number
+  /** 日程 / 待办开始时间（毫秒）。日程（is_todo=1）作为日程起止；待办（is_todo=2）作为可选开始时间。写入 NOTE_STATE `start_time`。 */
+  startTime?: number
+  /** 日程 / 待办结束时间（毫秒）。日程（is_todo=1）作为日程起止；待办（is_todo=2）作为截止时间（与 todoDue 同步）。写入 NOTE_STATE `end_time`。 */
+  endTime?: number
+  /** 待办优先级：0=无, 1=低, 2=中, 3=高, 4=紧急；写入 NOTE_STATE `todo_priority`。 */
+  todoPriority?: number
+  /** 待办状态：0=进行中, 1=已完成；写入 NOTE_STATE `todo_status`。 */
+  todoStatus?: number
+  /** 待办提醒提前分钟数：0=不提醒；写入 NOTE_STATE `todo_reminder_minutes`。 */
+  todoReminderMinutes?: number
 }
 
 export interface UpdateNoteInput {
@@ -209,6 +258,18 @@ export interface UpdateNoteInput {
   voiceTranscribeStatus?: VoiceTranscribeStatus
   /** 是否收藏：0/1；undefined 时不修改。 */
   isFavorite?: number
+  /** 笔记类型：0 普通 / 1 日程 / 2 待办；undefined 时不修改。 */
+  isTodo?: number
+  /** 日程 / 待办开始时间（毫秒）；undefined 时不修改。 */
+  startTime?: number
+  /** 日程 / 待办结束时间（毫秒）；undefined 时不修改。 */
+  endTime?: number
+  /** 待办优先级：0=无, 1=低, 2=中, 3=高, 4=紧急；undefined 时不修改。 */
+  todoPriority?: number
+  /** 待办状态：0=进行中, 1=已完成；undefined 时不修改。 */
+  todoStatus?: number
+  /** 待办提醒提前分钟数：0=不提醒；undefined 时不修改。 */
+  todoReminderMinutes?: number
 }
 
 /** 仅更新异步链接提取相关字段的 patch。 */

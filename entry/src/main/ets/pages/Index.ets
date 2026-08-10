@@ -265,6 +265,12 @@ struct Index {
       return
     }
     void this.loadDrawerUserProfile()
+    /** 启动时清理超过 30 天未编辑的回收站笔记（与新版首页回收站 Tab 一致）。 */
+    try {
+      await NoteRepository.getInstance().purgeExpiredRecycleBinNotes()
+    } catch (error) {
+      Logger.warn('Index', `purgeExpiredRecycleBinNotes failed: ${JSON.stringify(error)}`)
+    }
     await this.loadNotes(this.allNotes.length === 0)
     if (!this.lifecycle.isActive()) {
       return

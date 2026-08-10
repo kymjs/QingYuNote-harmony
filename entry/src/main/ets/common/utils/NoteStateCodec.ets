@@ -69,6 +69,11 @@ export class NoteStateCodec {
       isTodo: note.isTodo ?? 0,
       todoDue: note.todoDue,
       todoCompleted: note.todoCompleted,
+      todoPriority: note.todoPriority ?? 0,
+      todoStatus: note.todoStatus ?? 0,
+      todoReminderMinutes: note.todoReminderMinutes ?? 0,
+      startTime: note.startTime ?? 0,
+      endTime: note.endTime ?? 0,
       source: note.source,
       order: note.order,
       userData: note.userData,
@@ -107,6 +112,11 @@ export class NoteStateCodec {
       `is_todo: ${state.isTodo}`,
       `todo_due: ${state.todoDue}`,
       `todo_completed: ${state.todoCompleted}`,
+      `start_time: ${state.startTime}`,
+      `end_time: ${state.endTime}`,
+      `todo_priority: ${state.todoPriority}`,
+      `todo_status: ${state.todoStatus}`,
+      `todo_reminder_minutes: ${state.todoReminderMinutes}`,
       `source: ${state.source}`,
       `order: ${state.order}`
     ]
@@ -188,6 +198,11 @@ export class NoteStateCodec {
       isTodo: state.isTodo,
       todoDue: state.todoDue,
       todoCompleted: state.todoCompleted,
+      todoPriority: state.todoPriority,
+      todoStatus: state.todoStatus,
+      todoReminderMinutes: state.todoReminderMinutes,
+      startTime: state.startTime,
+      endTime: state.endTime,
       source: state.source,
       order: state.order,
       userData: state.userData,
@@ -226,6 +241,11 @@ export class NoteStateCodec {
       isTodo: 0,
       todoDue: 0,
       todoCompleted: 0,
+      todoPriority: 0,
+      todoStatus: 0,
+      todoReminderMinutes: 0,
+      startTime: 0,
+      endTime: 0,
       source: NoteStateCodec.NOTE_SOURCE,
       order: 0,
       userData: '',
@@ -304,6 +324,21 @@ export class NoteStateCodec {
           break
         case 'todo_completed':
           parsed.todoCompleted = NoteStateCodec.parseInteger(value, parsed.todoCompleted)
+          break
+        case 'start_time':
+          parsed.startTime = NoteStateCodec.parseInteger(value, parsed.startTime)
+          break
+        case 'end_time':
+          parsed.endTime = NoteStateCodec.parseInteger(value, parsed.endTime)
+          break
+        case 'todo_priority':
+          parsed.todoPriority = NoteStateCodec.parseInteger(value, parsed.todoPriority)
+          break
+        case 'todo_status':
+          parsed.todoStatus = NoteStateCodec.parseInteger(value, parsed.todoStatus)
+          break
+        case 'todo_reminder_minutes':
+          parsed.todoReminderMinutes = NoteStateCodec.parseInteger(value, parsed.todoReminderMinutes)
           break
         case 'source':
           parsed.source = value

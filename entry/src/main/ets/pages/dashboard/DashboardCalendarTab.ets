@@ -1,11 +1,13 @@
 import { common } from '@kit.AbilityKit'
 import { fileUri } from '@kit.CoreFileKit'
+import display from '@ohos.display'
 
 import type { Note } from '../../common/model/Note'
 import { isExtractStatusPending } from '../../common/model/Note'
 import { NOTE_TYPE_FLOWCHART } from '../../common/model/FlowchartGraph'
 import { navigateToFlowchart } from '../../common/utils/FlowchartNavigation'
 import { navigateToNoteEdit } from '../../common/utils/NoteEditNavigation'
+import { navigateToTodoEditor } from '../../common/utils/TodoEditorNavigation'
 import { formatDashboardDateLine } from '../../common/utils/GreetingAndLunar'
 import { AppContextHolder } from '../../services/AppContextHolder'
 import { LocaleService } from '../../services/LocaleService'
@@ -23,11 +25,14 @@ import {
 import { CalendarProjector } from './calendar/CalendarProjector'
 import { CalendarWeekLayout } from './calendar/CalendarWeekLayout'
 import { NotesTabLogic } from './DashboardNotesModels'
+import { showCalendarAddScheduleDialog } from '../../dialogs/CalendarAddScheduleDialog'
 
 const PAGE_PAD = 8
 const WEEK_PAD = 4
 const LIST_BOTTOM_PAD = 16
 const HOUR_ROW_HEIGHT = 36.4 // 52 * 0.7
+// 点击空白格子的最小时间粒度（30 分钟对齐），与 PC 端保持一致。
+const SLOT_MINUTES = 30
 const SHEET_MIN = 0.16
 const SHEET_MID = 0.42
 const SHEET_MAX = 0.94
@@ -465,6 +470,12 @@ export struct DashboardCalendarTab {
         })
       } catch (_) {
       }
+      await this.reload()
+      return
+    }
+    // 待办事项（is_todo=2）→ 跳到新的待办编辑页，提供结构化字段编辑。
+    if ((note.isTodo ?? 0) === 2) {
+      await navigateToTodoEditor(this.getUIContext(), { noteId: note.id })
       await this.reload()
       return
     }
@@ -1113,6 +1124,16 @@ export struct DashboardCalendarTab {
       .width(44)
 
       Stack() {
+        // 空白格子点击层：命中事件块几何范围时不做任何处理，
+        // 让块本身的 onClick（openWeekExpand）正常处理；其余位置触发新建日程。
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(Color.Transparent)
+          .onClick((event: ClickEvent) => {
+            this.onWeekGridTap(startY, startM, startD, event)
+          })
+
         Column() {
           ForEach(this.labelsForWeekPage(startY, startM, startD), (lab: string) => {
             Divider().color($r('app.color.surface_muted')).height(HOUR_ROW_HEIGHT)
@@ -1217,6 +1238,92 @@ export struct DashboardCalendarTab {
   private closeWeekExpand(): void {
     this.expandedVisible = false
     this.expandedItems = []
+  }
+
+  /**
+   * 周视图空白格子点击：把点击本地坐标换算成「第几列 + SLOT_MINUTES 对齐的时刻」，
+   * 若命中事件块几何范围则忽略（让块自身的 onClick 处理），否则弹出新建日程弹窗。
+   * 落地规则见项目 CLAUDE.md「日历日程 / 待办事项 隐藏字段规则」。
+   */
+  private async onWeekGridTap(
+    startY: number,
+    startM: number,
+    startD: number,
+    event: ClickEvent
+  ): Promise<void> {
+    const px = event.x
+    const py = event.y
+    if (px < 0 || py < 0) {
+      return
+    }
+    const blocks = this.blocksForWeek(startY, startM, startD)
+    const range = this.displayRangeForItems(
+      blocks.length > 0 ? blocks.map((b): CalendarOccurrence => b.occurrence) : []
+    )
+    const stackHeight = this.labelsForWeekPage(startY, startM, startD).length * HOUR_ROW_HEIGHT
+    if (stackHeight <= 0) {
+      return
+    }
+    const colWidthRatio = 1 / 7
+    // 命中块几何范围时不做任何处理（块自身的 onClick 会处理 openWeekExpand）。
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i]
+      const leftPct = (100 / 7) * (b.dayIndex + b.leftRatio)
+      const topPct = b.topRatio * 100
+      const widthPct = (100 / 7) * b.widthRatio
+      const heightPct = b.heightRatio * 100
+      const left = (leftPct / 100) * this.weekStackWidth
+      const top = (topPct / 100) * stackHeight
+      const right = left + (widthPct / 100) * this.weekStackWidth
+      const bottom = top + (heightPct / 100) * stackHeight
+      if (px >= left && px <= right && py >= top && py <= bottom) {
+        return
+      }
+    }
+    const dayIndex = Math.max(0, Math.min(6, Math.floor(px / (this.weekStackWidth * colWidthRatio))))
+    const hourOffset = Math.max(0,
+      Math.min(range.spanHours() - SLOT_MINUTES / 60.0, py / HOUR_ROW_HEIGHT))
+    const totalMinutes = Math.floor(
+      ((range.startHour * 60 + hourOffset * 60) / SLOT_MINUTES)
+    ) * SLOT_MINUTES
+    const weekStart = new Date(startY, startM - 1, startD)
+    const day = new Date(weekStart)
+    day.setDate(weekStart.getDate() + dayIndex)
+    day.setHours(0, 0, 0, 0)
+    const startMs = day.getTime() + totalMinutes * 60 * 1000
+    const endMs = startMs + SLOT_MINUTES * 60 * 1000
+    if (this.expandedVisible) {
+      this.closeWeekExpand()
+    }
+    const saved = await showCalendarAddScheduleDialog(this.getUIContext(), {
+      startMs,
+      endMs
+    })
+    if (saved) {
+      // 落库后强制刷新：与 Flutter PC 端保持一致，避免依赖异步通知。
+      await this.reload()
+    }
+  }
+
+  /**
+   * 周视图 Stack 的估算宽度（vp）。
+   *
+   * 周视图根布局：Scroll(WEEK_PAD 横向 padding) → Row(44px 时辰标签 + Stack)。
+   * 这里用「设备宽度 - 标签栏 - 外层 PAGE_PAD*2 - WEEK_PAD*2」近似得到 Stack
+   * 的实际可用宽度；与 `event.x` 的本地坐标系保持一致。
+   */
+  private get weekStackWidth(): number {
+    let totalW = 0
+    try {
+      const dd = display.getDefaultDisplaySync()
+      totalW = dd.width
+    } catch (_) {
+      totalW = 0
+    }
+    if (totalW <= 0) {
+      return 0
+    }
+    return Math.max(0, totalW - 44 - PAGE_PAD * 2 - WEEK_PAD * 2)
   }
 
   private blocksForWeek(startY: number, startM: number, startD: number): CalendarWeekBlockLayout[] {

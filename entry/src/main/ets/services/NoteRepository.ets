@@ -44,6 +44,11 @@ export class NoteRepository {
   /** 本地全量读盘时的并发度；仅缩短墙钟时间，不改变解析与合并顺序。 */
   private static readonly LOAD_ALL_NOTES_CONCURRENCY: number = 6
 
+  /** 回收站保留天数：与 Flutter 端 `NoteRepository.recycleBinRetentionDays` 保持一致。 */
+  static readonly RECYCLE_BIN_RETENTION_DAYS: number = 30
+  /** 一整天的毫秒数。 */
+  private static readonly MS_PER_DAY: number = 24 * 60 * 60 * 1000
+
   static getInstance(): NoteRepository {
     return NoteRepository.instance
   }
@@ -140,6 +145,41 @@ export class NoteRepository {
     const sourceUrl = (input.sourceUrl ?? '').trim()
     if (sourceUrl.length > 0) {
       state.sourceUrl = sourceUrl
+    }
+    // 日程 / 待办 隐藏字段（与 Flutter 端 NoteRepository.createNote 对齐）：
+    //   is_todo=1 → 日程，需给出 startTime / endTime；
+    //   is_todo=2 → 待办，可选 startTime / endTime，并把 endTime 同步到 todoDue；
+    //   其余值按 0 处理。
+    if (input.isTodo !== undefined && input.isTodo > 0) {
+      state.isTodo = input.isTodo
+      if (input.isTodo === 1) {
+        if (input.startTime !== undefined && input.startTime > 0) {
+          state.startTime = input.startTime
+        }
+        if (input.endTime !== undefined && input.endTime > 0) {
+          state.endTime = input.endTime
+        }
+      } else if (input.isTodo === 2) {
+        if (input.startTime !== undefined && input.startTime > 0) {
+          state.startTime = input.startTime
+        }
+        if (input.endTime !== undefined && input.endTime > 0) {
+          state.endTime = input.endTime
+          // 同步到 todoDue，保证 CalendarProjector.projectNote 锚点不变。
+          state.todoDue = input.endTime
+        }
+        if (input.todoPriority !== undefined) {
+          state.todoPriority = input.todoPriority
+        }
+        if (input.todoStatus !== undefined) {
+          state.todoStatus = input.todoStatus
+          // 与旧字段 todoCompleted 兼容：进行中=0, 已完成=1。
+          state.todoCompleted = input.todoStatus === 1 ? 1 : 0
+        }
+        if (input.todoReminderMinutes !== undefined) {
+          state.todoReminderMinutes = input.todoReminderMinutes
+        }
+      }
     }
     const note = this.createNoteFromState(state, trimmedContent, {
       noteId: id,
@@ -477,8 +517,23 @@ export class NoteRepository {
     const voiceStatusChanged = nextVoiceTranscribeStatus !== existing.voiceTranscribeStatus
     const nextIsFavorite = patch.isFavorite !== undefined ? patch.isFavorite : existing.isFavorite
     const isFavoriteChanged = nextIsFavorite !== existing.isFavorite
+    const nextIsTodo = patch.isTodo !== undefined ? patch.isTodo : existing.isTodo
+    const isTodoChanged = nextIsTodo !== existing.isTodo
+    const nextStartTime = patch.startTime !== undefined ? patch.startTime : existing.startTime
+    const startTimeChanged = nextStartTime !== existing.startTime
+    const nextEndTime = patch.endTime !== undefined ? patch.endTime : existing.endTime
+    const endTimeChanged = nextEndTime !== existing.endTime
+    const nextTodoPriority = patch.todoPriority !== undefined ? patch.todoPriority : existing.todoPriority
+    const todoPriorityChanged = nextTodoPriority !== existing.todoPriority
+    const nextTodoStatus = patch.todoStatus !== undefined ? patch.todoStatus : existing.todoStatus
+    const todoStatusChanged = nextTodoStatus !== existing.todoStatus
+    const nextTodoReminderMinutes =
+      patch.todoReminderMinutes !== undefined ? patch.todoReminderMinutes : existing.todoReminderMinutes
+    const todoReminderMinutesChanged = nextTodoReminderMinutes !== existing.todoReminderMinutes
     if (!contentChanged && !titleChanged && !summaryChanged && !tagsChanged && !parentIdChanged && !audioIdChanged &&
-      !sourceUrlChanged && !voiceSummaryChanged && !voiceSegmentsChanged && !voiceStatusChanged && !isFavoriteChanged) {
+      !sourceUrlChanged && !voiceSummaryChanged && !voiceSegmentsChanged && !voiceStatusChanged && !isFavoriteChanged &&
+      !isTodoChanged && !startTimeChanged && !endTimeChanged && !todoPriorityChanged && !todoStatusChanged &&
+      !todoReminderMinutesChanged) {
       return this.cloneNote(existing)
     }
 
@@ -495,6 +550,22 @@ export class NoteRepository {
     updated.voiceSegmentsJson = nextVoiceSegmentsJson
     updated.voiceTranscribeStatus = nextVoiceTranscribeStatus
     updated.isFavorite = nextIsFavorite
+    updated.isTodo = nextIsTodo
+    updated.startTime = nextStartTime
+    updated.endTime = nextEndTime
+    updated.todoPriority = nextTodoPriority
+    updated.todoStatus = nextTodoStatus
+    updated.todoReminderMinutes = nextTodoReminderMinutes
+    if (endTimeChanged || isTodoChanged) {
+      // 待办（is_todo=2）时 endTime 同步到 todoDue，保持日历投影锚点一致。
+      if (updated.isTodo === 2) {
+        updated.todoDue = updated.endTime
+      }
+    }
+    if (todoStatusChanged) {
+      // 与旧字段 todoCompleted 兼容：进行中=0, 已完成=1。
+      updated.todoCompleted = updated.todoStatus === 1 ? 1 : 0
+    }
     updated.localModified = now
     updated.deleted = false
     updated.deletedAt = 0
@@ -600,6 +671,11 @@ export class NoteRepository {
       isTodo: existing.isTodo ?? 0,
       todoDue: existing.todoDue,
       todoCompleted: existing.todoCompleted,
+      todoPriority: existing.todoPriority ?? 0,
+      todoStatus: existing.todoStatus ?? 0,
+      todoReminderMinutes: existing.todoReminderMinutes ?? 0,
+      startTime: existing.startTime ?? 0,
+      endTime: existing.endTime ?? 0,
       source: existing.source,
       order: existing.order,
       userData: existing.userData,
@@ -838,6 +914,51 @@ export class NoteRepository {
     await DatabaseService.getInstance().clearDeleted(id, updated.remoteModified, now, 'pending')
     this.bumpVersion()
     this.scheduleSyncHandler?.(id)
+  }
+
+  /**
+   * 启动时清理：剩余天数 ≤ 0 的回收站笔记（即距最后编辑已超过
+   * [RECYCLE_BIN_RETENTION_DAYS] 天的笔记）会被标记为彻底删除，不再展示。
+   *
+   * - 复用 [setRecycleBinNoteDeletedTimePermanent]，连带图片/音频清理与同步状态。
+   * - 串行执行，单条失败不影响其它。
+   * - 调用方在「打开 APP 进入新版首页」时执行一次（Harmony / Flutter 桌面端 /
+   *   Flutter 移动端共用）。[now] 仅用于测试时固定时间。
+   */
+  async purgeExpiredRecycleBinNotes(now?: number): Promise<number> {
+    await this.init()
+    const baseline = now ?? Date.now()
+    let recycleNotes: Note[] = []
+    try {
+      recycleNotes = await this.listRecycleBinNotes()
+    } catch (error) {
+      Logger.warn('NoteRepository', `purgeExpiredRecycleBinNotes listRecycleBinNotes failed: ${JSON.stringify(error)}`)
+      return 0
+    }
+    let purged = 0
+    for (const note of recycleNotes) {
+      if (note.deletedTime !== 1) {
+        continue
+      }
+      const updatedAt = note.updatedAt
+      if (updatedAt <= 0) {
+        continue
+      }
+      const ageMs = baseline - updatedAt
+      const ageDays = Math.floor(ageMs / NoteRepository.MS_PER_DAY)
+      const remaining = NoteRepository.RECYCLE_BIN_RETENTION_DAYS - ageDays
+      if (remaining > 0) {
+        continue
+      }
+      try {
+        await this.setRecycleBinNoteDeletedTimePermanent(note.id)
+        purged += 1
+      } catch (error) {
+        Logger.warn('NoteRepository',
+          `purgeExpiredRecycleBinNotes permanent failed id=${note.id}: ${JSON.stringify(error)}`)
+      }
+    }
+    return purged
   }
 
   async deleteNote(id: string, operationTime: number): Promise<void> {
@@ -1233,6 +1354,11 @@ export class NoteRepository {
       isTodo: base.isTodo,
       todoDue: base.todoDue,
       todoCompleted: base.todoCompleted,
+      todoPriority: base.todoPriority,
+      todoStatus: base.todoStatus,
+      todoReminderMinutes: base.todoReminderMinutes,
+      startTime: base.startTime,
+      endTime: base.endTime,
       source: base.source,
       order: base.order,
       userData: base.userData,
@@ -1298,6 +1424,11 @@ export class NoteRepository {
       isTodo: state.isTodo,
       todoDue: state.todoDue,
       todoCompleted: state.todoCompleted,
+      todoPriority: state.todoPriority,
+      todoStatus: state.todoStatus,
+      todoReminderMinutes: state.todoReminderMinutes,
+      startTime: state.startTime,
+      endTime: state.endTime,
       source: state.source,
       order: state.order,
       userData: state.userData,
@@ -1389,6 +1520,11 @@ export class NoteRepository {
       isTodo: note.isTodo,
       todoDue: note.todoDue,
       todoCompleted: note.todoCompleted,
+      todoPriority: note.todoPriority,
+      todoStatus: note.todoStatus,
+      todoReminderMinutes: note.todoReminderMinutes,
+      startTime: note.startTime,
+      endTime: note.endTime,
       source: note.source,
       order: note.order,
       userData: note.userData,

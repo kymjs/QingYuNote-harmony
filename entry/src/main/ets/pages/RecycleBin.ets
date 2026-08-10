@@ -61,6 +61,12 @@ struct RecycleBinPage {
         }
       }
       await NoteRepository.getInstance().init()
+      // 每次打开回收站都先清理超过 30 天未编辑的笔记，与新版首页回收站 Tab 行为一致。
+      try {
+        await NoteRepository.getInstance().purgeExpiredRecycleBinNotes()
+      } catch (error) {
+        console.error(`RecycleBin purge failed: ${JSON.stringify(error)}`)
+      }
       const result = await NoteRepository.getInstance().listRecycleBinNotesMergedWithRemote()
       if (!this.lifecycle.isActive()) {
         return

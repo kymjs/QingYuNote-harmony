@@ -5,6 +5,7 @@ import { Note, isExtractStatusPending } from '../common/model/Note'
 import type { SyncResult } from '../common/model/Note'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { navigateToNoteEdit } from '../common/utils/NoteEditNavigation'
+import { navigateToTodoEditor } from '../common/utils/TodoEditorNavigation'
 import { navigateToFlowchart } from '../common/utils/FlowchartNavigation'
 import { IdUtils } from '../common/utils/IdUtils'
 import { usePcStyleLayoutWithSize } from '../common/utils/DesktopLayout'
@@ -32,8 +33,13 @@ import { NOTE_TYPE_FLOWCHART } from '../common/model/FlowchartGraph'
 import { Logger } from '../common/utils/Logger'
 import { CryptoService } from '../services/CryptoService'
 import { DashboardNotesTab } from './dashboard/DashboardNotesTab'
+import { DashboardTodoTab } from './dashboard/DashboardTodoTab'
 import { DashboardCalendarTab } from './dashboard/DashboardCalendarTab'
 import { DashboardMineTab } from './dashboard/DashboardMineTab'
+import { CalendarProjector } from './dashboard/calendar/CalendarProjector'
+import type { CalendarItemKind } from './dashboard/calendar/CalendarModels'
+import { FlowchartService } from '../services/FlowchartService'
+import { FlowchartMindMap } from '../common/utils/FlowchartMindMap'
 
 const ACCENT = '#0DAA4A'
 const BLUE = '#3B82F6'
@@ -61,6 +67,18 @@ class DashNoteRow {
   }
 }
 
+/** 「未来待办 / 日程清单」卡专用：复用了 title / timeLabel，
+ * 不需要 snippet / leadingKind / thumbUri。 */
+class DashAgendaRow {
+  id: string = ''
+  title: string = ''
+  /** todo 卡：HH:mm；schedule 卡：HH:mm-HHmm。 */
+  timeLabel: string = ''
+  isDone: boolean = false
+  /** schedule 卡左侧小圆点颜色（HEX）。todo 卡恒为空字符串。 */
+  dotColor: string = ''
+}
+
 @Entry
 @Component
 struct MainShell {
@@ -77,6 +95,8 @@ struct MainShell {
   @State dateLine: string = ''
   @State continueEditing: DashNoteRow[] = []
   @State recentNotes: DashNoteRow[] = []
+  @State upcomingTodos: DashAgendaRow[] = []
+  @State upcomingSchedules: DashAgendaRow[] = []
   @State noteCount: number = 0
   @State todoCount: number = 0
   @State tagCount: number = 0
@@ -276,6 +296,24 @@ struct MainShell {
         const latestNotes = byCreated.filter((n: Note) => !latestHidden.has(n.id))
         const continueRows = this.mapRows(continueNotes.slice(0, 4), true)
         const recentRows = this.mapRows(latestNotes.slice(0, 4), false)
+        // 「未来待办 / 日程清单」卡：复用日历周视图投影（已应用 isTodo=1
+        // startTime/endTime 与 isTodo=2 todoDue-1h 的渲染规则）。
+        //   - 日程清单卡：今天及之后所有未完成的 schedule occurrences，
+        //     按 anchorMs 升序、最多 3 条；跨度可超过一天。
+        //   - 未来待办卡：今天及之后所有未完成的 todo occurrences，按 anchorMs
+        //     升序、最多 3 条；跨度可超过一天。
+        const today = new Date()
+        const todayY = today.getFullYear()
+        const todayM = today.getMonth() + 1
+        const todayD = today.getDate()
+        const upcomingSchedules = this.mapAgendaRows(
+          this.upcomingScheduleOccurrences(CalendarProjector.projectNotes(notes), 3),
+          'schedule'
+        )
+        const upcomingTodos = this.mapAgendaRows(
+          this.upcomingTodoOccurrences(CalendarProjector.projectNotes(notes), 3),
+          'todo'
+        )
 
         if (generation !== this.reloadGeneration) {
           Logger.info('DashHomeLoad',
@@ -291,10 +329,12 @@ struct MainShell {
             `reloadDashboard skip empty overwrite gen=${generation} keep continue=${this.continueEditing.length}`)
         } else {
           this.noteCount = notes.length
-          this.todoCount = this.countTodoItems(notes)
+          this.todoCount = await this.countTodoAndScheduleItems(notes)
           this.tagCount = tagSet.size
           this.continueEditing = continueRows
           this.recentNotes = recentRows
+          this.upcomingTodos = upcomingTodos
+          this.upcomingSchedules = upcomingSchedules
           Logger.info('DashStats',
             `APPLIED gen=${generation} notes=${notes.length} noteCount=${this.noteCount} ` +
             `todoCount=${this.todoCount} tagCount=${this.tagCount} ` +
@@ -374,6 +414,133 @@ struct MainShell {
       rows.push(row)
     }
     return rows
+  }
+
+  /**
+   * 把日历投影后的 occurrence 映射成首页「未来待办 / 日程清单」卡的数据行。
+   * - todo: timeLabel = endMs 的 HH:mm，dotColor 留空（圆点用 ORANGE，但用整行 done 状态区分）。
+   * - schedule: 当天 → HH:mm-HHmm；其它日期 → X月X日（隐藏具体时间），dotColor = PURPLE。
+   */
+  private mapAgendaRows(
+    occurrences: import('./dashboard/calendar/CalendarModels').CalendarOccurrence[],
+    kind: CalendarItemKind
+  ): DashAgendaRow[] {
+    const now = new Date()
+    const todayY = now.getFullYear()
+    const todayM = now.getMonth() + 1
+    const todayD = now.getDate()
+    const rows: DashAgendaRow[] = []
+    for (const o of occurrences) {
+      if (o.kind !== kind) {
+        continue
+      }
+      const row = new DashAgendaRow()
+      row.id = o.noteId
+      const trimmedTitle = (o.note.title ?? '').trim()
+      row.title = trimmedTitle.length > 0 ? trimmedTitle :
+        LocaleService.loc('无标题', 'Untitled', '無題')
+      row.isDone = (o.note.todoCompleted ?? 0) !== 0
+      if (kind === 'schedule') {
+        if (o.dayY === todayY && o.dayM === todayM && o.dayD === todayD) {
+          row.timeLabel = `${this.hhmm(o.anchorMs)}-${this.hhmm(o.endMs)}`
+        } else {
+          // 未来日：只展示日期，不展示具体时间。
+          row.timeLabel = `${o.dayM}月${o.dayD}日`
+        }
+        row.dotColor = PURPLE
+      } else {
+        row.timeLabel = this.hhmm(o.endMs)
+        row.dotColor = ''
+      }
+      rows.push(row)
+    }
+    return rows
+  }
+
+  /**
+   * 「未来待办」卡专用：从所有 occurrence 中挑出今天及以后、未完成的 todo 项。
+   *
+   * 规则：
+   *   1. `kind === 'todo'`（含 isTodo=2 与带 `Todo` 兼容 tag 的旧笔记）；
+   *   2. `note.todoCompleted === 0`（未完成；兼容字段，逻辑同首页其它卡片）；
+   *   3. `endMs >= todayMs`（结束时间在今天 00:00 之后；含今天 + 未来）；
+   *   4. 按 `anchorMs` 升序、时间越早越靠上；
+   *   5. 最多 `limit` 条。
+   *
+   * 与三端 Flutter `dashboard_loader.dart::_upcomingTodoOccurrences` 等价。
+   */
+  private upcomingTodoOccurrences(
+    occurrences: import('./dashboard/calendar/CalendarModels').CalendarOccurrence[],
+    limit: number
+  ): import('./dashboard/calendar/CalendarModels').CalendarOccurrence[] {
+    const now = new Date()
+    const todayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const filtered: import('./dashboard/calendar/CalendarModels').CalendarOccurrence[] = []
+    for (let i = 0; i < occurrences.length; i++) {
+      const o = occurrences[i]
+      if (o.kind !== 'todo') {
+        continue
+      }
+      if ((o.note.todoCompleted ?? 0) !== 0) {
+        continue
+      }
+      if (o.endMs < todayMs) {
+        continue
+      }
+      filtered.push(o)
+    }
+    filtered.sort((a, b) => {
+      if (a.anchorMs !== b.anchorMs) {
+        return a.anchorMs - b.anchorMs
+      }
+      return a.noteId.localeCompare(b.noteId)
+    })
+    return filtered.length > limit ? filtered.slice(0, limit) : filtered
+  }
+
+  /**
+   * 「日程清单」卡专用：从所有 occurrence 中挑出今天及以后、未结束的 schedule 项。
+   *
+   * 规则：
+   *   1. `kind === 'schedule'`（isTodo=1 + tag Schedule 的笔记）；
+   *   2. `endMs >= todayMs`（结束时间在今天 00:00 之后；含今天 + 未来）；
+   *   3. 按 `anchorMs` 升序、时间越早越靠上；
+   *   4. 最多 `limit` 条。
+   *
+   * 与三端 Flutter `dashboard_loader.dart::_upcomingScheduleOccurrences` 等价。
+   */
+  private upcomingScheduleOccurrences(
+    occurrences: import('./dashboard/calendar/CalendarModels').CalendarOccurrence[],
+    limit: number
+  ): import('./dashboard/calendar/CalendarModels').CalendarOccurrence[] {
+    const now = new Date()
+    const todayMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const filtered: import('./dashboard/calendar/CalendarModels').CalendarOccurrence[] = []
+    for (let i = 0; i < occurrences.length; i++) {
+      const o = occurrences[i]
+      if (o.kind !== 'schedule') {
+        continue
+      }
+      if (o.endMs < todayMs) {
+        continue
+      }
+      filtered.push(o)
+    }
+    filtered.sort((a, b) => {
+      if (a.anchorMs !== b.anchorMs) {
+        return a.anchorMs - b.anchorMs
+      }
+      return a.noteId.localeCompare(b.noteId)
+    })
+    return filtered.length > limit ? filtered.slice(0, limit) : filtered
+  }
+
+  private hhmm(ms: number): string {
+    if (ms <= 0) {
+      return ''
+    }
+    const dt = new Date(ms)
+    return `${dt.getHours().toString().padStart(2, '0')}:${dt.getMinutes().toString().padStart(2, '0')}`
   }
 
   private relativeTime(ms: number): string {
@@ -465,18 +632,44 @@ struct MainShell {
     return days < 1 ? 1 : days
   }
 
-  /** 统计带标签 Todo 的笔记篇数（一篇待办笔记计 1）。 */
-  private countTodoItems(notes: Note[]): number {
+  /**
+   * 统计「待办事项 + 待办日程」总数。
+   *
+   * 规则：笔记隐藏字段 `is_todo` 不为 0（参考 CLAUDE.md
+   * 「日历日程 / 待办事项 隐藏字段规则」），且不是流程图、也不是思维导图。
+   * 流程图直接按 `type_ === NOTE_TYPE_FLOWCHART` 过滤；思维导图是流程图中
+   * `metadata.layoutMode == 'mindMapLinear'` 的子集，需要解析 `.qy` 边车
+   * 才能识别，所以单独再走 `FlowchartService.load`。
+   *
+   * 只对「命中 is_todo 的流程图」按需加载 `.qy`，避免对所有流程图都做磁盘 IO。
+   */
+  private async countTodoAndScheduleItems(notes: Note[]): Promise<number> {
     let total = 0
     for (const n of notes) {
-      if ((n.tags ?? []).some((t: string) => `${t ?? ''}`.trim() === 'Todo')) {
-        total += 1
+      const isTodo = (n.isTodo ?? 0) !== 0 ? 1 : 0
+      if (isTodo !== 1) {
+        continue
       }
+      if (n.type_ === NOTE_TYPE_FLOWCHART) {
+        // 流程图（包括思维导图）都不计入；其中思维导图要额外 `.qy` 解析。
+        try {
+          const graph = await FlowchartService.getInstance().load(n.id)
+          if (FlowchartMindMap.isMindMapMode(graph)) {
+            continue
+          }
+        } catch (e) {
+          // 解析失败 / 边车缺失 → 当流程图排除。
+          Logger.warn('MainShell', `countTodo mindMap load failed: ${JSON.stringify(e)}`)
+          continue
+        }
+        continue
+      }
+      total += 1
     }
     return total
   }
 
-  /** 排查用：抽样打印带标签 Todo 的笔记。 */
+  /** 排查用：抽样打印命中「is_todo 不为 0」的笔记，与新版 todoCount 规则同步。 */
   private logTodoScanSample(notes: Note[]): void {
     let withFlag = 0
     let emptyContent = 0
@@ -486,20 +679,21 @@ struct MainShell {
       if (content.trim().length === 0) {
         emptyContent += 1
       }
-      const hasTodoTag = (n.tags ?? []).some((t: string) => `${t ?? ''}`.trim() === 'Todo')
-      if (!hasTodoTag) {
+      const isTodo = ((n.isTodo ?? 0) !== 0)
+      if (!isTodo) {
         continue
       }
       withFlag += 1
       if (logged < 3) {
         const snippet = content.replace(/\s+/g, ' ').substring(0, 80)
         Logger.info('DashStats',
-          `todoSample id=${n.id} titleLen=${(n.title ?? '').length} contentLen=${content.length} snippet=${snippet}`)
+          `todoSample id=${n.id} isTodo=${n.isTodo ?? 0} type_=${n.type_} ` +
+          `titleLen=${(n.title ?? '').length} contentLen=${content.length} snippet=${snippet}`)
         logged += 1
       }
     }
     Logger.info('DashStats',
-      `todoScan notes=${notes.length} withTodoTag=${withFlag} emptyContent=${emptyContent} todoCount=${this.todoCount}`)
+      `todoScan notes=${notes.length} withIsTodo=${withFlag} emptyContent=${emptyContent} todoCount=${this.todoCount}`)
   }
 
   private async resolveCloudConfigured(): Promise<boolean> {
@@ -564,7 +758,7 @@ struct MainShell {
     this.shellTabIndex = index
     if (index === 0) {
       void this.reloadDashboard()
-    } else if (index === 3) {
+    } else if (index === 4) {
       this.mineShellRefreshNonce += 1
     }
   }
@@ -696,7 +890,7 @@ struct MainShell {
   }
 
   private async quickTodo(): Promise<void> {
-    await navigateToNoteEdit(this.getUIContext(), { initialAction: 'todoList' })
+    await navigateToTodoEditor(this.getUIContext(), {})
   }
 
   private async quickBook(): Promise<void> {
@@ -733,18 +927,23 @@ struct MainShell {
           .height('100%')
           .visibility(this.shellTabIndex === 1 ? Visibility.Visible : Visibility.None)
 
-        DashboardCalendarTab({ visible: this.shellTabIndex === 2 })
+        DashboardTodoTab({ visible: this.shellTabIndex === 2 })
           .width('100%')
           .height('100%')
           .visibility(this.shellTabIndex === 2 ? Visibility.Visible : Visibility.None)
 
+        DashboardCalendarTab({ visible: this.shellTabIndex === 3 })
+          .width('100%')
+          .height('100%')
+          .visibility(this.shellTabIndex === 3 ? Visibility.Visible : Visibility.None)
+
         DashboardMineTab({
-          visible: this.shellTabIndex === 3,
+          visible: this.shellTabIndex === 4,
           shellRefreshNonce: this.mineShellRefreshNonce
         })
           .width('100%')
           .height('100%')
-          .visibility(this.shellTabIndex === 3 ? Visibility.Visible : Visibility.None)
+          .visibility(this.shellTabIndex === 4 ? Visibility.Visible : Visibility.None)
       }
       .width('100%')
       .layoutWeight(1)
@@ -780,8 +979,9 @@ struct MainShell {
     Row() {
       this.tabItem(0, $r('sys.symbol.house'), LocaleService.loc('首页', 'Home', 'ホーム'))
       this.tabItem(1, $r('sys.symbol.doc_text'), LocaleService.loc('笔记', 'Notes', 'ノート'))
-      this.tabItem(2, $r('sys.symbol.calendar'), LocaleService.loc('日历', 'Calendar', 'カレンダー'))
-      this.tabItem(3, $r('sys.symbol.person'), LocaleService.loc('我的', 'Mine', 'マイページ'))
+      this.tabItem(2, $r('sys.symbol.checkmark'), LocaleService.loc('待办', 'Todos', 'ToDo'))
+      this.tabItem(3, $r('sys.symbol.calendar'), LocaleService.loc('日历', 'Calendar', 'カレンダー'))
+      this.tabItem(4, $r('sys.symbol.person'), LocaleService.loc('我的', 'Mine', 'マイページ'))
     }
     .width('100%')
     .height(64)
@@ -800,7 +1000,7 @@ struct MainShell {
         .fontSize(11)
         .fontColor(this.shellTabIndex === index ? ACCENT : $r('app.color.secondary_text'))
     }
-    .width('25%')
+    .width('20%')
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .onClick(() => {
@@ -1273,19 +1473,27 @@ struct MainShell {
   todoCard() {
     Column({ space: 8 }) {
       Row() {
-        Text(LocaleService.loc('今日待办', "Today's todos", '今日のToDo'))
+        Text(LocaleService.loc('未来待办', 'Future todos', '未来のToDo'))
           .fontSize(14)
           .fontWeight(FontWeight.Bold)
           .layoutWeight(1)
-        Text('3')
+        Text(`${this.upcomingTodos.length}`)
           .fontSize(11)
           .padding({ left: 6, right: 6 })
           .backgroundColor($r('app.color.surface_muted'))
           .borderRadius(8)
       }
-      this.stubTodo(true, LocaleService.loc('完善产品设计规范', 'Finalize design specs', 'デザイン仕様を仕上げる'), '09:00')
-      this.stubTodo(false, LocaleService.loc('整理会议纪要', 'Organize meeting notes', '議事録を整理'), '14:00')
-      this.stubTodo(false, LocaleService.loc('准备周例会材料', 'Prepare weekly materials', '週次資料を準備'), '16:30')
+      if (this.upcomingTodos.length === 0) {
+        Text(LocaleService.loc('暂无待办', 'No todos', 'ToDoなし'))
+          .fontSize(12)
+          .fontColor($r('app.color.secondary_text'))
+          .padding({ top: 12, bottom: 12 })
+          .width('100%')
+      } else {
+        ForEach(this.upcomingTodos, (row: DashAgendaRow) => {
+          this.todoRow(row)
+        }, (row: DashAgendaRow) => `upcoming-todo-${row.id}-${row.isDone}`)
+      }
       Text(LocaleService.loc('查看全部 >', 'View all >', 'すべて見る >'))
         .fontSize(13)
         .fontColor(ACCENT)
@@ -1301,49 +1509,48 @@ struct MainShell {
   }
 
   @Builder
-  stubTodo(done: boolean, title: string, time: string) {
+  todoRow(row: DashAgendaRow) {
     Row({ space: 6 }) {
-      SymbolGlyph(done ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.circle'))
+      SymbolGlyph(row.isDone ? $r('sys.symbol.checkmark_circle_fill') : $r('sys.symbol.circle'))
         .fontSize(16)
-        .fontColor([done ? ACCENT : $r('app.color.secondary_text')])
-      Text(title)
+        .fontColor([row.isDone ? ACCENT : $r('app.color.secondary_text')])
+      Text(row.title)
         .fontSize(12)
         .layoutWeight(1)
         .maxLines(1)
-        .decoration({ type: done ? TextDecorationType.LineThrough : TextDecorationType.None })
-      Text(time)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .decoration({ type: row.isDone ? TextDecorationType.LineThrough : TextDecorationType.None })
+      Text(row.timeLabel)
         .fontSize(11)
         .fontColor($r('app.color.secondary_text'))
     }
     .width('100%')
+    .padding({ top: 5, bottom: 5 })
   }
 
   @Builder
   scheduleCard() {
     Column({ space: 6 }) {
-      Row() {
-        Text(LocaleService.loc('待办日程预览', 'Schedule preview', '予定プレビュー'))
-          .fontSize(14)
-          .fontWeight(FontWeight.Bold)
-          .layoutWeight(1)
-        Text(LocaleService.loc('日历 >', 'Calendar >', 'カレンダー >'))
-          .fontSize(13)
-          .fontColor(ACCENT)
-          .onClick(() => {
-            this.selectTab(2)
-          })
+      Text(LocaleService.loc('日程清单', 'Schedule list', '予定一覧'))
+        .fontSize(14)
+        .fontWeight(FontWeight.Bold)
+        .width('100%')
+      if (this.upcomingSchedules.length === 0) {
+        Text(LocaleService.loc('暂无日程', 'No schedule', '予定なし'))
+          .fontSize(12)
+          .fontColor($r('app.color.secondary_text'))
+          .padding({ top: 24, bottom: 24 })
+          .width('100%')
+      } else {
+        ForEach(this.upcomingSchedules, (row: DashAgendaRow) => {
+          this.scheduleRow(row)
+        }, (row: DashAgendaRow) => `upcoming-sched-${row.id}-${row.timeLabel}`)
       }
-      Text(`${LocaleService.loc('今天', 'Today', '今日')} ${new Date().getMonth() + 1}月${new Date().getDate()}日`)
-        .fontSize(12)
-        .fontColor($r('app.color.secondary_text'))
-      this.stubEvent(ACCENT, '09:00', LocaleService.loc('产品设计评审', 'Design review', 'デザインレビュー'))
-      this.stubEvent(ORANGE, '14:00', LocaleService.loc('团队周会', 'Team standup', 'チーム定例'))
-      this.stubEvent(PURPLE, '16:30', LocaleService.loc('客户沟通', 'Client call', '顧客ミーティング'))
       Text(LocaleService.loc('查看完整日程 >', 'Full schedule >', 'すべての予定 >'))
         .fontSize(13)
         .fontColor(ACCENT)
         .onClick(() => {
-          this.selectTab(2)
+          this.selectTab(3)
         })
     }
     .padding(14)
@@ -1354,18 +1561,20 @@ struct MainShell {
   }
 
   @Builder
-  stubEvent(color: string, time: string, title: string) {
+  scheduleRow(row: DashAgendaRow) {
     Row({ space: 6 }) {
-      Circle({ width: 8, height: 8 }).fill(color)
-      Text(time)
+      Circle({ width: 8, height: 8 }).fill(row.dotColor.length > 0 ? row.dotColor : PURPLE)
+      Text(row.timeLabel)
         .fontSize(11)
         .fontColor($r('app.color.secondary_text'))
-      Text(title)
+      Text(row.title)
         .fontSize(12)
         .layoutWeight(1)
         .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .width('100%')
+    .padding({ top: 4, bottom: 4 })
   }
 
   @Builder
@@ -1465,6 +1674,9 @@ struct MainShell {
           [this.statSoftOuter(color), 1.0]
         ]
       })
+      .onClick(() => {
+        this.handleStatTap(kind)
+      })
       // 必须在 Builder 内直接读 @State，勿经参数/间接封装，否则 UI 不刷新。
       Text(kind === 'notes' ? `${this.noteCount}` :
         (kind === 'todos' ? `${this.todoCount}` :
@@ -1483,6 +1695,38 @@ struct MainShell {
     }
     .layoutWeight(1)
     .alignItems(HorizontalAlign.Center)
+  }
+
+  /**
+   * 笔记统计卡四个图标的点击分发：
+   *   notes → 笔记 Tab；todos → 待办 Tab；days → 我的 Tab；tags → 标签管理页。
+   * 与 Flutter `dashboard_home_page.dart` 同名回调语义保持一致。
+   */
+  private handleStatTap(kind: string): void {
+    if (kind === 'notes') {
+      this.selectTab(1)
+      return
+    }
+    if (kind === 'todos') {
+      this.selectTab(2)
+      return
+    }
+    if (kind === 'days') {
+      this.selectTab(4)
+      return
+    }
+    if (kind === 'tags') {
+      void this.openTagManageFromStats()
+    }
+  }
+
+  private async openTagManageFromStats(): Promise<void> {
+    try {
+      await this.getUIContext().getRouter().pushUrl({ url: 'pages/TagManage' })
+      void this.reloadDashboard()
+    } catch (e) {
+      Logger.warn('MainShell', `openTagManage failed: ${JSON.stringify(e)}`)
+    }
   }
 
   /** 统计图标底：同色系内深（80% 白混）。 */
