@@ -1471,32 +1471,55 @@ struct MainShell {
 
   @Builder
   todoCard() {
-    Column({ space: 8 }) {
-      Row() {
-        Text(LocaleService.loc('未来待办', 'Future todos', '未来のToDo'))
-          .fontSize(14)
-          .fontWeight(FontWeight.Bold)
-          .layoutWeight(1)
-        Text(`${this.upcomingTodos.length}`)
-          .fontSize(11)
-          .padding({ left: 6, right: 6 })
-          .backgroundColor($r('app.color.surface_muted'))
-          .borderRadius(8)
+    // 标题上下左右内边距与「最近编辑」标题一致：
+    //   - 移动端：LTRB(0,0,0,0)
+    //   - PC / iPad 横屏：LTRB(6,6,6,0)
+    // 内容部分在标题对齐基础上左右各 +8vp。
+    const titlePadL: number = this.pcLayout ? 6 : 0
+    const titlePadR: number = this.pcLayout ? 6 : 0
+    const titlePadT: number = this.pcLayout ? 6 : 0
+    const contentPadL: number = titlePadL + 8
+    const contentPadR: number = titlePadR + 8
+    Stack({ alignContent: Alignment.BottomStart }) {
+      Column({ space: 8 }) {
+        Row() {
+          Text(LocaleService.loc('未来待办', 'Future todos', '未来のToDo'))
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .layoutWeight(1)
+          Text(`${this.upcomingTodos.length}`)
+            .fontSize(11)
+            .padding({ left: 6, right: 6 })
+            .backgroundColor($r('app.color.surface_muted'))
+            .borderRadius(8)
+        }
+        .padding({ left: titlePadL, right: titlePadR, top: titlePadT })
+        .width('100%')
+        // 内容部分：在标题对齐基础上，左右各 +8vp；底部预留足够空间，
+        // 避免和底部钉住的「查看全部」链接重叠。
+        Column() {
+          if (this.upcomingTodos.length === 0) {
+            Text(LocaleService.loc('暂无待办', 'No todos', 'ToDoなし'))
+              .fontSize(12)
+              .fontColor($r('app.color.secondary_text'))
+              .padding({ top: 12, bottom: 12 })
+              .width('100%')
+          } else {
+            ForEach(this.upcomingTodos, (row: DashAgendaRow) => {
+              this.todoRow(row)
+            }, (row: DashAgendaRow) => `upcoming-todo-${row.id}-${row.isDone}`)
+          }
+        }
+        .padding({ left: contentPadL, right: contentPadR, bottom: 4 })
+        .width('100%')
       }
-      if (this.upcomingTodos.length === 0) {
-        Text(LocaleService.loc('暂无待办', 'No todos', 'ToDoなし'))
-          .fontSize(12)
-          .fontColor($r('app.color.secondary_text'))
-          .padding({ top: 12, bottom: 12 })
-          .width('100%')
-      } else {
-        ForEach(this.upcomingTodos, (row: DashAgendaRow) => {
-          this.todoRow(row)
-        }, (row: DashAgendaRow) => `upcoming-todo-${row.id}-${row.isDone}`)
-      }
+      .width('100%')
+      // 入口链接：钉到卡片左下角；左边距 = 标题 L（PC 6 / 移动 0），
+      // 下边距 = 标题 T（与标题距离卡片顶部一致，视觉与标题顶对齐）。
       Text(LocaleService.loc('查看全部 >', 'View all >', 'すべて見る >'))
         .fontSize(13)
         .fontColor(ACCENT)
+        .padding({ left: titlePadL, bottom: titlePadT })
         .onClick(() => {
           this.selectTab(2)
         })
@@ -1530,27 +1553,50 @@ struct MainShell {
 
   @Builder
   scheduleCard() {
-    Column({ space: 6 }) {
-      Text(LocaleService.loc('日程清单', 'Schedule list', '予定一覧'))
-        .fontSize(14)
-        .fontWeight(FontWeight.Bold)
-        .width('100%')
-      if (this.upcomingSchedules.length === 0) {
-        Text(LocaleService.loc('暂无日程', 'No schedule', '予定なし'))
-          .fontSize(12)
-          .fontColor($r('app.color.secondary_text'))
-          .padding({ top: 24, bottom: 24 })
+    // 标题上下左右内边距与「最近编辑」标题一致：
+    //   - 移动端：LTRB(0,0,0,0)
+    //   - PC / iPad 横屏：LTRB(6,6,6,0)
+    // 内容部分在标题对齐基础上左右各 +8vp。
+    const titlePadL: number = this.pcLayout ? 6 : 0
+    const titlePadR: number = this.pcLayout ? 6 : 0
+    const titlePadT: number = this.pcLayout ? 6 : 0
+    const contentPadL: number = titlePadL + 8
+    const contentPadR: number = titlePadR + 8
+    Stack({ alignContent: Alignment.BottomStart }) {
+      Column({ space: 6 }) {
+        Text(LocaleService.loc('日程清单', 'Schedule list', '予定一覧'))
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
           .width('100%')
-      } else {
-        ForEach(this.upcomingSchedules, (row: DashAgendaRow) => {
-          this.scheduleRow(row)
-        }, (row: DashAgendaRow) => `upcoming-sched-${row.id}-${row.timeLabel}`)
+        // 标题应用与「最近编辑」一致的上下左右内边距。
+        .padding({ left: titlePadL, right: titlePadR, top: titlePadT })
+        // 内容部分：在标题对齐基础上，左右各 +8vp；底部预留足够空间，
+        // 避免和底部钉住的「查看完整日程」链接重叠。
+        Column() {
+          if (this.upcomingSchedules.length === 0) {
+            Text(LocaleService.loc('暂无日程', 'No schedule', '予定なし'))
+              .fontSize(12)
+              .fontColor($r('app.color.secondary_text'))
+              .padding({ top: 24, bottom: 24 })
+              .width('100%')
+          } else {
+            ForEach(this.upcomingSchedules, (row: DashAgendaRow) => {
+              this.scheduleRow(row)
+            }, (row: DashAgendaRow) => `upcoming-sched-${row.id}-${row.timeLabel}`)
+          }
+        }
+        .padding({ left: contentPadL, right: contentPadR, bottom: 4 })
+        .width('100%')
       }
+      .width('100%')
+      // 入口链接：钉到卡片左下角；左边距 = 标题 L（PC 6 / 移动 0），
+      // 下边距 = 标题 T（与标题距离卡片顶部一致，视觉与标题顶对齐）。
       Text(LocaleService.loc('查看完整日程 >', 'Full schedule >', 'すべての予定 >'))
         .fontSize(13)
         .fontColor(ACCENT)
+        .padding({ left: titlePadL, bottom: titlePadT })
         .onClick(() => {
-          this.selectTab(3)
+          this.selectTab(2)
         })
     }
     .padding(14)

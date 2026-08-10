@@ -4,7 +4,6 @@ import { navigateToTodoEditor } from '../../common/utils/TodoEditorNavigation'
 import { LocaleService } from '../../services/LocaleService'
 import { NoteRepository } from '../../services/NoteRepository'
 import { showCalendarAddScheduleDialog } from '../../dialogs/CalendarAddScheduleDialog'
-import { showCalendarAddTodoDialog } from '../../dialogs/CalendarAddTodoDialog'
 import { CalendarProjector } from './calendar/CalendarProjector'
 import type { CalendarItemKind } from './calendar/CalendarModels'
 import {
@@ -136,10 +135,10 @@ export struct DashboardTodoTab {
   }
 
   private async onAddTodo(): Promise<void> {
-    const saved = await showCalendarAddTodoDialog(this.getUIContext(), {})
-    if (saved) {
-      await this.reload()
-    }
+    // 与首页「快捷创建 → 待办事项」保持一致：统一走 TodoEditorPage 全页表单
+    // （旧 CalendarAddTodoDialog 弹窗已删除）。
+    await navigateToTodoEditor(this.getUIContext(), {})
+    await this.reload()
   }
 
   private async onTapRow(row: TodoItemRow): Promise<void> {
