@@ -102,6 +102,8 @@ struct MainShell {
   @State notesShellRefreshNonce: number = 0
   /** 从子页返回时递增，驱动「我的」Tab 刷新。 */
   @State mineShellRefreshNonce: number = 0
+  /** 从子页返回时递增，驱动待办 Tab 静默刷新（与笔记 Tab 同一事件，独立 nonce 便于各自演进）。 */
+  @State todoShellRefreshNonce: number = 0
   @State pcLayout: boolean = false
   @State pageWidth: number = 360
   @State pageHeight: number = 800
@@ -153,6 +155,15 @@ struct MainShell {
     Logger.info('DashHomeLoad', 'onPageShow -> reloadDashboard + notes/mine refresh')
     this.notesShellRefreshNonce += 1
     this.mineShellRefreshNonce += 1
+    this.todoShellRefreshNonce += 1
+    // 兜底：同步写一次 AppStorage 刷新信号。待办 Tab 的 @StorageLink('appShellRefreshNonce')
+    //  watcher 依赖它；编辑页内自动保存完成时写入的信号可能赶在 MainShell 被覆盖期间触发，
+    // 被 ArkUI 吞掉，这里在页面回到前台时补一次，保证待办列表一定拿到刷新触发。
+    try {
+      const cur = (AppStorage.get('appShellRefreshNonce') as number | undefined) ?? 0
+      AppStorage.setOrCreate('appShellRefreshNonce', cur + 1)
+    } catch (_) {
+    }
     void this.reloadDashboard()
   }
 
@@ -984,7 +995,10 @@ struct MainShell {
           .backgroundColor($r('app.color.card_background'))
           .visibility(this.shellTabIndex === 1 ? Visibility.Visible : Visibility.None)
 
-        DashboardTodoTab({ visible: this.shellTabIndex === 2 })
+        DashboardTodoTab({
+          visible: this.shellTabIndex === 2,
+          shellRefreshNonce: this.todoShellRefreshNonce
+        })
           .width('100%')
           .height('100%')
           .backgroundColor($r('app.color.card_background'))

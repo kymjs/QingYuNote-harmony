@@ -39,6 +39,9 @@ export class NoteRepository {
   private cachedAllNotes?: Note[]
   private cachedActiveNotesVersion: number = -1
   private cachedAllNotesVersion: number = -1
+  /** listNotes CACHE MISS 时的单飞哨兵：并发调用方共享同一次 loadActiveNotesForList，
+   * 避免一次保存触发多个 watcher 时并发跑多次全量读盘。 */
+  private inFlightActiveNotesLoad?: Promise<Note[]>
   private notificationSuspendCount: number = 0
   private pendingNotesChanged: boolean = false
   /** 本地全量读盘时的并发度；仅缩短墙钟时间，不改变解析与合并顺序。 */
@@ -285,6 +288,7 @@ export class NoteRepository {
 
   async listNotes(): Promise<Note[]> {
     await this.init()
+    // 缓存命中：返回前对每条做 noteForDisplay + cloneNote，保持与历史行为一致。
     if (this.cachedActiveNotesVersion === this.notesVersion && this.cachedActiveNotes) {
       Logger.info('DashHomeLoad',
         `listNotes CACHE HIT version=${this.notesVersion} cached=${this.cachedActiveNotes.length}`)
@@ -296,6 +300,47 @@ export class NoteRepository {
     }
     Logger.info('DashHomeLoad',
       `listNotes CACHE MISS version=${this.notesVersion} cachedVer=${this.cachedActiveNotesVersion}`)
+    // 缓存失效期间，多个并发调用方（首页 onPageShow、待办 Tab 的 appNotesRevision +
+    // appShellRefreshNonce 双重 watcher、笔记 Tab shellRefreshNonce 等）会在同一帧内
+    // 各自发起 listNotes，全部 CACHE MISS → 触发 N 次并发的 loadAllNotes 全量读盘 +
+    // 逐条 noteForDisplay，主线程在返回动画期间被压垮。统一收敛为单次加载。
+    for (;;) {
+      const inFlight = this.inFlightActiveNotesLoad
+      if (inFlight) {
+        await inFlight
+        // 飞行中的加载可能跨过了一次写入（版本已变），它不会回填缓存；
+        // 也可能已经回填了缓存。两种情况都重新走缓存检查。
+        if (this.cachedActiveNotesVersion === this.notesVersion && this.cachedActiveNotes) {
+          const notes: Note[] = []
+          for (const note of this.cachedActiveNotes) {
+            notes.push(await this.noteForDisplay(this.cloneNote(note)))
+          }
+          return notes
+        }
+        // 版本已变或缓存仍为空 → 再次循环自己起一次新加载。
+        continue
+      }
+      const startVersion = this.notesVersion
+      const loadPromise = this.loadActiveNotesForList(startVersion)
+      this.inFlightActiveNotesLoad = loadPromise
+      try {
+        const displayNotes = await loadPromise
+        return this.cloneNotes(displayNotes)
+      } finally {
+        if (this.inFlightActiveNotesLoad === loadPromise) {
+          this.inFlightActiveNotesLoad = undefined
+        }
+      }
+    }
+  }
+
+  /**
+   * 单次「过滤 + 排序 + 解密投影」，并按 startVersion 决定是否回填缓存。
+   * 若加载过程中发生了新写入（this.notesVersion !== startVersion），缓存里既有
+   * 命中版本号又有写入前的旧数据会导致「缓存永久陈旧」，所以这里放弃回填，
+   * 让后续 listNotes 调用方再次发起加载拿到新数据。
+   */
+  private async loadActiveNotesForList(startVersion: number): Promise<Note[]> {
     const notes = (await this.loadAllNotes()).filter((note: Note) => !note.deleted && note.deletedTime === 0)
     const sortedNotes = NoteSortUtils.sortByLastEditedDesc(notes)
     const displayNotes: Note[] = []
@@ -308,11 +353,18 @@ export class NoteRepository {
       displayNotes.push(await this.noteForDisplay(this.cloneNote(note)))
     }
     Logger.info('DashHomeLoad',
-      `listNotes DONE loaded=${notes.length} skipped=${skipped} display=${displayNotes.length} ` +
+      `loadActiveNotesForList startVer=${startVersion} curVer=${this.notesVersion} ` +
+      `loaded=${notes.length} skipped=${skipped} display=${displayNotes.length} ` +
       `sample=${displayNotes.slice(0, 3).map((n: Note) => n.id.substring(0, 8)).join(',')}`)
-    this.cachedActiveNotes = displayNotes
-    this.cachedActiveNotesVersion = this.notesVersion
-    return this.cloneNotes(displayNotes)
+    if (this.notesVersion === startVersion) {
+      this.cachedActiveNotes = displayNotes
+      this.cachedActiveNotesVersion = this.notesVersion
+    } else {
+      Logger.warn('LinkExtractDebug',
+        `loadActiveNotesForList skipped cache fill: version moved ${startVersion} -> ${this.notesVersion} ` +
+        `during load (writes happened mid-scan, callers will re-issue)`)
+    }
+    return displayNotes
   }
 
   async listAllNotes(): Promise<Note[]> {
