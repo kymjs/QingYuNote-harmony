@@ -10,13 +10,26 @@ export class NoteContentEncryptionService {
     return NoteContentEncryptionService.instance
   }
 
+  // resolveUserId 的内存缓存：避免 listNotes / loadAllNotes 在 N 条笔记路径上
+  // 重复走 Preferences.init + getNoteApiUserId。undefined 表示尚未加载。
+  // 身份切换（登录 / 登出）由 invalidateCachesForIdentityChange 触发 invalidateUserIdCache。
+  private cachedUserId: string | null | undefined = undefined
+
   async resolveUserId(): Promise<string | null> {
+    if (this.cachedUserId !== undefined) {
+      return this.cachedUserId
+    }
     const ctx = AppContextHolder.getContext()
     if (ctx) {
       await PreferencesService.getInstance().init(ctx)
     }
     const userId = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
-    return userId.length > 0 ? userId : null
+    this.cachedUserId = userId.length > 0 ? userId : null
+    return this.cachedUserId
+  }
+
+  invalidateUserIdCache(): void {
+    this.cachedUserId = undefined
   }
 
   static isRsaEncrypted(rsa: number): boolean {
@@ -179,6 +192,8 @@ export class NoteContentEncryptionService {
       todoPriority: note.todoPriority,
       todoStatus: note.todoStatus,
       todoReminderMinutes: note.todoReminderMinutes,
+      startTime: note.startTime,
+      endTime: note.endTime,
       source: note.source,
       order: note.order,
       userData: note.userData,

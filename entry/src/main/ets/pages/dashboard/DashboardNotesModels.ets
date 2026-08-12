@@ -214,9 +214,21 @@ export class NotesTabLogic {
     return groups
   }
 
-  static leadingKindFor(note: Note): string {
+  static leadingKindFor(note: Note, mindMapNoteIds: Set<string> = new Set()): string {
+    // 待办 / 日程沿用日历 tab 列表中的样式；放最前避免被流程图分支吞掉。
+    if (note.isTodo === 2) {
+      return 'todo'
+    }
+    if (note.isTodo === 1) {
+      return 'schedule'
+    }
     if (note.type_ === NOTE_TYPE_FLOWCHART) {
-      return 'flowchart'
+      // 流程图需要根据 `.qy` 边车里的 `layoutMode` 区分思维导图 / 知识图谱；
+      // 集合由 DashboardNotesTab.detectMindMaps 预扫后传入，命中即为思维导图。
+      if (mindMapNoteIds.has(note.id)) {
+        return 'flowchart'
+      }
+      return 'knowledgeGraph'
     }
     const audio = `${note.audioId ?? ''}`.trim().toLowerCase()
     if (audio.endsWith(AudioConstants.videoAudioFileExtension)) {
@@ -362,6 +374,8 @@ export function cloneNoteWithFavorite(note: Note, isFavorite: number): Note {
     todoPriority: note.todoPriority,
     todoStatus: note.todoStatus,
     todoReminderMinutes: note.todoReminderMinutes,
+    startTime: note.startTime,
+    endTime: note.endTime,
     source: note.source,
     order: note.order,
     userData: note.userData,

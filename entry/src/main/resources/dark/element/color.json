@@ -263,6 +263,14 @@
     {
       "name": "calendar_kind_note_fg",
       "value": "#FF34D399"
+    },
+    {
+      "name": "note_leading_mindmap_fg",
+      "value": "#FF60A5FA"
+    },
+    {
+      "name": "note_leading_knowledge_graph_fg",
+      "value": "#FF60A5FA"
     }
   ]
 }

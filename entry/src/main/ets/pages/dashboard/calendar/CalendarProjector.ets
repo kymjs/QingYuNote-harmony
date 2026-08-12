@@ -1,4 +1,5 @@
 import type { Note } from '../../../common/model/Note'
+import { NotesTabLogic } from '../DashboardNotesModels'
 import {
   CalendarChipFilter,
   CalendarDayCounts,
@@ -183,30 +184,67 @@ export class CalendarProjector {
     return list ? [...list] : []
   }
 
-  static filterChip(items: CalendarOccurrence[], filter: CalendarChipFilter): CalendarOccurrence[] {
+  static filterChip(items: CalendarOccurrence[], filter: CalendarChipFilter,
+    mindMapSet: Set<string>): CalendarOccurrence[] {
+    // 「全部」直接放行。
     if (filter === 'all') {
       return items
     }
     const out: CalendarOccurrence[] = []
     for (let i = 0; i < items.length; i++) {
-      if (items[i].kind === filter) {
-        out.push(items[i])
+      const o = items[i]
+      // 待办 = 待办事项 + 待办日程（合并）
+      if (filter === 'todo') {
+        if (o.kind === 'todo' || o.kind === 'schedule') {
+          out.push(o)
+        }
+        continue
+      }
+      // 图谱 = 思维导图 + 知识图谱（按 leadingKind 过滤）
+      if (filter === 'graph') {
+        if (o.kind === 'note' && CalendarProjector.isGraphNote(o.note, mindMapSet)) {
+          out.push(o)
+        }
+        continue
+      }
+      // 笔记 = 普通 note（非图谱）
+      if (filter === 'note') {
+        if (o.kind === 'note' && !CalendarProjector.isGraphNote(o.note, mindMapSet)) {
+          out.push(o)
+        }
+        continue
       }
     }
     return out
   }
 
-  static countsFor(items: CalendarOccurrence[]): CalendarDayCounts {
+  /**
+   * 是否为「图谱」笔记：思维导图 + 知识图谱。
+   * 直接复用 `NotesTabLogic.leadingKindFor` 的判定结果（思维导图 = `flowchart`，
+   * 知识图谱 = `knowledgeGraph`），保证图谱筛选与首页 / 笔记 tab 的列表着色同源同语义。
+   * 知识图谱的真正判定是 `note.type_ === NOTE_TYPE_FLOWCHART` 且不在 `mindMapNoteIds`
+   * 集合里 —— 不能简单靠 tag 命中，否则知识图谱会被漏掉。
+   */
+  private static isGraphNote(note: Note, mindMapSet: Set<string>): boolean {
+    const lk = NotesTabLogic.leadingKindFor(note, mindMapSet)
+    return lk === 'flowchart' || lk === 'knowledgeGraph'
+  }
+
+  static countsFor(items: CalendarOccurrence[], mindMapSet: Set<string>): CalendarDayCounts {
     const c = new CalendarDayCounts()
     c.all = items.length
     for (let i = 0; i < items.length; i++) {
-      const k = items[i].kind
-      if (k === 'note') {
-        c.note += 1
-      } else if (k === 'todo') {
+      const o = items[i]
+      // 待办 = 待办事项 + 待办日程
+      if (o.kind === 'todo' || o.kind === 'schedule') {
         c.todo += 1
+        continue
+      }
+      // kind === 'note'：进一步拆分图谱 vs 普通笔记
+      if (CalendarProjector.isGraphNote(o.note, mindMapSet)) {
+        c.graph += 1
       } else {
-        c.schedule += 1
+        c.note += 1
       }
     }
     return c

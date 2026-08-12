@@ -1,11 +1,19 @@
 import { ComponentContent, UIContext } from '@kit.ArkUI'
 import { NoteRepository } from '../services/NoteRepository'
 import { Logger } from '../common/utils/Logger'
-import { LocaleService } from '../common/utils/LocaleService'
+import { LocaleService } from '../services/LocaleService'
 
 export interface CalendarAddScheduleDialogOptions {
   startMs: number
   endMs: number
+}
+
+interface ScheduleDialogState {
+  title: string
+  description: string
+  startMs: number
+  endMs: number
+  saving: boolean
 }
 
 export interface CalendarAddScheduleDialogParams {
@@ -164,13 +172,7 @@ export function showCalendarAddScheduleDialog(
 ): Promise<boolean> {
   return new Promise((resolve) => {
     let holder: ComponentContent<CalendarAddScheduleDialogParams> | undefined = undefined
-    let state: {
-      title: string
-      description: string
-      startMs: number
-      endMs: number
-      saving: boolean
-    } = {
+    const state: ScheduleDialogState = {
       title: '',
       description: '',
       startMs: options.startMs,
@@ -233,7 +235,7 @@ export function showCalendarAddScheduleDialog(
             const m0 = value.month ?? initialMonth
             const d = value.day ?? initialDay
             TimePickerDialog.show({
-              selected: { hour: initialHour, minute: initialMinute },
+              selected: new Date(y, m0, d, initialHour, initialMinute, 0, 0),
               onAccept: (tValue: TimePickerResult) => {
                 const hh = tValue.hour ?? initialHour
                 const mm = tValue.minute ?? initialMinute
@@ -289,10 +291,10 @@ export function showCalendarAddScheduleDialog(
           if (state.saving) {
             return
           }
-          const finalTitle = rawTitle.trim().length > 0
+          const finalTitle: string = rawTitle.trim().length > 0
             ? rawTitle.trim()
             : LocaleService.loc('空主题', 'Untitled', '無題')
-          const finalDesc = rawDesc.trim().length > 0
+          const finalDesc: string = rawDesc.trim().length > 0
             ? rawDesc.trim()
             : LocaleService.loc('暂无描述', 'No description', '説明なし')
           if (endMs <= startMs) {

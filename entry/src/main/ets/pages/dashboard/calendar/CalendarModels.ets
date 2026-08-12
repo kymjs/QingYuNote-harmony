@@ -2,7 +2,7 @@ import type { Note } from '../../../common/model/Note'
 
 export type CalendarItemKind = 'note' | 'todo' | 'schedule'
 export type CalendarViewMode = 'month' | 'week'
-export type CalendarChipFilter = 'all' | 'note' | 'todo' | 'schedule'
+export type CalendarChipFilter = 'all' | 'note' | 'todo' | 'graph'
 export type CalendarYearMonthPickerMode = 'month' | 'year'
 
 export class CalendarOccurrence {
@@ -23,10 +23,12 @@ export class CalendarOccurrence {
 }
 
 export class CalendarDayCounts {
+  // 保留 all（全部）+ 取消 schedule 单独计数（与 todo 合并）；
+  // 新增 graph（思维导图 + 知识图谱 合并）。
   all: number = 0
   note: number = 0
   todo: number = 0
-  schedule: number = 0
+  graph: number = 0
 }
 
 export class CalendarWeekBlockLayout {

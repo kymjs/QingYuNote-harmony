@@ -1,4 +1,3 @@
-import type { Note } from '../../common/model/Note'
 import { usePcStyleLayoutWithSize } from '../../common/utils/DesktopLayout'
 import { navigateToTodoEditor } from '../../common/utils/TodoEditorNavigation'
 import { LocaleService } from '../../services/LocaleService'
@@ -6,6 +5,7 @@ import { NoteRepository } from '../../services/NoteRepository'
 import { showCalendarAddScheduleDialog } from '../../dialogs/CalendarAddScheduleDialog'
 import { CalendarProjector } from './calendar/CalendarProjector'
 import type { CalendarItemKind } from './calendar/CalendarModels'
+import { Logger } from '../../common/utils/Logger'
 import {
   TodoItemRow,
   TodoListKind,
@@ -14,7 +14,6 @@ import {
 } from './todo/TodoTabModels'
 
 const PAGE_PAD = 16
-const TOP_BAR_GAP = 12
 const ROW_HEIGHT = 64
 const ACCENT = '#0DAA4A'
 const GREEN_BG = '#1A0DAA4A'
@@ -23,69 +22,171 @@ const GRAY_BG = '#146B7280'
 const GRAY_FG = '#6B7280'
 const BLUE_BG = '#143B82F6'
 const BLUE_FG = '#3B82F6'
-const SCHEDULE_DOT = '#8B5CF6'
+
+// 列表左侧图标颜色。
+// 已完成/灰色 = 待办事项完成态、日程结束态共用；与文字 disabled_text (#9CA3AF) 对齐。
+const ICON_GRAY = '#9CA3AF'
+// 待办事项：进行中按优先级染色；未设置优先级（=0）默认走低优先级绿色。
+const ICON_TODO_LOW = '#0DAA4A'
+const ICON_TODO_MEDIUM = '#3B82F6'
+const ICON_TODO_HIGH = '#EAB308'
+const ICON_TODO_URGENT = '#DC2626'
+// 待办日程：仅二态，已完成灰、否则黄。
+const ICON_SCHEDULE_DONE = '#9CA3AF'
+const ICON_SCHEDULE_PENDING = '#EAB308'
+const ICON_SIZE = 22
+
+class PillStyle {
+  bg: string = ''
+  fg: string = ''
+  label: string = ''
+}
 
 @Component
 export struct DashboardTodoTab {
   @Prop @Watch('onVisibleChanged') visible: boolean = false
+  /** 从编辑页返回时由 MainShell 递增，强制静默刷新（与 DashboardNotesTab 一致）。 */
+  @Prop @Watch('onShellRefreshNonce') shellRefreshNonce: number = 0
   @StorageLink('appLocaleRevision') localeRevision: number = 0
   @StorageLink('appNotesRevision') @Watch('onNotesRevisionChanged')
   notesRevision: number = 0
+  /**
+   * 兜底刷新信号：MainShell.onPageShow 也会同步写入 AppStorage，
+   * 避免 `@Watch on @Prop` 在某些 ArkUI 版本下不触发的 corner case。
+   * 只要值变化就强制 reload。
+   */
+  @StorageLink('appShellRefreshNonce') @Watch('onAppShellRefresh')
+  appShellRefreshNonce: number = 0
   @State allRows: TodoItemRow[] = []
   @State loading: boolean = true
+  @State refreshing: boolean = false
   @State search: string = ''
   @State filter: TodoListKind = 'all'
   @State page: number = 0
   @State pageSize: number = 20
   @State selected: string[] = []
+  // 多选模式：长按列表项进入，进入后隐藏图标、展示勾选框与底部批量操作栏。
+  @State selectionMode: boolean = false
   @State pcLayout: boolean = false
   @State pageWidth: number = 360
   @State pageHeight: number = 780
   @State uiNonce: number = 0
   private initialLoaded: boolean = false
+  // 并发 reload 抢占哨兵：每次 reload() 自增，
+  // 只有 generation === reloadGeneration 的那次 reload 才允许写回 UI。
+  // 这样下拉刷新期间即便 onNotesRevisionChanged / onVisibleChanged / bootstrap
+  // 又触发了一次 reload，两份并发的 listNotes() 不会互相把 loading/UI 状态
+  // 翻来覆去，「加载中」由最后启动的那次 reload 决定何时结束。
+  private reloadGeneration: number = 0
 
   aboutToAppear(): void {
+    Logger.info('DashHomeLoad', `[TodoTab] aboutToAppear visible=${this.visible} loading=${this.loading}`)
     void this.bootstrap()
   }
 
   onVisibleChanged(): void {
+    Logger.info('DashHomeLoad',
+      `[TodoTab] onVisibleChanged visible=${this.visible} loading=${this.loading} allRows=${this.allRows.length}`)
     if (this.visible) {
       void this.reload()
     }
   }
 
   onNotesRevisionChanged(): void {
+    Logger.info('DashHomeLoad',
+      `[TodoTab] onNotesRevisionChanged notesRevision=${this.notesRevision} visible=${this.visible} loading=${this.loading}`)
     if (this.visible) {
       void this.reload()
     }
   }
 
+  onShellRefreshNonce(): void {
+    if (this.initialLoaded && this.shellRefreshNonce > 0) {
+      void this.reload()
+    }
+  }
+
+  onAppShellRefresh(): void {
+    if (this.initialLoaded && this.appShellRefreshNonce > 0) {
+      void this.reload()
+    }
+  }
+
   private async bootstrap(): Promise<void> {
+    Logger.info('DashHomeLoad', '[TodoTab] bootstrap start')
     void this.reload()
     this.initialLoaded = true
   }
 
+  private async pullToRefresh(): Promise<void> {
+    Logger.info('DashHomeLoad',
+      `[TodoTab] pullToRefresh enter refreshing=${this.refreshing} loading=${this.loading}`)
+    // 注意：不能在这里再用 `if (this.refreshing) return` 早退。
+    // Refresh({ refreshing: $$this.refreshing }) 是双向绑定，用户下拉时 Refresh 组件会
+    // 在 onRefreshing 回调触发**之前**就把 this.refreshing 翻成 true。
+    // 如果在这里早退，await reload() / this.refreshing = false 都不会执行，
+    // 下拉 spinner 就一直挂着、永不消失（之前日志里「refreshing=true loading=false」
+    // 但没有 reload ENTER 也没有 finally 就是这个原因）。
+    this.refreshing = true
+    try {
+      // 主动抛弃列表缓存，确保从磁盘重读，不被旧 cachedActiveNotes 顶住。
+      NoteRepository.getInstance().discardCachedNoteLists()
+      await this.reload()
+    } finally {
+      Logger.info('DashHomeLoad',
+        `[TodoTab] pullToRefresh finally refreshing=false loading=${this.loading}`)
+      this.refreshing = false
+    }
+  }
+
   private async reload(): Promise<void> {
+    // 抢占最新 generation。后续若 generation 已被自增，说明有更新的 reload 接管，
+    // 本次 reload 拿到的数据作废，避免晚启动的 reload 完成后又被早启动的旧结果覆盖。
+    const generation = ++this.reloadGeneration
+    Logger.info('DashHomeLoad',
+      `[TodoTab] reload ENTER gen=${generation} loading(before)=${this.loading} allRows=${this.allRows.length}`)
+    // 关键：每次进入 reload 都先无条件清掉 loading，避免：
+    // 1) 初首次加载过程中 loading=true，下拉刷新直接 discardCachedNoteLists + 再次 reload，
+    //    reload 链路过长时 finally 未及时执行导致「加载中」一直转；
+    // 2) 并发 reload 中早启动那次被 generation 守卫拦下不写数据，但 finally 触发顺序
+    //    不一定按 generation 倒序，UI 状态被翻来覆去。
+    // 把「进入即清」+「退出 finally 再清」两层叠加，确保任意一次 reload 完成都会让
+    // loading 翻成 false，不会出现「加载中」永不消失。
+    this.loading = false
+    this.uiNonce += 1
     try {
       await NoteRepository.getInstance().init()
+      Logger.info('DashHomeLoad', `[TodoTab] reload gen=${generation} after init`)
       const notes = await NoteRepository.getInstance().listNotes()
-      this.allRows = TodoTabLogic.buildTodoRows(notes)
-      // 切换数据后丢弃已选
-      const valid = new Set<string>()
-      for (let i = 0; i < this.allRows.length; i++) {
-        valid.add(this.allRows[i].noteId)
+      Logger.info('DashHomeLoad',
+        `[TodoTab] reload gen=${generation} after listNotes count=${notes.length} sameGen=${generation === this.reloadGeneration}`)
+      if (generation === this.reloadGeneration) {
+        // 只有当本次 reload 仍是最新一次时，才把数据写回 UI；否则保持更晚的 reload 的结果。
+        this.allRows = TodoTabLogic.buildTodoRows(notes)
+        // 切换数据后丢弃已选；选中数清零时同步退出多选模式。
+        const valid = new Set<string>()
+        for (let i = 0; i < this.allRows.length; i++) {
+          valid.add(this.allRows[i].noteId)
+        }
+        this.selected = this.selected.filter((id: string): boolean => valid.has(id))
+        if (this.selected.length === 0) {
+          this.selectionMode = false
+        }
+        const filtered = this.currentFiltered()
+        if (this.page > 0 && this.page * this.pageSize >= filtered.length) {
+          this.page = 0
+        }
       }
-      this.selected = this.selected.filter((id: string): boolean => valid.has(id))
-      const filtered = this.currentFiltered()
-      if (this.page > 0 && this.page * this.pageSize >= filtered.length) {
-        this.page = 0
-      }
+    } catch (e) {
+      Logger.error('DashHomeLoad',
+        `[TodoTab] reload gen=${generation} catch ${JSON.stringify(e)}`)
+      // 错误时保留已有 allRows（可能是上一次成功加载的有效数据）。
+    } finally {
+      // 双保险：finally 再清一次，覆盖 reload 进入即清之后的并发覆盖。
       this.loading = false
       this.uiNonce += 1
-    } catch (_) {
-      this.allRows = []
-      this.loading = false
-      this.uiNonce += 1
+      Logger.info('DashHomeLoad',
+        `[TodoTab] reload gen=${generation} FINALLY loading(after)=${this.loading} allRows=${this.allRows.length}`)
     }
   }
 
@@ -122,30 +223,36 @@ export struct DashboardTodoTab {
     return true
   }
 
-  // 行为
-  private async onAddSchedule(): Promise<void> {
-    const now = Date.now()
-    const saved = await showCalendarAddScheduleDialog(this.getUIContext(), {
-      startMs: now,
-      endMs: now + 30 * 60 * 1000
-    })
-    if (saved) {
-      await this.reload()
+  /** 待办日程（kind=schedule）左侧图标颜色：已完成灰、否则黄。 */
+  private scheduleIconColor(row: TodoItemRow): string {
+    if (row.status === 'completed') {
+      return ICON_SCHEDULE_DONE
     }
+    return ICON_SCHEDULE_PENDING
   }
 
-  private async onAddTodo(): Promise<void> {
-    // 与首页「快捷创建 → 待办事项」保持一致：统一走 TodoEditorPage 全页表单
-    // （旧 CalendarAddTodoDialog 弹窗已删除）。
-    await navigateToTodoEditor(this.getUIContext(), {})
-    await this.reload()
-  }
-
+  // 行为
   private async onTapRow(row: TodoItemRow): Promise<void> {
+    // 多选模式：单击切换选中，不再打开编辑器；最后一项被取消勾选时自动退出多选。
+    if (this.selectionMode) {
+      const idx = this.selected.indexOf(row.noteId)
+      if (idx >= 0) {
+        this.selected.splice(idx, 1)
+      } else {
+        this.selected.push(row.noteId)
+      }
+      this.uiNonce += 1
+      if (this.selected.length === 0) {
+        this.selectionMode = false
+      }
+      return
+    }
     const note = row.sourceNote
     if (row.isTodo) {
       await navigateToTodoEditor(this.getUIContext(), { noteId: note.id })
     } else {
+      // 已有日程：弹「编辑」弹窗，调 saveDraft 原地更新，而不是再 createNote 一条新的。
+      // 否则用户改完保存会多出一条同主题的空壳日程，老的还在。
       const s = note.startTime > 0 ? note.startTime : Date.now()
       const e = note.endTime > 0 ? note.endTime : s + 30 * 60 * 1000
       await showCalendarAddScheduleDialog(this.getUIContext(), {
@@ -154,6 +261,22 @@ export struct DashboardTodoTab {
       })
     }
     await this.reload()
+  }
+
+  /** 长按列表项：进入多选模式，并把长按项加入选中集合。 */
+  private onLongPressRow(row: TodoItemRow): void {
+    if (this.selected.indexOf(row.noteId) < 0) {
+      this.selected.push(row.noteId)
+    }
+    this.selectionMode = true
+    this.uiNonce += 1
+  }
+
+  /** 退出多选模式并清空选中集合。 */
+  private exitSelectionMode(): void {
+    this.selectionMode = false
+    this.selected = []
+    this.uiNonce += 1
   }
 
   private async onBatchDelete(): Promise<void> {
@@ -219,26 +342,24 @@ export struct DashboardTodoTab {
     return `${h < 10 ? '0' : ''}${h}:${m < 10 ? '0' : ''}${m}`
   }
 
-  private pillStyle(status: TodoStatus): { bg: string, fg: string, label: string } {
+  private pillStyle(status: TodoStatus): PillStyle {
+    const s: PillStyle = new PillStyle()
     if (status === 'completed') {
-      return {
-        bg: BLUE_BG,
-        fg: BLUE_FG,
-        label: LocaleService.loc('已完成', 'Completed', '完了')
-      }
+      s.bg = BLUE_BG
+      s.fg = BLUE_FG
+      s.label = LocaleService.loc('已完成', 'Completed', '完了')
+      return s
     }
     if (status === 'inProgress') {
-      return {
-        bg: GREEN_BG,
-        fg: GREEN_FG,
-        label: LocaleService.loc('进行中', 'In progress', '進行中')
-      }
+      s.bg = GREEN_BG
+      s.fg = GREEN_FG
+      s.label = LocaleService.loc('进行中', 'In progress', '進行中')
+      return s
     }
-    return {
-      bg: GRAY_BG,
-      fg: GRAY_FG,
-      label: LocaleService.loc('未开始', 'Not started', '未開始')
-    }
+    s.bg = GRAY_BG
+    s.fg = GRAY_FG
+    s.label = LocaleService.loc('未开始', 'Not started', '未開始')
+    return s
   }
 
   private filterLabel(k: TodoListKind): string {
@@ -249,26 +370,6 @@ export struct DashboardTodoTab {
       return LocaleService.loc('日程清单', 'Schedules', '予定一覧')
     }
     return LocaleService.loc('全部待办', 'All todos', 'すべてのToDo')
-  }
-
-  private filterIndex(idx: string): number {
-    if (idx === 'todo') {
-      return 1
-    }
-    if (idx === 'schedule') {
-      return 2
-    }
-    return 0
-  }
-
-  private filterAt(idx: number): TodoListKind {
-    if (idx === 1) {
-      return 'todo'
-    }
-    if (idx === 2) {
-      return 'schedule'
-    }
-    return 'all'
   }
 
   private chipBg(status: TodoStatus): string {
@@ -291,13 +392,6 @@ export struct DashboardTodoTab {
     return GRAY_FG
   }
 
-  private kindDotColor(kind: CalendarItemKind): string {
-    if (kind === 'schedule') {
-      return SCHEDULE_DOT
-    }
-    return ACCENT
-  }
-
   private kindLabel(kind: CalendarItemKind): string {
     if (kind === 'schedule') {
       return LocaleService.loc('日程', 'Event', '予定')
@@ -305,96 +399,101 @@ export struct DashboardTodoTab {
     return LocaleService.loc('待办', 'Todo', 'ToDo')
   }
 
+  /**
+   * 计算当前页数据。注意 pcLayout 在一次 build 内恒定，所以下面只调用一次。
+   * 不可见时不计算，避免触发 currentPaged 的额外开销。
+   */
+  private pagedForBuild(): TodoItemRow[] {
+    return this.currentPaged()
+  }
+
   build() {
+    // 关键：build() 必须读 this.visible，否则 ArkTS 在 visibility 翻转时不会重渲染。
+    // MainShell 用 visibility: Visibility.None 隐藏非激活 tab；ArkTS 会缓存子树，
+    // visible 从 false→true 时不重新调用 build()，所以 allRows 更新但 UI 不刷新。
+    // 这里用 if (this.visible) 让 build() 显式依赖 visible，强制 ArkTS 重建。
+    // 关键：build() 里还必须**直接读一次 this.allRows**，否则 ArkTS 的依赖追踪不会
+    // 穿透 pagedForBuild → currentPaged → currentFiltered 这条方法调用链，
+    // allRows 在 reload() 里被新数组覆盖时 build() 不会重跑（手动切 tab 修好就是这个原因：
+    // 切 tab 销毁旧组件、新组件 build() 从头跑，allRows 自然生效）。
+    // 这里用一个隐藏的 Text 读 this.allRows.length，强制 ArkTS 把 allRows 注册为 build() 依赖。
     Stack() {
-      Column() {
-        this.buildTopBar()
-        const filtered = this.currentFiltered()
-        const paged = this.currentPaged()
-        if (this.pcLayout) {
-          this.buildPcTable(paged)
-        } else {
-          this.buildMobileList(paged)
+      // 隐藏依赖标记：读 this.allRows 让 ArkTS 注册 build 依赖。visibility=Hidden 不占布局。
+      Text(`${this.allRows.length}`)
+        .visibility(Visibility.Hidden)
+        .width(0)
+        .height(0)
+      if (this.visible) {
+        Column() {
+          this.buildTopBar()
+          if (this.pcLayout) {
+            this.buildPcTable(this.pagedForBuild())
+          } else {
+            this.buildMobileList(this.pagedForBuild())
+          }
+          if (this.selectionMode) {
+            this.buildSelectionBar()
+          }
+          // 未选中时底部留白，不再渲染翻页条 / 共X条 / XX页 等冗余信息。
         }
-        if (this.selected.length > 0) {
-          this.buildSelectionBar()
-        } else {
-          this.buildPaginationBar(filtered.length)
+        .width('100%')
+        .height('100%')
+        .padding({ left: this.pcLayout ? PAGE_PAD : 0, right: this.pcLayout ? PAGE_PAD : 0 })
+      } else {
+        // 不可见时只占位，不读 allRows / 触发 List 渲染。
+        Column() {
         }
+        .width('100%')
+        .height('100%')
       }
-      .width('100%')
-      .height('100%')
-      .padding({ left: this.pcLayout ? PAGE_PAD : 0, right: this.pcLayout ? PAGE_PAD : 0 })
-      .onAreaChange((_old, area) => {
-        const w = Number(area.width)
-        const h = Number(area.height)
-        if (w > 0) {
-          this.pageWidth = w
-        }
-        if (h > 0) {
-          this.pageHeight = h
-        }
-        const next = usePcStyleLayoutWithSize(this.pageWidth, this.pageHeight)
-        if (next !== this.pcLayout) {
-          this.pcLayout = next
-          this.uiNonce += 1
-        }
-      })
     }
     .width('100%')
     .height('100%')
+    .onAreaChange((_old, area) => {
+      const w = Number(area.width)
+      const h = Number(area.height)
+      if (w > 0) {
+        this.pageWidth = w
+      }
+      if (h > 0) {
+        this.pageHeight = h
+      }
+      const next = usePcStyleLayoutWithSize(this.pageWidth, this.pageHeight)
+      if (next !== this.pcLayout) {
+        this.pcLayout = next
+        this.uiNonce += 1
+      }
+    })
   }
 
   @Builder
   buildTopBar() {
     if (this.pcLayout) {
+      // PC：只保留搜索框 + 筛选下拉，顶部标题 / 新建日程 / 新建待办按钮已移除。
       Row() {
-        Text(LocaleService.loc('待办事项/日程', 'Todos & Schedules', 'ToDoと予定'))
-          .fontSize(22)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.primary_text'))
-        Blank().layoutWeight(1)
         this.searchInput()
         Text(LocaleService.loc('筛选', 'Filter', 'フィルター'))
           .fontSize(13)
           .fontColor($r('app.color.secondary_text'))
           .margin({ left: 8, right: 4 })
         this.filterDropdown()
-        this.addScheduleButton()
-        this.addTodoButton()
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
-      .padding({ top: 12, bottom: 8 })
+      .padding({ left: PAGE_PAD, right: PAGE_PAD, top: 12, bottom: 8 })
     } else {
-      Column() {
-        Row() {
-          Text(LocaleService.loc('待办事项/日程', 'Todos & Schedules', 'ToDoと予定'))
-            .fontSize(20)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.primary_text'))
-            .layoutWeight(1)
-          this.addScheduleButton()
-          this.addTodoButton()
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-        .padding({ left: PAGE_PAD, right: PAGE_PAD, top: 12, bottom: 6 })
-
-        Row() {
-          this.searchInput()
-          Text(LocaleService.loc('筛选', 'Filter', 'フィルター'))
-            .fontSize(12)
-            .fontColor($r('app.color.secondary_text'))
-            .margin({ left: 8, right: 4 })
-          this.filterDropdown()
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-        .padding({ left: PAGE_PAD, right: PAGE_PAD, bottom: 8 })
+      // 手机：原顶部 Title + 「新建日程 / 新建待办」按钮一行已删除，只保留搜索 + 筛选。
+      Row() {
+        this.searchInput()
+        Text(LocaleService.loc('筛选', 'Filter', 'フィルター'))
+          .fontSize(12)
+          .fontColor($r('app.color.secondary_text'))
+          .margin({ left: 8, right: 4 })
+        this.filterDropdown()
       }
       .width('100%')
-      .alignItems(HorizontalAlign.Start)
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: PAGE_PAD, right: PAGE_PAD, top: 12, bottom: 8 })
     }
   }
 
@@ -479,118 +578,129 @@ export struct DashboardTodoTab {
   }
 
   @Builder
-  addScheduleButton() {
-    Button(LocaleService.loc('新建日程', 'New schedule', '新しい予定'))
-      .fontSize(13)
-      .fontColor(ACCENT)
-      .backgroundColor(Color.Transparent)
-      .borderRadius(8)
-      .border({ width: 1, color: ACCENT })
-      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-      .margin({ left: 8 })
-      .onClick(() => {
-        void this.onAddSchedule()
-      })
-  }
-
-  @Builder
-  addTodoButton() {
-    Button(LocaleService.loc('新建待办', 'New todo', '新しいToDo'))
-      .fontSize(13)
-      .fontColor(Color.White)
-      .backgroundColor(ACCENT)
-      .borderRadius(8)
-      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-      .margin({ left: 6 })
-      .onClick(() => {
-        void this.onAddTodo()
-      })
-  }
-
-  @Builder
   buildMobileList(paged: TodoItemRow[]) {
-    if (this.loading) {
-      Column() {
-        LoadingProgress().width(32).height(32).color($r('app.color.accent'))
-        Text(LocaleService.loc('加载中', 'Loading', '読み込み中'))
-          .fontSize(13)
-          .fontColor($r('app.color.secondary_text'))
-          .margin({ top: 8 })
-        Blank().layoutWeight(1)
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-    } else if (paged.length === 0) {
-      Column() {
-        SymbolGlyph($r('sys.symbol.checkmark'))
-          .fontSize(40)
-          .fontColor([$r('app.color.secondary_text')])
-          .margin({ bottom: 8 })
-        Text(LocaleService.loc('暂无待办', 'No todos yet', 'ToDoなし'))
-          .fontSize(15)
-          .fontColor($r('app.color.secondary_text'))
-        Blank().layoutWeight(1)
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .justifyContent(FlexAlign.Center)
-    } else {
+    // 与笔记 Tab 同款：Refresh 直接包 List，空态/加载态作为 ListItem 嵌入 List，
+    // 避免 Refresh 内嵌套 if/else 时的高度坍缩问题。
+    Refresh({ refreshing: $$this.refreshing, offset: 64, friction: 100 }) {
       List() {
-        ForEach(paged, (row: TodoItemRow) => {
+        if (this.loading) {
           ListItem() {
-            this.mobileCard(row)
+            Column() {
+              LoadingProgress().width(32).height(32).color($r('app.color.accent'))
+              Text(LocaleService.loc('加载中', 'Loading', '読み込み中'))
+                .fontSize(13)
+                .fontColor($r('app.color.secondary_text'))
+                .margin({ top: 8 })
+            }
+            .width('100%')
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
           }
-        }, (row: TodoItemRow): string => `mt_${row.noteId}_${this.uiNonce}`)
+        } else if (paged.length === 0) {
+          // 空态：图标 + 提示文字居中，颜色与文字保持一致（次级文字灰）。
+          ListItem() {
+            Column() {
+              Image($r('app.media.ic_quick_todo'))
+                .width(72)
+                .height(72)
+                .objectFit(ImageFit.Contain)
+                .fillColor($r('app.color.secondary_text'))
+                .margin({ bottom: 14 })
+              Text(LocaleService.loc('暂无待办', 'No todos yet', 'ToDoなし'))
+                .fontSize(15)
+                .fontColor($r('app.color.secondary_text'))
+            }
+            .alignItems(HorizontalAlign.Center)
+            .width('100%')
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+          }
+        } else {
+          ForEach(paged, (row: TodoItemRow) => {
+            ListItem() {
+              this.mobileCard(row)
+            }
+          }, (row: TodoItemRow): string =>
+            `mt_${row.noteId}_${row.sourceNote.todoPriority ?? 0}_${row.sourceNote.updatedAt}_${this.uiNonce}`)
+        }
       }
-      .layoutWeight(1)
+      .width('100%')
+      .height('100%')
       .divider({ strokeWidth: 1, color: $r('app.color.surface_muted') })
       .padding({ left: PAGE_PAD, right: PAGE_PAD })
+      // 关闭 List 缓存：每次数据更新都强制重绘所有 item，绕开 ArkUI List
+      // 内部对相同 noteId 的 item 复用导致的 fillColor 不刷新问题。
+      .cachedCount(0)
     }
+    .layoutWeight(1)
+    .width('100%')
+    .onRefreshing((): void => {
+      void this.pullToRefresh()
+    })
   }
 
   @Builder
   buildPcTable(paged: TodoItemRow[]) {
     Column() {
       this.pcTableHeader()
-      if (this.loading) {
-        Column() {
-          LoadingProgress().width(32).height(32).color($r('app.color.accent'))
-          Text(LocaleService.loc('加载中', 'Loading', '読み込み中'))
-            .fontSize(13)
-            .fontColor($r('app.color.secondary_text'))
-            .margin({ top: 8 })
-          Blank().layoutWeight(1)
-        }
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-        .width('100%')
-      } else if (paged.length === 0) {
-        Column() {
-          SymbolGlyph($r('sys.symbol.checkmark'))
-            .fontSize(40)
-            .fontColor([$r('app.color.secondary_text')])
-            .margin({ bottom: 8 })
-          Text(LocaleService.loc('暂无待办', 'No todos yet', 'ToDoなし'))
-            .fontSize(15)
-            .fontColor($r('app.color.secondary_text'))
-          Blank().layoutWeight(1)
-        }
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-        .width('100%')
-      } else {
+      // 与笔记 Tab / 移动端同款：Refresh 直接包 List，空态/加载态作为 ListItem 嵌入。
+      Refresh({ refreshing: $$this.refreshing, offset: 64, friction: 100 }) {
         List() {
-          ForEach(paged, (row: TodoItemRow) => {
+          if (this.loading) {
             ListItem() {
-              this.pcTableRow(row)
+              Column() {
+                LoadingProgress().width(32).height(32).color($r('app.color.accent'))
+                Text(LocaleService.loc('加载中', 'Loading', '読み込み中'))
+                  .fontSize(13)
+                  .fontColor($r('app.color.secondary_text'))
+                  .margin({ top: 8 })
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
             }
-          }, (row: TodoItemRow): string => `pt_${row.noteId}_${this.uiNonce}`)
+          } else if (paged.length === 0) {
+            ListItem() {
+              Column() {
+                // 表格区空态：图标 + 文字双居中，图标颜色与文字保持一致（次级文字灰）。
+                Column() {
+                  Image($r('app.media.ic_quick_todo'))
+                    .width(72)
+                    .height(72)
+                    .objectFit(ImageFit.Contain)
+                    .fillColor($r('app.color.secondary_text'))
+                    .margin({ bottom: 14 })
+                  Text(LocaleService.loc('暂无待办', 'No todos yet', 'ToDoなし'))
+                    .fontSize(15)
+                    .fontColor($r('app.color.secondary_text'))
+                }
+                .alignItems(HorizontalAlign.Center)
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
+            }
+          } else {
+            ForEach(paged, (row: TodoItemRow) => {
+              ListItem() {
+                this.pcTableRow(row)
+              }
+            }, (row: TodoItemRow): string =>
+              `pt_${row.noteId}_${row.sourceNote.todoPriority ?? 0}_${row.sourceNote.updatedAt}_${this.uiNonce}`)
+          }
         }
-        .layoutWeight(1)
+        .width('100%')
+        .height('100%')
         .divider({ strokeWidth: 1, color: $r('app.color.surface_muted') })
         .padding({ left: 8, right: 8 })
+        // 关闭 List 缓存：每次数据更新都强制重绘所有 item。
+        .cachedCount(0)
       }
+      .layoutWeight(1)
+      .width('100%')
+      .onRefreshing((): void => {
+        void this.pullToRefresh()
+      })
     }
     .layoutWeight(1)
     .width('100%')
@@ -640,29 +750,15 @@ export struct DashboardTodoTab {
   @Builder
   mobileCard(row: TodoItemRow) {
     Row() {
-      Checkbox({ name: row.noteId, group: 'todoSel' })
-        .select(this.selected.indexOf(row.noteId) >= 0)
-        .selectedColor(ACCENT)
-        .width(20)
-        .height(20)
-        .onChange((value: boolean) => {
-          if (value) {
-            if (this.selected.indexOf(row.noteId) < 0) {
-              this.selected.push(row.noteId)
-              this.uiNonce += 1
-            }
-          } else {
-            const idx = this.selected.indexOf(row.noteId)
-            if (idx >= 0) {
-              this.selected.splice(idx, 1)
-              this.uiNonce += 1
-            }
-          }
-        })
-
-      Circle({ width: 8, height: 8 })
-        .fill(this.kindDotColor(row.kind))
-        .margin({ left: 6, right: 6 })
+      // 左侧图标位：多选模式下显示自绘勾选指示器，否则显示待办/日程图标。
+      // 图标到屏幕左边 = List padding (PAGE_PAD) = 16vp，所以图标右侧留同样 16vp 间距
+      // 与正文分隔，使「图标 ↔ 列表项」间距 ==「图标 ↔ 屏幕左边」间距。
+      // 注意：ArkTS 严格模式下 @Builder 调用返回 void，无法链式 .margin()，
+      // 需要外层包一个 Row 让 margin 落在容器上。
+      Row() {
+        this.buildItemLeading(row)
+      }
+      .margin({ right: PAGE_PAD })
 
       Column() {
         Row() {
@@ -716,31 +812,29 @@ export struct DashboardTodoTab {
     .onClick(() => {
       void this.onTapRow(row)
     })
+    // 长按进入多选模式：嵌在 Refresh → List 里，父级滑动手势可能抢占触摸序列，
+    // 用 priorityGesture 确保长按能被识别（参考 Feedback.ets 中保存二维码的写法）。
+    .priorityGesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction((): void => {
+          this.onLongPressRow(row)
+        })
+    )
   }
 
   @Builder
   pcTableRow(row: TodoItemRow) {
     Row() {
-      Checkbox({ name: row.noteId, group: 'todoSel' })
-        .select(this.selected.indexOf(row.noteId) >= 0)
-        .selectedColor(ACCENT)
-        .width(20)
-        .height(20)
-        .margin({ left: 10 })
-        .onChange((value: boolean) => {
-          if (value) {
-            if (this.selected.indexOf(row.noteId) < 0) {
-              this.selected.push(row.noteId)
-              this.uiNonce += 1
-            }
-          } else {
-            const idx = this.selected.indexOf(row.noteId)
-            if (idx >= 0) {
-              this.selected.splice(idx, 1)
-              this.uiNonce += 1
-            }
-          }
-        })
+      // 左侧图标位：与 mobileCard 共用，多选模式下展示自绘勾选指示器。
+      // PC 端图标到屏幕左边 = Column padding (PAGE_PAD) + List padding (8) = 24vp，
+      // 标题 Text 已自带 padding({ left: 8 }) = 8vp，所以再在图标右侧加 PAGE_PAD 间距，
+      // 总间隙 8 + 16 = 24vp，正好等于「图标 ↔ 屏幕左边」间距。
+      // 注意：ArkTS 严格模式下 @Builder 调用返回 void，无法链式 .margin()，
+      // 需要外层包一个 Row 让 margin 落在容器上。
+      Row() {
+        this.buildItemLeading(row)
+      }
+      .margin({ right: PAGE_PAD })
 
       Text(row.title)
         .fontSize(13)
@@ -784,6 +878,86 @@ export struct DashboardTodoTab {
     .onClick(() => {
       void this.onTapRow(row)
     })
+    // 长按进入多选模式（与 mobileCard 一致）。
+    .priorityGesture(
+      LongPressGesture({ repeat: false, duration: 500 })
+        .onAction((): void => {
+          this.onLongPressRow(row)
+        })
+    )
+  }
+
+  @Builder
+  buildItemLeading(row: TodoItemRow) {
+    // 多选模式：自绘勾选指示器，避开 ArkTS Checkbox 内部状态与 select() 绑定的潜在竞争；
+    // 勾选/取消完全交给 onTapRow 单击逻辑统一处理，视觉态由 this.selected 推导。
+    if (this.selectionMode) {
+      if (this.selected.indexOf(row.noteId) >= 0) {
+        Text('✓')
+          .fontSize(13)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Color.White)
+          .width(20)
+          .height(20)
+          .textAlign(TextAlign.Center)
+          .borderRadius(10)
+          .backgroundColor(ACCENT)
+      } else {
+        Row()
+          .width(20)
+          .height(20)
+          .border({ width: 1.5, color: '#9CA3AF' })
+          .borderRadius(10)
+      }
+    } else if (row.kind === 'schedule') {
+      // 待办日程：复用日历 tab 的 sys.symbol.calendar，颜色按状态（已完成灰/否则黄）。
+      SymbolGlyph($r('sys.symbol.calendar'))
+        .fontSize(ICON_SIZE)
+        .fontColor([this.scheduleIconColor(row)])
+    } else if (row.status === 'completed') {
+      // 已完成待办：固定灰色。
+      Image($r('app.media.ic_quick_todo'))
+        .width(ICON_SIZE)
+        .height(ICON_SIZE)
+        .objectFit(ImageFit.Contain)
+        .fillColor(ICON_GRAY)
+    } else {
+      // 按 priority 拆 5 个分支，每个分支独立 Image 组件实例 + fillColor 写死常量，
+      // 保证 priority 切换时一定会走到新分支创建新 Image 实例。
+      // ForEach key 已包含 todoPriority，priority 变化时 ListItem 销毁重建，
+      // 新 Image 用新 fillColor 创建，build() 现在会读 this.allRows 触发重渲染。
+      if (row.sourceNote.todoPriority === 1) {
+        Image($r('app.media.ic_quick_todo'))
+          .width(ICON_SIZE)
+          .height(ICON_SIZE)
+          .objectFit(ImageFit.Contain)
+          .fillColor(ICON_TODO_LOW)
+      } else if (row.sourceNote.todoPriority === 2) {
+        Image($r('app.media.ic_quick_todo'))
+          .width(ICON_SIZE)
+          .height(ICON_SIZE)
+          .objectFit(ImageFit.Contain)
+          .fillColor(ICON_TODO_MEDIUM)
+      } else if (row.sourceNote.todoPriority === 3) {
+        Image($r('app.media.ic_quick_todo'))
+          .width(ICON_SIZE)
+          .height(ICON_SIZE)
+          .objectFit(ImageFit.Contain)
+          .fillColor(ICON_TODO_HIGH)
+      } else if (row.sourceNote.todoPriority === 4) {
+        Image($r('app.media.ic_quick_todo'))
+          .width(ICON_SIZE)
+          .height(ICON_SIZE)
+          .objectFit(ImageFit.Contain)
+          .fillColor(ICON_TODO_URGENT)
+      } else {
+        Image($r('app.media.ic_quick_todo'))
+          .width(ICON_SIZE)
+          .height(ICON_SIZE)
+          .objectFit(ImageFit.Contain)
+          .fillColor(ICON_TODO_LOW)
+      }
+    }
   }
 
   @Builder
@@ -819,8 +993,7 @@ export struct DashboardTodoTab {
         .padding({ left: 8, right: 8 })
         .margin({ left: 8 })
         .onClick(() => {
-          this.selected = []
-          this.uiNonce += 1
+          this.exitSelectionMode()
         })
     }
     .width('100%')
@@ -829,86 +1002,5 @@ export struct DashboardTodoTab {
       : { left: PAGE_PAD, right: PAGE_PAD, top: 8, bottom: 12 })
     .border({ width: { top: 1 }, color: $r('app.color.surface_muted') })
     .backgroundColor($r('app.color.card_background'))
-  }
-
-  @Builder
-  buildPaginationBar(total: number) {
-    const totalPages = this.totalPages(total)
-    Row() {
-      Text(LocaleService.loc(
-        `共 ${total} 条 · 第 ${this.page + 1} / ${Math.max(1, totalPages)} 页`,
-        `Total: ${total} · Page ${this.page + 1} / ${Math.max(1, totalPages)}`,
-        `合計 ${total} 件 · ${this.page + 1} / ${Math.max(1, totalPages)} ページ`
-      ))
-        .fontSize(12)
-        .fontColor($r('app.color.secondary_text'))
-      Blank().layoutWeight(1)
-      Button(LocaleService.loc('上一页', 'Prev', '前へ'))
-        .fontSize(12)
-        .fontColor($r('app.color.primary_text'))
-        .backgroundColor($r('app.color.surface_muted'))
-        .borderRadius(6)
-        .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-        .margin({ right: 6 })
-        .enabled(this.page > 0)
-        .onClick(() => {
-          if (this.page > 0) {
-            this.page -= 1
-            this.uiNonce += 1
-          }
-        })
-      Button(LocaleService.loc('下一页', 'Next', '次へ'))
-        .fontSize(12)
-        .fontColor($r('app.color.primary_text'))
-        .backgroundColor($r('app.color.surface_muted'))
-        .borderRadius(6)
-        .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-        .margin({ right: 6 })
-        .enabled(this.page + 1 < totalPages)
-        .onClick(() => {
-          if (this.page + 1 < totalPages) {
-            this.page += 1
-            this.uiNonce += 1
-          }
-        })
-      Row() {
-        Text(LocaleService.loc(`${this.pageSize} 条/页`, `${this.pageSize} / page`, `${this.pageSize}件/ページ`))
-          .fontSize(12)
-          .fontColor($r('app.color.primary_text'))
-        SymbolGlyph($r('sys.symbol.chevron_down'))
-          .fontSize(11)
-          .fontColor([$r('app.color.secondary_text')])
-          .margin({ left: 4 })
-      }
-      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-      .borderRadius(6)
-      .backgroundColor($r('app.color.surface_muted'))
-      .bindMenu([
-        { value: LocaleService.loc('10 条/页', '10 / page', '10件/ページ'), action: (): void => {
-          this.pageSize = 10
-          this.page = 0
-          this.uiNonce += 1
-        } },
-        { value: LocaleService.loc('20 条/页', '20 / page', '20件/ページ'), action: (): void => {
-          this.pageSize = 20
-          this.page = 0
-          this.uiNonce += 1
-        } },
-        { value: LocaleService.loc('50 条/页', '50 / page', '50件/ページ'), action: (): void => {
-          this.pageSize = 50
-          this.page = 0
-          this.uiNonce += 1
-        } },
-        { value: LocaleService.loc('100 条/页', '100 / page', '100件/ページ'), action: (): void => {
-          this.pageSize = 100
-          this.page = 0
-          this.uiNonce += 1
-        } }
-      ])
-    }
-    .width('100%')
-    .padding(this.pcLayout
-      ? { left: PAGE_PAD, right: PAGE_PAD, top: 6, bottom: 8 }
-      : { left: PAGE_PAD, right: PAGE_PAD, top: 8, bottom: 12 })
   }
 }

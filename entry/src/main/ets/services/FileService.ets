@@ -249,6 +249,8 @@ export class FileService {
       todoPriority: state.todoPriority,
       todoStatus: state.todoStatus,
       todoReminderMinutes: state.todoReminderMinutes,
+      startTime: state.startTime,
+      endTime: state.endTime,
       source: state.source,
       order: state.order,
       userData: state.userData,

@@ -41,6 +41,14 @@
       "value": "#FF9CA3AF"
     },
     {
+      "name": "placeholder_color",
+      "value": "#FFB6B9C2"
+    },
+    {
+      "name": "disabled_text",
+      "value": "#FFB6B9C2"
+    },
+    {
       "name": "divider",
       "value": "#FFE5E7EB"
     },
@@ -253,6 +261,10 @@
       "value": "#FFFEF3E2"
     },
     {
+      "name": "calendar_week_block_yellow",
+      "value": "#FFFEF3C7"
+    },
+    {
       "name": "calendar_week_block_note",
       "value": "#FFE6F6ED"
     },
@@ -265,8 +277,20 @@
       "value": "#FFF59E0B"
     },
     {
+      "name": "calendar_kind_yellow_fg",
+      "value": "#FFFACC15"
+    },
+    {
       "name": "calendar_kind_note_fg",
       "value": "#FF0DAA4A"
+    },
+    {
+      "name": "note_leading_mindmap_fg",
+      "value": "#FF3B82F6"
+    },
+    {
+      "name": "note_leading_knowledge_graph_fg",
+      "value": "#FF3B82F6"
     }
   ]
 }

@@ -49,6 +49,21 @@ const CARD_RADIUS = 16
 const SECTION_GAP = 14
 /** 同步状态条：圆角矩形（非胶囊）。 */
 const SYNC_PILL_RADIUS = 10
+/**
+ * 手机端「未来待办 / 日程清单」两张卡的固定高度（vp）：不随内容多少变化，
+ * 空态与 3 条内容态一样高，两张卡也始终等高。与 Flutter 端
+ * `DashboardStyle.mobileAgendaCardHeight` 保持同值。
+ *
+ * 取值按内容最多（3 条）时两卡所需高度的较大者 + 余量：
+ *   - 未来待办：14×2 卡内边距 + 20 标题 + 8 space + 3×27 待办行 + 4 底距
+ *               + 18 链接 ≈ 163
+ *   - 日程清单：14×2 卡内边距 + 20 标题 + 6 space + 3×25 日程行 + 4 底距
+ *               + 18 链接 ≈ 155
+ * PC / iPad 横屏不受影响（`pcLayout` 时不加这条约束，仍按内容自适应）。
+ */
+const MOBILE_AGENDA_CARD_HEIGHT = 184
+/** 「未来待办 / 日程清单」卡的内边距（vp）。 */
+const AGENDA_CARD_PADDING = 14
 
 class DashNoteRow {
   id: string = ''
@@ -100,7 +115,7 @@ struct MainShell {
   @State noteCount: number = 0
   @State todoCount: number = 0
   @State tagCount: number = 0
-  @State registrationDays: number = 0
+  @State graphCount: number = 0
   @State cloudConfigured: boolean = true
   @State syncing: boolean = false
   @State lastSyncMs: number = 0
@@ -118,6 +133,10 @@ struct MainShell {
   private reloadGeneration: number = 0
   /** 串行化 reload，避免 onAreaChange / onPageShow / bootstrap 并发互相冲掉列表。 */
   private reloadChain: Promise<void> = Promise.resolve()
+  /** 已预扫的「思维导图」笔记 id 集合（`.qy` 边车
+   * `metadata.layoutMode == 'mindMapLinear'`），用于让首页 / 笔记 / 日历
+   * 三个 tab 的 leading icon 区分思维导图（蓝）与知识图谱（绿）。 */
+  private mindMapNoteIds: Set<string> = new Set()
 
   aboutToAppear(): void {
     AppContextHolder.setLastUiContext(this.getUIContext())
@@ -286,6 +305,10 @@ struct MainShell {
         const continueHidden = await this.pruneContinueHidden(notes, continueHiddenRaw)
         const latestHiddenList = await PreferencesService.getInstance().getDashHomeLatestHidden()
         const latestHidden = new Set<string>(latestHiddenList)
+        // 一次性预扫描所有 flowchart 笔记，识别「思维导图」子集。
+        // 区分思维导图（蓝）与知识图谱（绿）的关键数据。
+        const mindMapIds = await this.detectMindMapNoteIds(notes)
+        this.mindMapNoteIds = mindMapIds
         const continueNotes = byUpdated.filter((n: Note) => {
           const hiddenAt = continueHidden[n.id]
           if (hiddenAt === undefined) {
@@ -294,8 +317,8 @@ struct MainShell {
           return n.updatedAt > hiddenAt
         })
         const latestNotes = byCreated.filter((n: Note) => !latestHidden.has(n.id))
-        const continueRows = this.mapRows(continueNotes.slice(0, 4), true)
-        const recentRows = this.mapRows(latestNotes.slice(0, 4), false)
+        const continueRows = this.mapRows(continueNotes.slice(0, 4), true, mindMapIds)
+        const recentRows = this.mapRows(latestNotes.slice(0, 4), false, mindMapIds)
         // 「未来待办 / 日程清单」卡：复用日历周视图投影（已应用 isTodo=1
         // startTime/endTime 与 isTodo=2 todoDue-1h 的渲染规则）。
         //   - 日程清单卡：今天及之后所有未完成的 schedule occurrences，
@@ -328,16 +351,21 @@ struct MainShell {
           Logger.warn('DashHomeLoad',
             `reloadDashboard skip empty overwrite gen=${generation} keep continue=${this.continueEditing.length}`)
         } else {
-          this.noteCount = notes.length
+          // 笔记数量 = 全部笔记数 - 流程图（思维导图 + 知识图谱）数量。
+          const nonFlowchartCount = notes.filter((n: Note) => n.type_ !== NOTE_TYPE_FLOWCHART).length
+          // 「图谱」数量 = 思维导图 + 知识图谱（即 type_ == NOTE_TYPE_FLOWCHART 笔记总数）。
+          const graphCount = notes.filter((n: Note) => n.type_ === NOTE_TYPE_FLOWCHART).length
+          this.noteCount = nonFlowchartCount
           this.todoCount = await this.countTodoAndScheduleItems(notes)
           this.tagCount = tagSet.size
+          this.graphCount = graphCount
           this.continueEditing = continueRows
           this.recentNotes = recentRows
           this.upcomingTodos = upcomingTodos
           this.upcomingSchedules = upcomingSchedules
           Logger.info('DashStats',
             `APPLIED gen=${generation} notes=${notes.length} noteCount=${this.noteCount} ` +
-            `todoCount=${this.todoCount} tagCount=${this.tagCount} ` +
+            `todoCount=${this.todoCount} tagCount=${this.tagCount} graphCount=${this.graphCount} ` +
             `continue=${continueRows.length} recent=${recentRows.length} +${Date.now() - t0}ms`)
           this.logTodoScanSample(notes)
         }
@@ -358,12 +386,9 @@ struct MainShell {
         }
         const name = (profile?.username ?? '').trim()
         this.username = name.length > 0 ? name : LocaleService.loc('轻羽', 'Qingyu', 'QingYu')
-        this.registrationDays = this.calcRegistrationDays(profile?.registered_at ?? '')
         Logger.info('DashStats',
           `profile name=${name.length > 0 ? name : '(empty)'} ` +
-          `registered_at=${profile?.registered_at ?? '(null)'} ` +
-          `registrationDays=${this.registrationDays} ` +
-          `UI-bind note=${this.noteCount} todo=${this.todoCount} days=${this.registrationDays} tags=${this.tagCount}`)
+          `UI-bind note=${this.noteCount} todo=${this.todoCount} tags=${this.tagCount} graphCount=${this.graphCount}`)
 
         this.cloudConfigured = await this.resolveCloudConfigured()
         if (generation !== this.reloadGeneration) {
@@ -385,7 +410,7 @@ struct MainShell {
     await next
   }
 
-  private mapRows(notes: Note[], useUpdated: boolean): DashNoteRow[] {
+  private mapRows(notes: Note[], useUpdated: boolean, mindMapNoteIds: Set<string> = new Set()): DashNoteRow[] {
     const rows: DashNoteRow[] = []
     for (const n of notes) {
       const row = new DashNoteRow()
@@ -397,7 +422,7 @@ struct MainShell {
       const ms = useUpdated ? n.updatedAt : n.createdAt
       row.timeLabel = this.relativeTime(ms)
       row.isFlowchart = n.type_ === NOTE_TYPE_FLOWCHART
-      row.leadingKind = this.leadingKindFor(n)
+      row.leadingKind = this.leadingKindFor(n, mindMapNoteIds)
       row.openWithPreview = n.content.trim().length > 0
       row.updatedAt = n.updatedAt
       const refs = NoteStateCodec.extractImageRefs(n.content)
@@ -563,10 +588,22 @@ struct MainShell {
     return `${dt.getMonth() + 1}月${dt.getDate()}日`
   }
 
-  /** 列表左侧图标：流程图 > mp3 波形 > wav/普通文档 > 提取中链接。 */
-  private leadingKindFor(n: Note): string {
+  /** 列表左侧图标：思维导图 > 知识图谱 > 待办 > 日程 > mp3 波形 > wav/普通文档 > 提取中链接。 */
+  private leadingKindFor(n: Note, mindMapNoteIds: Set<string> = new Set()): string {
+    // 待办 / 日程沿用日历 tab 列表中的样式；放最前避免被流程图分支吞掉。
+    if (n.isTodo === 2) {
+      return 'todo'
+    }
+    if (n.isTodo === 1) {
+      return 'schedule'
+    }
     if (n.type_ === NOTE_TYPE_FLOWCHART) {
-      return 'flowchart'
+      // 流程图需要根据 `.qy` 边车里的 `layoutMode` 区分思维导图 / 知识图谱；
+      // 集合由 detectMindMapNoteIds 预扫填充，命中即为思维导图。
+      if (mindMapNoteIds.has(n.id)) {
+        return 'flowchart'
+      }
+      return 'knowledgeGraph'
     }
     const audio = `${n.audioId ?? ''}`.trim().toLowerCase()
     if (audio.endsWith('.mp3')) {
@@ -615,23 +652,6 @@ struct MainShell {
     return continueHidden
   }
 
-  private calcRegistrationDays(registeredAt: string): number {
-    const raw = registeredAt.trim()
-    if (raw.length < 10) {
-      return 0
-    }
-    const parsed = Date.parse(raw.substring(0, 10))
-    if (Number.isNaN(parsed)) {
-      return 0
-    }
-    const start = new Date(parsed)
-    const now = new Date()
-    const a = new Date(start.getFullYear(), start.getMonth(), start.getDate()).getTime()
-    const b = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-    const days = Math.floor((b - a) / 86400000) + 1
-    return days < 1 ? 1 : days
-  }
-
   /**
    * 统计「待办事项 + 待办日程」总数。
    *
@@ -667,6 +687,31 @@ struct MainShell {
       total += 1
     }
     return total
+  }
+
+  /**
+   * 扫描所有 flowchart 笔记，收集处于「思维导图」模式（`.qy` 边车
+   * `metadata.layoutMode == 'mindMapLinear'`）的 note id 集合。
+   * 仅对 `type_ === NOTE_TYPE_FLOWCHART` 的笔记做磁盘 IO；非流程图直接跳过。
+   * 解析失败时（边车缺失 / 损坏）按流程图处理（即不进入集合），
+   * 保证首页 / 笔记 / 日历三端 leading icon 不会卡死。
+   */
+  private async detectMindMapNoteIds(notes: Note[]): Promise<Set<string>> {
+    const result = new Set<string>()
+    for (const n of notes) {
+      if (n.type_ !== NOTE_TYPE_FLOWCHART) {
+        continue
+      }
+      try {
+        const graph = await FlowchartService.getInstance().load(n.id)
+        if (FlowchartMindMap.isMindMapMode(graph)) {
+          result.add(n.id)
+        }
+      } catch (e) {
+        // 解析失败时保持知识图谱语义，不影响其它笔记。
+      }
+    }
+    return result
   }
 
   /** 排查用：抽样打印命中「is_todo 不为 0」的笔记，与新版 todoCount 规则同步。 */
@@ -912,29 +957,43 @@ struct MainShell {
     Column() {
       // 与 Flutter IndexedStack 一致：Tab 保活，避免切回笔记页反复销毁重建并闪「加载中」。
       Stack() {
+        // 首页 tab：保留自上而下的绿色渐变背景。
         Column() {
           this.buildDashboard()
         }
         .width('100%')
         .height('100%')
+        .linearGradient({
+          angle: 180,
+          colors: [
+            [$r('app.color.dashboard_header_top'), 0.0],
+            [$r('app.color.dashboard_header_mid'), 0.32],
+            [$r('app.color.app_background'), 0.55]
+          ]
+        })
         .visibility(this.shellTabIndex === 0 ? Visibility.Visible : Visibility.None)
 
+        // 笔记 / 待办 / 日历 / 我的 tab：背景固定纯白（参考 Flutter PC 端，对齐
+        // card_background #FFFFFFFF），不再使用 app_background 浅灰，也不叠首页的渐变绿。
         DashboardNotesTab({
           visible: this.shellTabIndex === 1,
           shellRefreshNonce: this.notesShellRefreshNonce
         })
           .width('100%')
           .height('100%')
+          .backgroundColor($r('app.color.card_background'))
           .visibility(this.shellTabIndex === 1 ? Visibility.Visible : Visibility.None)
 
         DashboardTodoTab({ visible: this.shellTabIndex === 2 })
           .width('100%')
           .height('100%')
+          .backgroundColor($r('app.color.card_background'))
           .visibility(this.shellTabIndex === 2 ? Visibility.Visible : Visibility.None)
 
         DashboardCalendarTab({ visible: this.shellTabIndex === 3 })
           .width('100%')
           .height('100%')
+          .backgroundColor($r('app.color.card_background'))
           .visibility(this.shellTabIndex === 3 ? Visibility.Visible : Visibility.None)
 
         DashboardMineTab({
@@ -943,18 +1002,11 @@ struct MainShell {
         })
           .width('100%')
           .height('100%')
+          .backgroundColor($r('app.color.card_background'))
           .visibility(this.shellTabIndex === 4 ? Visibility.Visible : Visibility.None)
       }
       .width('100%')
       .layoutWeight(1)
-      .linearGradient({
-        angle: 180,
-        colors: [
-          [$r('app.color.dashboard_header_top'), 0.0],
-          [$r('app.color.dashboard_header_mid'), 0.32],
-          [$r('app.color.app_background'), 0.55]
-        ]
-      })
       this.buildBottomBar()
     }
     .width('100%')
@@ -979,7 +1031,8 @@ struct MainShell {
     Row() {
       this.tabItem(0, $r('sys.symbol.house'), LocaleService.loc('首页', 'Home', 'ホーム'))
       this.tabItem(1, $r('sys.symbol.doc_text'), LocaleService.loc('笔记', 'Notes', 'ノート'))
-      this.tabItem(2, $r('sys.symbol.checkmark'), LocaleService.loc('待办', 'Todos', 'ToDo'))
+      // 待办 tab 用自定义 SVG（app.media.ic_quick_todo），按选中态切色，文字也跟着选中态。
+      this.tabItemImage(2, $r('app.media.ic_quick_todo'), LocaleService.loc('待办', 'Todos', 'ToDo'))
       this.tabItem(3, $r('sys.symbol.calendar'), LocaleService.loc('日历', 'Calendar', 'カレンダー'))
       this.tabItem(4, $r('sys.symbol.person'), LocaleService.loc('我的', 'Mine', 'マイページ'))
     }
@@ -996,6 +1049,28 @@ struct MainShell {
       SymbolGlyph(symbol)
         .fontSize(22)
         .fontColor([this.shellTabIndex === index ? ACCENT : $r('app.color.secondary_text')])
+      Text(label)
+        .fontSize(11)
+        .fontColor(this.shellTabIndex === index ? ACCENT : $r('app.color.secondary_text'))
+    }
+    .width('20%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .onClick(() => {
+      this.selectTab(index)
+    })
+  }
+
+  /** 待办 tab 专用：用 Image 渲染 app.media.ic_quick_todo（与首页「待办事项」快捷卡片同图），
+   * SVG 用 fill=currentColor，fillColor 跟随选中态：选中=ACCENT(#0DAA4A)，未选=secondary_text(#6B7280)。 */
+  @Builder
+  tabItemImage(index: number, icon: Resource, label: string) {
+    Column({ space: 2 }) {
+      Image(icon)
+        .width(22)
+        .height(22)
+        .objectFit(ImageFit.Contain)
+        .fillColor(this.shellTabIndex === index ? ACCENT : $r('app.color.secondary_text'))
       Text(label)
         .fontSize(11)
         .fontColor(this.shellTabIndex === index ? ACCENT : $r('app.color.secondary_text'))
@@ -1139,10 +1214,10 @@ struct MainShell {
               (): void => { void this.quickImage() }, $r('sys.symbol.picture'))
             this.quickCardAsset(LocaleService.loc('纸书记录', 'Paper book', '紙の本'), ACCENT,
               (): void => { void this.quickBook() }, $r('app.media.ic_quick_book'))
-            this.quickCardAsset(LocaleService.loc('待办事项', 'To-do', 'ToDo'), '#3CB371',
+            this.quickCardAsset(LocaleService.loc('待办事项', 'To-do', 'ToDo'), ACCENT,
               (): void => { void this.quickTodo() }, $r('app.media.ic_quick_todo'))
-            this.quickCard(LocaleService.loc('知识图谱', 'Knowledge graph', '知識グラフ'), ACCENT,
-              (): void => { void this.quickGraph() }, $r('sys.symbol.shareplay'))
+            this.quickCardAsset(LocaleService.loc('知识图谱', 'Knowledge graph', '知識グラフ'), ACCENT,
+              (): void => { void this.quickGraph() }, $r('app.media.ic_note_knowledge_graph'))
             this.quickCardAsset(LocaleService.loc('思维导图', 'Mind map', 'マインドマップ'), ACCENT,
               (): void => { void this.quickMindMap() }, $r('app.media.ic_quick_mindmap'))
           }
@@ -1167,10 +1242,10 @@ struct MainShell {
           Row({ space: 8 }) {
             this.quickCardFlexAsset(LocaleService.loc('纸书记录', 'Paper book', '紙の本'), ACCENT,
               (): void => { void this.quickBook() }, $r('app.media.ic_quick_book'))
-            this.quickCardFlexAsset(LocaleService.loc('待办事项', 'To-do', 'ToDo'), '#3CB371',
+            this.quickCardFlexAsset(LocaleService.loc('待办事项', 'To-do', 'ToDo'), ACCENT,
               (): void => { void this.quickTodo() }, $r('app.media.ic_quick_todo'))
-            this.quickCardFlex(LocaleService.loc('知识图谱', 'Knowledge graph', '知識グラフ'), ACCENT,
-              (): void => { void this.quickGraph() }, $r('sys.symbol.shareplay'))
+            this.quickCardFlexAsset(LocaleService.loc('知识图谱', 'Knowledge graph', '知識グラフ'), ACCENT,
+              (): void => { void this.quickGraph() }, $r('app.media.ic_note_knowledge_graph'))
             this.quickCardFlexAsset(LocaleService.loc('思维导图', 'Mind map', 'マインドマップ'), ACCENT,
               (): void => { void this.quickMindMap() }, $r('app.media.ic_quick_mindmap'))
           }
@@ -1215,6 +1290,7 @@ struct MainShell {
         .width(26)
         .height(26)
         .objectFit(ImageFit.Contain)
+        .fillColor(color)
       Text(label)
         .fontSize(11)
         .fontColor($r('app.color.primary_text'))
@@ -1260,6 +1336,7 @@ struct MainShell {
         .width(24)
         .height(24)
         .objectFit(ImageFit.Contain)
+        .fillColor(color)
       Text(label)
         .fontSize(11)
         .fontColor($r('app.color.primary_text'))
@@ -1392,32 +1469,67 @@ struct MainShell {
 
   @Builder
   noteRow(row: DashNoteRow, showThumb: boolean, fromContinue: boolean) {
+    // 与笔记统计卡 stat 同款 80% → 95% 白色径向渐变。
+    // 与笔记 tab noteTileBody 对齐：边框与图标本身同色（4 种语义笔记按类型上色）。
     Row({ space: 10 }) {
       Column() {
         if (row.leadingKind === 'mp3') {
-          Image($r('app.media.ic_note_mp3_wave'))
-            .width(18)
-            .height(18)
-            .objectFit(ImageFit.Contain)
-        } else if (row.leadingKind === 'flowchart') {
+          // mp3 音频笔记：图标复用笔记统计卡「图谱」旧版（sys.symbol.shareplay），按主题 accent 绿色上色，
+          // 三个 tab（首页 / 笔记 / 日历）共用。
           SymbolGlyph($r('sys.symbol.shareplay'))
             .fontSize(18)
             .fontColor([ACCENT])
+        } else if (row.leadingKind === 'flowchart') {
+          // 思维导图：与首页快捷创建卡「思维导图」入口同图，三个 tab 共用蓝色。
+          Image($r('app.media.ic_quick_mindmap'))
+            .width(18)
+            .height(18)
+            .objectFit(ImageFit.Contain)
+            .fillColor(this.noteLeadingColor(row.leadingKind))
+        } else if (row.leadingKind === 'knowledgeGraph') {
+          // 知识图谱：图一 SVG，三个 tab 共用蓝色。
+          Image($r('app.media.ic_note_knowledge_graph'))
+            .width(18)
+            .height(18)
+            .objectFit(ImageFit.Contain)
+            .fillColor(this.noteLeadingColor(row.leadingKind))
+        } else if (row.leadingKind === 'todo') {
+          // 待办事项：与首页快捷创建卡「待办事项」入口同图（ic_quick_todo.svg），三个 tab 共用橙色。
+          Image($r('app.media.ic_quick_todo'))
+            .width(18)
+            .height(18)
+            .objectFit(ImageFit.Contain)
+            .fillColor(this.noteLeadingColor(row.leadingKind))
+        } else if (row.leadingKind === 'schedule') {
+          // 待办日程：三个 tab 共用紫色。
+          SymbolGlyph($r('sys.symbol.calendar'))
+            .fontSize(18)
+            .fontColor([this.noteLeadingColor(row.leadingKind)])
         } else if (row.leadingKind === 'extract') {
           SymbolGlyph($r('sys.symbol.link'))
             .fontSize(18)
-            .fontColor([ACCENT])
+            .fontColor([this.noteLeadingColor(row.leadingKind)])
         } else {
           SymbolGlyph($r('sys.symbol.doc_text'))
             .fontSize(18)
-            .fontColor([ACCENT])
+            .fontColor([this.noteLeadingColor(row.leadingKind)])
         }
       }
-      .width(36)
-      .height(36)
+      .width(40)
+      .height(40)
       .justifyContent(FlexAlign.Center)
       .borderRadius(10)
-      .backgroundColor($r('app.color.surface_muted'))
+      // 边框与图标本身同色（与笔记 tab 保持一致语义，4 种语义笔记按类型上色）。
+      .border({ width: 1.2, color: this.noteLeadingColor(row.leadingKind) })
+      // 中心到边缘的径向渐变（与首页 tab 笔记统计卡 stat 同款 80% → 95% 白色）。
+      .radialGradient({
+        center: [20, 20],
+        radius: 24,
+        colors: [
+          [this.noteRowSoftInner(row.leadingKind), 0.0],
+          [this.noteRowSoftOuter(row.leadingKind), 1.0]
+        ]
+      })
       Column({ space: 3 }) {
         Text(row.title)
           .fontSize(14)
@@ -1453,6 +1565,36 @@ struct MainShell {
     .bindContextMenu(this.dashNoteContextMenu(row, fromContinue), ResponseType.LongPress)
   }
 
+  /**
+   * 「未来待办 / 日程清单」卡的高度约束：
+   *   - 手机端：min = max = MOBILE_AGENDA_CARD_HEIGHT，锁成固定高度，
+   *     两张卡等高且不随内容条数变化；
+   *   - PC / iPad 横屏：返回空约束，维持原来的内容自适应高度。
+   */
+  private agendaCardConstraint(): ConstraintSizeOptions {
+    if (this.pcLayout) {
+      // minHeight 0 = 不加约束，等价于原来的内容自适应高度。
+      return { minHeight: 0 }
+    }
+    return { minHeight: MOBILE_AGENDA_CARD_HEIGHT, maxHeight: MOBILE_AGENDA_CARD_HEIGHT }
+  }
+
+  /**
+   * 卡片正文 Column 的高度约束。外层 Stack 是 `Alignment.BottomStart`
+   * （为了把入口链接钉到左下角），正文 Column 若按内容高度收缩，就会被
+   * 一起压到卡片底部——标题悬空、正文和链接重叠。
+   *
+   * 所以手机端把正文 Column 的 minHeight 撑到卡片内容区高度
+   * （固定高 − 上下 padding），让它填满 Stack，子元素自然从顶部开始排；
+   * PC / iPad 横屏 Stack 本就是内容高，不需要也不能撑（无确定父高）。
+   */
+  private agendaCardBodyConstraint(): ConstraintSizeOptions {
+    if (this.pcLayout) {
+      return { minHeight: 0 }
+    }
+    return { minHeight: MOBILE_AGENDA_CARD_HEIGHT - AGENDA_CARD_PADDING * 2 }
+  }
+
   @Builder
   todoScheduleRow() {
     Row({ space: 10 }) {
@@ -1475,16 +1617,11 @@ struct MainShell {
     //   - 移动端：LTRB(0,0,0,0)
     //   - PC / iPad 横屏：LTRB(6,6,6,0)
     // 内容部分在标题对齐基础上左右各 +8vp。
-    const titlePadL: number = this.pcLayout ? 6 : 0
-    const titlePadR: number = this.pcLayout ? 6 : 0
-    const titlePadT: number = this.pcLayout ? 6 : 0
-    const contentPadL: number = titlePadL + 8
-    const contentPadR: number = titlePadR + 8
     Stack({ alignContent: Alignment.BottomStart }) {
       Column({ space: 8 }) {
         Row() {
           Text(LocaleService.loc('未来待办', 'Future todos', '未来のToDo'))
-            .fontSize(14)
+            .fontSize(16)
             .fontWeight(FontWeight.Bold)
             .layoutWeight(1)
           Text(`${this.upcomingTodos.length}`)
@@ -1493,7 +1630,7 @@ struct MainShell {
             .backgroundColor($r('app.color.surface_muted'))
             .borderRadius(8)
         }
-        .padding({ left: titlePadL, right: titlePadR, top: titlePadT })
+        .padding({ left: this.pcLayout ? 6 : 0, right: this.pcLayout ? 6 : 0, top: this.pcLayout ? 6 : 0 })
         .width('100%')
         // 内容部分：在标题对齐基础上，左右各 +8vp；底部预留足够空间，
         // 避免和底部钉住的「查看全部」链接重叠。
@@ -1510,16 +1647,18 @@ struct MainShell {
             }, (row: DashAgendaRow) => `upcoming-todo-${row.id}-${row.isDone}`)
           }
         }
-        .padding({ left: contentPadL, right: contentPadR, bottom: 4 })
+        .padding({ left: (this.pcLayout ? 6 : 0) + 8, right: (this.pcLayout ? 6 : 0) + 8, bottom: 4 })
         .width('100%')
       }
       .width('100%')
+      // 撑满卡片内容区，避免被 BottomStart 的 Stack 压到底部（标题必须贴顶）。
+      .constraintSize(this.agendaCardBodyConstraint())
       // 入口链接：钉到卡片左下角；左边距 = 标题 L（PC 6 / 移动 0），
       // 下边距 = 标题 T（与标题距离卡片顶部一致，视觉与标题顶对齐）。
       Text(LocaleService.loc('查看全部 >', 'View all >', 'すべて見る >'))
         .fontSize(13)
         .fontColor(ACCENT)
-        .padding({ left: titlePadL, bottom: titlePadT })
+        .padding({ left: this.pcLayout ? 6 : 0, bottom: this.pcLayout ? 6 : 0 })
         .onClick(() => {
           this.selectTab(2)
         })
@@ -1529,6 +1668,8 @@ struct MainShell {
     .backgroundColor($r('app.color.card_background'))
     .shadow({ radius: 16, color: '#14000000', offsetX: 0, offsetY: 4 })
     .width('100%')
+    // 手机端锁死高度，与「日程清单」卡等高且不随待办条数变化。
+    .constraintSize(this.agendaCardConstraint())
   }
 
   @Builder
@@ -1557,19 +1698,14 @@ struct MainShell {
     //   - 移动端：LTRB(0,0,0,0)
     //   - PC / iPad 横屏：LTRB(6,6,6,0)
     // 内容部分在标题对齐基础上左右各 +8vp。
-    const titlePadL: number = this.pcLayout ? 6 : 0
-    const titlePadR: number = this.pcLayout ? 6 : 0
-    const titlePadT: number = this.pcLayout ? 6 : 0
-    const contentPadL: number = titlePadL + 8
-    const contentPadR: number = titlePadR + 8
     Stack({ alignContent: Alignment.BottomStart }) {
       Column({ space: 6 }) {
         Text(LocaleService.loc('日程清单', 'Schedule list', '予定一覧'))
-          .fontSize(14)
+          .fontSize(16)
           .fontWeight(FontWeight.Bold)
           .width('100%')
         // 标题应用与「最近编辑」一致的上下左右内边距。
-        .padding({ left: titlePadL, right: titlePadR, top: titlePadT })
+        .padding({ left: this.pcLayout ? 6 : 0, right: this.pcLayout ? 6 : 0, top: this.pcLayout ? 6 : 0 })
         // 内容部分：在标题对齐基础上，左右各 +8vp；底部预留足够空间，
         // 避免和底部钉住的「查看完整日程」链接重叠。
         Column() {
@@ -1585,16 +1721,18 @@ struct MainShell {
             }, (row: DashAgendaRow) => `upcoming-sched-${row.id}-${row.timeLabel}`)
           }
         }
-        .padding({ left: contentPadL, right: contentPadR, bottom: 4 })
+        .padding({ left: (this.pcLayout ? 6 : 0) + 8, right: (this.pcLayout ? 6 : 0) + 8, bottom: 4 })
         .width('100%')
       }
       .width('100%')
+      // 撑满卡片内容区，避免被 BottomStart 的 Stack 压到底部（标题必须贴顶）。
+      .constraintSize(this.agendaCardBodyConstraint())
       // 入口链接：钉到卡片左下角；左边距 = 标题 L（PC 6 / 移动 0），
       // 下边距 = 标题 T（与标题距离卡片顶部一致，视觉与标题顶对齐）。
       Text(LocaleService.loc('查看完整日程 >', 'Full schedule >', 'すべての予定 >'))
         .fontSize(13)
         .fontColor(ACCENT)
-        .padding({ left: titlePadL, bottom: titlePadT })
+        .padding({ left: this.pcLayout ? 6 : 0, bottom: this.pcLayout ? 6 : 0 })
         .onClick(() => {
           this.selectTab(2)
         })
@@ -1604,6 +1742,8 @@ struct MainShell {
     .backgroundColor($r('app.color.card_background'))
     .shadow({ radius: 16, color: '#14000000', offsetX: 0, offsetY: 4 })
     .width('100%')
+    // 手机端锁死高度，与「未来待办」卡等高且不随日程条数变化。
+    .constraintSize(this.agendaCardConstraint())
   }
 
   @Builder
@@ -1687,9 +1827,11 @@ struct MainShell {
         .textAlign(TextAlign.Start)
       Row() {
         this.statCell('notes', ACCENT, $r('sys.symbol.doc_text'))
-        this.statCell('todos', ORANGE, $r('sys.symbol.checkmark_circle'))
-        this.statCell('days', BLUE, $r('sys.symbol.calendar'))
-        this.statCell('tags', PURPLE, $r('sys.symbol.label'))
+        // 待办图标：与首页快捷创建卡「待办事项」入口同图（ic_quick_todo.svg）。
+        this.statCell('todos', ORANGE, $r('sys.symbol.checkmark_circle'), $r('app.media.ic_quick_todo'))
+        // 图谱图标：与笔记 tab 日历 tab 「知识图谱」笔记同图（ic_note_knowledge_graph.svg）。
+        this.statCell('graphs', PURPLE, $r('sys.symbol.shareplay'), $r('app.media.ic_note_knowledge_graph'))
+        this.statCell('tags', BLUE, $r('sys.symbol.label'))
       }
       .width('100%')
     }
@@ -1701,12 +1843,22 @@ struct MainShell {
   }
 
   @Builder
-  statCell(kind: string, color: string, symbol: Resource) {
+  statCell(kind: string, color: string, symbol: Resource, svgRes?: Resource) {
     Column({ space: 6 }) {
       Column() {
-        SymbolGlyph(symbol)
-          .fontSize(22)
-          .fontColor([color])
+        if (svgRes) {
+          // SVG 图标（fill="currentColor"）可被 fillColor 整体着色，
+          // 与 SymbolGlyph 同尺寸 22，避免圆形底径向渐变偏移。
+          Image(svgRes)
+            .width(22)
+            .height(22)
+            .objectFit(ImageFit.Contain)
+            .fillColor(color)
+        } else {
+          SymbolGlyph(symbol)
+            .fontSize(22)
+            .fontColor([color])
+        }
       }
       .width(44)
       .height(44)
@@ -1726,14 +1878,14 @@ struct MainShell {
       // 必须在 Builder 内直接读 @State，勿经参数/间接封装，否则 UI 不刷新。
       Text(kind === 'notes' ? `${this.noteCount}` :
         (kind === 'todos' ? `${this.todoCount}` :
-          (kind === 'days' ? `${this.registrationDays}` : `${this.tagCount}`)))
+          (kind === 'graphs' ? `${this.graphCount}` : `${this.tagCount}`)))
         .fontSize(20)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.primary_text'))
-      Text(kind === 'notes' ? LocaleService.loc('笔记数量', 'Notes', 'ノート数') :
-        (kind === 'todos' ? LocaleService.loc('待办事项', 'To-do', 'ToDo') :
-          (kind === 'days' ? LocaleService.loc('注册天数', 'Days since signup', '登録日数') :
-            LocaleService.loc('标签数量', 'Tags', 'タグ数'))))
+      Text(kind === 'notes' ? LocaleService.loc('笔记', 'Notes', 'ノート') :
+        (kind === 'todos' ? LocaleService.loc('待办', 'To-do', 'ToDo') :
+          (kind === 'graphs' ? LocaleService.loc('图谱', 'Graphs', 'グラフ') :
+            LocaleService.loc('标签', 'Tags', 'タグ'))))
         .fontSize(11)
         .fontColor($r('app.color.secondary_text'))
         .maxLines(1)
@@ -1745,7 +1897,7 @@ struct MainShell {
 
   /**
    * 笔记统计卡四个图标的点击分发：
-   *   notes → 笔记 Tab；todos → 待办 Tab；days → 我的 Tab；tags → 标签管理页。
+   *   notes / graphs → 笔记 Tab；todos → 待办 Tab；tags → 标签管理页。
    * 与 Flutter `dashboard_home_page.dart` 同名回调语义保持一致。
    */
   private handleStatTap(kind: string): void {
@@ -1757,8 +1909,8 @@ struct MainShell {
       this.selectTab(2)
       return
     }
-    if (kind === 'days') {
-      this.selectTab(4)
+    if (kind === 'graphs') {
+      this.selectTab(1)
       return
     }
     if (kind === 'tags') {
@@ -1776,6 +1928,31 @@ struct MainShell {
   }
 
   /** 统计图标底：同色系内深（80% 白混）。 */
+  /**
+   * 笔记列表 leading icon 的「主色」：与首页 / 笔记 / 日历三个 tab 共用，
+   * 4 种语义图标（思维导图 / 知识图谱 / 待办 / 日程）使用对应主题色，
+   * 其它类型（mp3 / 提取中链接 / 普通文档）走主题 accent。
+   * 用于外层 icon 盒子的径向渐变底色（与笔记统计卡 stat 同款）。
+   */
+  private noteLeadingColor(leadingKind: string): string {
+    if (leadingKind === 'flowchart') {
+      // 思维导图：与日历 tab 图例一致，三个 tab 视觉同源（紫 #8B5CF6）。
+      return PURPLE
+    }
+    // 知识图谱：与日历 tab 图例一致，三个 tab 视觉同源（紫 #8B5CF6）。
+    if (leadingKind === 'knowledgeGraph') {
+      return PURPLE
+    }
+    if (leadingKind === 'todo') {
+      return ORANGE
+    }
+    if (leadingKind === 'schedule') {
+      // 待办日程与待办事项共用同一抹橙（与 todo 完全一致），三个 tab 视觉同源。
+      return ORANGE
+    }
+    return ACCENT
+  }
+
   private statSoftInner(color: string): string {
     if (color === ACCENT) {
       return '#CFEEDB'
@@ -1807,5 +1984,37 @@ struct MainShell {
       return '#F9F7FF'
     }
     return `${color}0D`
+  }
+
+  /** 笔记列表 icon 盒子径向渐变内层（按 leadingKind 分支）。 */
+  private noteRowSoftInner(leadingKind: string): string {
+    // 思维导图 / 知识图谱共用紫色（与日历 tab 图例一致 = #8B5CF6），
+    // 共用紫色径向渐变内/外圈，保持三个 tab 视觉同源。
+    if (leadingKind === 'flowchart' || leadingKind === 'knowledgeGraph') {
+      return '#E8DEFD'
+    }
+    if (leadingKind === 'todo') {
+      return '#FDECCE'
+    }
+    if (leadingKind === 'schedule') {
+      // 待办日程与待办事项共用 todo 同款橙色径向渐变底色。
+      return '#FDECCE'
+    }
+    return '#CFEEDB'
+  }
+
+  /** 笔记列表 icon 盒子径向渐变外层（按 leadingKind 分支）。 */
+  private noteRowSoftOuter(leadingKind: string): string {
+    if (leadingKind === 'flowchart' || leadingKind === 'knowledgeGraph') {
+      return '#F9F7FF'
+    }
+    if (leadingKind === 'todo') {
+      return '#FFFAF3'
+    }
+    if (leadingKind === 'schedule') {
+      // 待办日程与待办事项共用 todo 同款橙色径向渐变底色。
+      return '#FFFAF3'
+    }
+    return '#F3FBF6'
   }
 }

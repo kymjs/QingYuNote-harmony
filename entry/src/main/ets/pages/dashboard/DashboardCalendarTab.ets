@@ -26,6 +26,8 @@ import { CalendarProjector } from './calendar/CalendarProjector'
 import { CalendarWeekLayout } from './calendar/CalendarWeekLayout'
 import { NotesTabLogic } from './DashboardNotesModels'
 import { showCalendarAddScheduleDialog } from '../../dialogs/CalendarAddScheduleDialog'
+import { FlowchartService } from '../../services/FlowchartService'
+import { FlowchartMindMap } from '../../common/utils/FlowchartMindMap'
 
 const PAGE_PAD = 8
 const WEEK_PAD = 4
@@ -39,6 +41,7 @@ const SHEET_MAX = 0.94
 // 图例小圆点使用浅/夜间模式自适应色
 const ORANGE: ResourceColor = $r('app.color.calendar_kind_todo_fg')
 const PURPLE: ResourceColor = $r('app.color.calendar_kind_schedule_fg')
+const YELLOW: ResourceColor = $r('app.color.calendar_kind_yellow_fg')
 const ACCENT: ResourceColor = $r('app.color.calendar_kind_note_fg')
 
 @Component
@@ -57,7 +60,7 @@ export struct DashboardCalendarTab {
   @State countAll: number = 0
   @State countNote: number = 0
   @State countTodo: number = 0
-  @State countSchedule: number = 0
+  @State countGraph: number = 0
   @State monthCells: CalendarMonthCell[] = []
   @State weekHeaders: CalendarWeekHeader[] = []
   @State weekBlocks: CalendarWeekBlockLayout[] = []
@@ -73,6 +76,10 @@ export struct DashboardCalendarTab {
   @State uiNonce: number = 0
   @State sheetRatio: number = SHEET_MID
   @State pageHeight: number = 700
+  /** 已预扫的「思维导图」笔记 id 集合（`.qy` 边车
+   * `metadata.layoutMode == 'mindMapLinear'`），用于让日历列表 leading icon
+   * 区分思维导图（蓝）与知识图谱（绿），与首页 / 笔记 tab 共用同一套图标。 */
+  @State mindMapNoteIds: string[] = []
   private sheetDragStartRatio: number = SHEET_MID
   private byDay: Map<string, CalendarOccurrence[]> = new Map()
   private filesDir: string = ''
@@ -123,6 +130,8 @@ export struct DashboardCalendarTab {
       await NoteRepository.getInstance().init()
       const notes = await NoteRepository.getInstance().listNotes()
       const projected = CalendarProjector.projectNotes(notes)
+      // 预扫所有 flowchart 笔记，识别「思维导图」子集。
+      this.mindMapNoteIds = Array.from(await this.detectMindMapNoteIds(notes))
       this.byDay = CalendarProjector.indexByDay(projected)
       this.refreshDerived()
       this.loading = false
@@ -133,14 +142,41 @@ export struct DashboardCalendarTab {
     }
   }
 
+  /**
+   * 扫描所有 flowchart 笔记，收集处于「思维导图」模式（`.qy` 边车
+   * `metadata.layoutMode == 'mindMapLinear'`）的 note id 集合。
+   * 解析失败时按流程图处理（即不进入集合），保证日历列表不会卡死。
+   */
+  private async detectMindMapNoteIds(notes: Note[]): Promise<Set<string>> {
+    const result = new Set<string>()
+    for (const n of notes) {
+      if (n.type_ !== NOTE_TYPE_FLOWCHART) {
+        continue
+      }
+      try {
+        const graph = await FlowchartService.getInstance().load(n.id)
+        if (FlowchartMindMap.isMindMapMode(graph)) {
+          result.add(n.id)
+        }
+      } catch (e) {
+        // 解析失败时保持知识图谱语义，不影响其它笔记。
+      }
+    }
+    return result
+  }
+
+  private mindMapSet(): Set<string> {
+    return new Set<string>(this.mindMapNoteIds)
+  }
+
   private refreshDerived(): void {
     const items = CalendarProjector.forDay(this.byDay, this.selectedY, this.selectedM, this.selectedD)
-    const counts = CalendarProjector.countsFor(items)
+    const counts = CalendarProjector.countsFor(items, this.mindMapSet())
     this.countAll = counts.all
     this.countNote = counts.note
     this.countTodo = counts.todo
-    this.countSchedule = counts.schedule
-    this.dayItems = CalendarProjector.filterChip(items, this.chip)
+    this.countGraph = counts.graph
+    this.dayItems = CalendarProjector.filterChip(items, this.chip, this.mindMapSet())
     this.dateLine = formatDashboardDateLine(new Date(this.selectedY, this.selectedM - 1, this.selectedD))
     this.rebuildMonthCells()
     this.rebuildWeek()
@@ -198,6 +234,8 @@ export struct DashboardCalendarTab {
       cell.inMonth = m === month
       cell.selected = y === this.selectedY && m === this.selectedM && day === this.selectedD
       cell.dotKind = CalendarProjector.dayDotKind(dayItems)
+      // 实际渲染时使用的红点颜色（按优先级：待办 > 思维导图 / 知识图谱 > 普通笔记）。
+      cell.dotColor = dayItems.length > 0 ? this.calendarItemColor(dayItems) : null
       cells.push(cell)
     }
     return cells
@@ -361,24 +399,92 @@ export struct DashboardCalendarTab {
   }
 
   private kindColor(kind: CalendarItemKind): ResourceColor {
+    // 日历视图专用：待办日程 + 待办事项都统一为黄色，知识图谱 / 思维导图走紫色（见 kindFgForCell）。
     if (kind === 'schedule') {
-      return $r('app.color.calendar_kind_schedule_fg')
+      return YELLOW
     }
     if (kind === 'todo') {
-      return $r('app.color.calendar_kind_todo_fg')
+      return YELLOW
     }
-    return $r('app.color.calendar_kind_note_fg')
+
+    return ACCENT
   }
 
-  /** 周视图色块不透明浅底，避免叠层透字；色值随夜间模式切换。 */
-  private weekBlockBg(kind: CalendarItemKind): ResourceColor {
-    if (kind === 'schedule') {
+  /**
+   * 日历视图（周视图块、月视图红点）专用配色，覆盖 `kindColor(kind)`。
+   * 优先级：待办日程 / 待办事项（黄） > 知识图谱 / 思维导图（紫） > 普通笔记（绿）。
+   * 月视图某天可能同时存在多类笔记，按上述优先级选一种颜色作为该天的红点。
+   */
+  private calendarItemColor(items: CalendarOccurrence[]): ResourceColor {
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].kind === 'todo' || items[i].kind === 'schedule') {
+        return YELLOW
+      }
+    }
+    for (let i = 0; i < items.length; i++) {
+      const lk = NotesTabLogic.leadingKindFor(items[i].note, this.mindMapSet())
+      if (lk === 'flowchart' || lk === 'knowledgeGraph') {
+        return PURPLE
+      }
+    }
+    return ACCENT
+  }
+
+  /**
+   * 周视图块（背景 + 边框 + 文字）的配色，按 occurrence 计算。
+   * - 待办日程 / 待办事项 → 黄（边框 + 文字 = calendar_kind_yellow_fg；底色 = calendar_week_block_yellow）
+   * - 知识图谱 / 思维导图 → 紫（边框 + 文字 = calendar_kind_schedule_fg；底色 = calendar_week_block_schedule）
+   * - 普通笔记 → 绿（边框 + 文字 = calendar_kind_note_fg；底色 = calendar_week_block_note）
+   */
+  private calendarBlockFg(o: CalendarOccurrence): ResourceColor {
+    if (o.kind === 'todo' || o.kind === 'schedule') {
+      return YELLOW
+    }
+    const lk = NotesTabLogic.leadingKindFor(o.note, this.mindMapSet())
+    if (lk === 'flowchart' || lk === 'knowledgeGraph') {
+      return PURPLE
+    }
+    return ACCENT
+  }
+
+  private calendarBlockBg(o: CalendarOccurrence): ResourceColor {
+    if (o.kind === 'todo' || o.kind === 'schedule') {
+      return $r('app.color.calendar_week_block_yellow')
+    }
+    const lk = NotesTabLogic.leadingKindFor(o.note, this.mindMapSet())
+    if (lk === 'flowchart' || lk === 'knowledgeGraph') {
       return $r('app.color.calendar_week_block_schedule')
     }
-    if (kind === 'todo') {
-      return $r('app.color.calendar_week_block_todo')
-    }
     return $r('app.color.calendar_week_block_note')
+  }
+
+  /**
+   * 日历列表图标的「主色」：与 `dayLeadingIcon` 中的 fillColor / fontColor 保持一致。
+   * 列表项的图标、时间、标题都用这个色，保证视觉同源。
+   *  - 待办（kind=todo）→ 橙
+   *  - 日程（kind=schedule）→ 紫
+   *  - 思维导图 / 知识图谱（leadingKind=flowchart/knowledgeGraph）→ 蓝
+   *  - 其它（普通笔记 / mp3 / 提取中）→ kindColor 对应的色
+   */
+  private dayLeadingColor(o: CalendarOccurrence): ResourceColor {
+    if (o.kind === 'todo') {
+      return $r('app.color.calendar_kind_todo_fg')
+    }
+    if (o.kind === 'schedule') {
+      // 待办日程与待办事项共用 todo 橙，与首页 / 笔记 tab 三端同源。
+      return $r('app.color.calendar_kind_todo_fg')
+    }
+    const leadingKind = NotesTabLogic.leadingKindFor(o.note, this.mindMapSet())
+    if (leadingKind === 'flowchart' || leadingKind === 'knowledgeGraph') {
+      // 思维导图 / 知识图谱在日历 tab 全部走紫色（与图例 / 月视图红点 / 周视图块同源）。
+      return PURPLE
+    }
+    // mp3 音频笔记：与笔记统计卡「图谱」旧版图标同源，但 mp3 笔记类型走主题 accent 绿色，
+    // 保证日历列表项的标题/时间与图标一致。
+    if (leadingKind === 'mp3') {
+      return $r('app.color.calendar_kind_note_fg')
+    }
+    return this.kindColor(o.kind)
   }
 
   private hhmm(ms: number): string {
@@ -505,16 +611,20 @@ export struct DashboardCalendarTab {
   }
 
   private chipCount(value: CalendarChipFilter): number {
+    // 列表筛选项：全部 / 笔记 / 待办（= 待办事项 + 待办日程）/ 图谱（= 思维导图 + 知识图谱）。
+    if (value === 'all') {
+      return this.countAll
+    }
     if (value === 'note') {
       return this.countNote
     }
     if (value === 'todo') {
       return this.countTodo
     }
-    if (value === 'schedule') {
-      return this.countSchedule
+    if (value === 'graph') {
+      return this.countGraph
     }
-    return this.countAll
+    return 0
   }
 
   @Builder
@@ -896,7 +1006,7 @@ export struct DashboardCalendarTab {
               this.chipBtn(LocaleService.loc('全部', 'All', 'すべて'), 'all')
               this.chipBtn(LocaleService.loc('笔记', 'Notes', 'ノート'), 'note')
               this.chipBtn(LocaleService.loc('待办', 'To-do', 'ToDo'), 'todo')
-              this.chipBtn(LocaleService.loc('日程', 'Events', '予定'), 'schedule')
+              this.chipBtn(LocaleService.loc('图谱', 'Graphs', 'グラフ'), 'graph')
             }
           }
           .scrollable(ScrollDirection.Horizontal)
@@ -1007,6 +1117,8 @@ export struct DashboardCalendarTab {
     }
     .width('100%')
     .height('100%')
+    // 与「我的」tab 保持一致：app_background 浅灰底，而非 card_background 纯白。
+    .backgroundColor($r('app.color.app_background'))
   }
 
   @Builder
@@ -1038,11 +1150,11 @@ export struct DashboardCalendarTab {
                 .textAlign(TextAlign.Center)
                 .backgroundColor(c.selected ? $r('app.color.accent') : Color.Transparent)
                 .borderRadius(15)
-              if (c.dotKind) {
+              if (c.dotKind && c.dotColor) {
                 Circle()
                   .width(5)
                   .height(5)
-                  .fill(this.kindColor(c.dotKind))
+                  .fill(c.dotColor)
                   .margin({ top: 2 })
               } else {
                 Blank().height(7)
@@ -1146,13 +1258,15 @@ export struct DashboardCalendarTab {
             Text(b.occurrence.title)
               .fontSize(9)
               .fontWeight(FontWeight.Medium)
-              .fontColor(this.kindColor(b.occurrence.kind))
+              // 标题颜色走 calendarBlockFg，与底色 / 时间 / 左边框 同源；
+              // 知识图谱 / 思维导图笔记标题才会正确显示紫色，而不是退化成绿色。
+              .fontColor(this.calendarBlockFg(b.occurrence))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
             Text(`${this.hhmm(b.occurrence.anchorMs)}-${this.hhmm(b.occurrence.endMs)}`)
               .fontSize(8)
-              .fontColor(this.kindColor(b.occurrence.kind))
+              .fontColor(this.calendarBlockFg(b.occurrence))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .width('100%')
@@ -1160,9 +1274,9 @@ export struct DashboardCalendarTab {
           }
           .alignItems(HorizontalAlign.Start)
           .padding({ left: 3, right: 2, top: 2, bottom: 2 })
-          .backgroundColor(this.weekBlockBg(b.occurrence.kind))
+          .backgroundColor(this.calendarBlockBg(b.occurrence))
           .clip(true)
-          .border({ width: { left: 2 }, color: this.kindColor(b.occurrence.kind), radius: 4 })
+          .border({ width: { left: 2 }, color: this.calendarBlockFg(b.occurrence), radius: 4 })
           .width(`${(100 / 7) * b.widthRatio}%`)
           .height(`${b.heightRatio * 100}%`)
           .position({
@@ -1383,15 +1497,17 @@ export struct DashboardCalendarTab {
           .margin({ left: 6 })
       }
       Row() {
-        Circle().width(7).height(7).fill(ORANGE)
-        Text(LocaleService.loc('有待办', 'To-dos', 'ToDoあり'))
+        // 待办日程 + 待办事项共用黄色（YELLOW）
+        Circle().width(7).height(7).fill(YELLOW)
+        Text(LocaleService.loc('有日程', 'Events', '予定あり'))
           .fontSize(12)
           .fontColor($r('app.color.secondary_text'))
           .margin({ left: 6 })
       }
       Row() {
+        // 思维导图 + 知识图谱共用紫色（PURPLE）
         Circle().width(7).height(7).fill(PURPLE)
-        Text(LocaleService.loc('有日程', 'Events', '予定あり'))
+        Text(LocaleService.loc('有图谱', 'Graphs', 'グラフあり'))
           .fontSize(12)
           .fontColor($r('app.color.secondary_text'))
           .margin({ left: 6 })
@@ -1411,7 +1527,7 @@ export struct DashboardCalendarTab {
       Text(this.hhmm(o.anchorMs))
         .fontSize(13)
         .fontWeight(FontWeight.Bold)
-        .fontColor(this.kindColor(o.kind))
+        .fontColor(this.dayLeadingColor(o))
         .width(44)
       Column() {
         this.dayLeadingIcon(o)
@@ -1419,7 +1535,7 @@ export struct DashboardCalendarTab {
       .width(34)
       .height(34)
       .borderRadius(8)
-      .backgroundColor(`${this.kindColor(o.kind)}1F`)
+      // 列表项取消图标盒子底色，时间与标题颜色统一跟随图标主色（dayLeadingColor）。
       .margin({ right: 10 })
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
@@ -1428,7 +1544,7 @@ export struct DashboardCalendarTab {
         Text(o.title)
           .fontSize(15)
           .fontWeight(FontWeight.Bold)
-          .fontColor(this.kindColor(o.kind))
+          .fontColor(this.dayLeadingColor(o))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
         if (o.summary.trim().length > 0) {
@@ -1475,23 +1591,37 @@ export struct DashboardCalendarTab {
   @Builder
   dayLeadingIcon(o: CalendarOccurrence) {
     if (o.kind === 'todo') {
-      SymbolGlyph($r('sys.symbol.checkmark'))
-        .fontSize(18)
-        .fontColor([this.kindColor(o.kind)])
-    } else if (o.kind === 'schedule') {
-      SymbolGlyph($r('sys.symbol.calendar'))
-        .fontSize(18)
-        .fontColor([this.kindColor(o.kind)])
-    } else if (NotesTabLogic.leadingKindFor(o.note) === 'mp3') {
-      Image($r('app.media.ic_note_mp3_wave'))
+      // 待办事项：与首页 / 笔记 tab 共用橙色；与首页快捷创建卡「待办事项」入口同图（ic_quick_todo.svg）。
+      Image($r('app.media.ic_quick_todo'))
         .width(18)
         .height(18)
         .objectFit(ImageFit.Contain)
-    } else if (NotesTabLogic.leadingKindFor(o.note) === 'flowchart') {
+        .fillColor($r('app.color.calendar_kind_todo_fg'))
+    } else if (o.kind === 'schedule') {
+      // 待办日程：与首页 / 笔记 tab 共用 todo 橙（与待办事项完全一致）。
+      SymbolGlyph($r('sys.symbol.calendar'))
+        .fontSize(18)
+        .fontColor([$r('app.color.calendar_kind_todo_fg')])
+    } else if (NotesTabLogic.leadingKindFor(o.note, this.mindMapSet()) === 'mp3') {
+      // mp3 音频笔记：图标复用笔记统计卡「图谱」旧版（sys.symbol.shareplay），按主题 accent 绿色上色。
       SymbolGlyph($r('sys.symbol.shareplay'))
         .fontSize(18)
-        .fontColor([this.kindColor(o.kind)])
-    } else if (NotesTabLogic.leadingKindFor(o.note) === 'extract') {
+        .fontColor([$r('app.color.calendar_kind_note_fg')])
+    } else if (NotesTabLogic.leadingKindFor(o.note, this.mindMapSet()) === 'flowchart') {
+      // 思维导图：日历 tab 走紫色（与图例 / 标题 / 时间 同源）。
+      Image($r('app.media.ic_quick_mindmap'))
+        .width(18)
+        .height(18)
+        .objectFit(ImageFit.Contain)
+        .fillColor(PURPLE)
+    } else if (NotesTabLogic.leadingKindFor(o.note, this.mindMapSet()) === 'knowledgeGraph') {
+      // 知识图谱：日历 tab 走紫色（与图例 / 标题 / 时间 同源）。
+      Image($r('app.media.ic_note_knowledge_graph'))
+        .width(18)
+        .height(18)
+        .objectFit(ImageFit.Contain)
+        .fillColor(PURPLE)
+    } else if (NotesTabLogic.leadingKindFor(o.note, this.mindMapSet()) === 'extract') {
       SymbolGlyph($r('sys.symbol.link'))
         .fontSize(18)
         .fontColor([this.kindColor(o.kind)])
@@ -1510,6 +1640,9 @@ class CalendarMonthCell {
   inMonth: boolean = true
   selected: boolean = false
   dotKind: CalendarItemKind | null = null
+  // 月视图红点的实际颜色（考虑 leadingKind：知识图谱 / 思维导图走紫色）；
+  // 为 null 时表示当天没有任何笔记，不渲染红点。
+  dotColor: ResourceColor | null = null
 }
 
 class CalendarWeekHeader {

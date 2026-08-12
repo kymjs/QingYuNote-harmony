@@ -622,17 +622,6 @@ export struct DashboardNotesTab {
     await this.reload()
   }
 
-  private syncColor(status: SyncStatus): ResourceColor {
-    switch (status) {
-      case 'synced':
-        return $r('app.color.success')
-      case 'error':
-        return $r('app.color.danger')
-      default:
-        return $r('app.color.warning')
-    }
-  }
-
   private thumbUri(note: Note): string {
     const full = thumbnailPathForNote(note, this.filesDir)
     if (full.length === 0) {
@@ -1161,31 +1150,62 @@ export struct DashboardNotesTab {
   noteTileBody(note: Note) {
     Row({ space: 10 }) {
       Column() {
-        if (NotesTabLogic.leadingKindFor(note) === 'mp3') {
-          Image($r('app.media.ic_note_mp3_wave'))
+        if (NotesTabLogic.leadingKindFor(note, this.mindMapSet()) === 'mp3') {
+          // mp3 音频笔记：图标复用笔记统计卡「图谱」旧版（sys.symbol.shareplay），按主题 accent 绿色上色。
+          SymbolGlyph($r('sys.symbol.shareplay'))
+            .fontSize(18)
+            .fontColor([$r('app.color.calendar_kind_note_fg')])
+        } else if (NotesTabLogic.leadingKindFor(note, this.mindMapSet()) === 'flowchart') {
+          // 思维导图：与首页快捷创建卡「思维导图」入口同图，三个 tab 共用蓝色。
+          Image($r('app.media.ic_quick_mindmap'))
             .width(18)
             .height(18)
             .objectFit(ImageFit.Contain)
-        } else if (NotesTabLogic.leadingKindFor(note) === 'flowchart') {
-          SymbolGlyph($r('sys.symbol.shareplay'))
+            .fillColor(this.noteLeadingColor(NotesTabLogic.leadingKindFor(note, this.mindMapSet())))
+        } else if (NotesTabLogic.leadingKindFor(note, this.mindMapSet()) === 'knowledgeGraph') {
+          // 知识图谱：图一 SVG，三个 tab 共用蓝色。
+          Image($r('app.media.ic_note_knowledge_graph'))
+            .width(18)
+            .height(18)
+            .objectFit(ImageFit.Contain)
+            .fillColor(this.noteLeadingColor(NotesTabLogic.leadingKindFor(note, this.mindMapSet())))
+        } else if (NotesTabLogic.leadingKindFor(note, this.mindMapSet()) === 'todo') {
+          // 待办事项：与首页快捷创建卡「待办事项」入口同图（ic_quick_todo.svg），三个 tab 共用橙色。
+          Image($r('app.media.ic_quick_todo'))
+            .width(18)
+            .height(18)
+            .objectFit(ImageFit.Contain)
+            .fillColor(this.noteLeadingColor(NotesTabLogic.leadingKindFor(note, this.mindMapSet())))
+        } else if (NotesTabLogic.leadingKindFor(note, this.mindMapSet()) === 'schedule') {
+          // 待办日程：三个 tab 共用紫色。
+          SymbolGlyph($r('sys.symbol.calendar'))
             .fontSize(18)
-            .fontColor([this.syncColor(note.syncStatus)])
-        } else if (NotesTabLogic.leadingKindFor(note) === 'extract') {
+            .fontColor([this.noteLeadingColor(NotesTabLogic.leadingKindFor(note, this.mindMapSet()))])
+        } else if (NotesTabLogic.leadingKindFor(note, this.mindMapSet()) === 'extract') {
           SymbolGlyph($r('sys.symbol.link'))
             .fontSize(18)
-            .fontColor([this.syncColor(note.syncStatus)])
+            .fontColor([this.noteLeadingColor(NotesTabLogic.leadingKindFor(note, this.mindMapSet()))])
         } else {
           SymbolGlyph($r('sys.symbol.doc_text'))
             .fontSize(18)
-            .fontColor([this.syncColor(note.syncStatus)])
+            .fontColor([this.noteLeadingColor(NotesTabLogic.leadingKindFor(note, this.mindMapSet()))])
         }
       }
       .width(40)
       .height(40)
       .justifyContent(FlexAlign.Center)
       .borderRadius(10)
-      .backgroundColor(this.syncSoftBg(note.syncStatus))
-      .border({ width: 1.2, color: this.syncColor(note.syncStatus) })
+      // 边框与图标本身同色（与首页 tab 笔记列表保持一致语义）。
+      .border({ width: 1.2, color: this.noteLeadingColor(NotesTabLogic.leadingKindFor(note, this.mindMapSet())) })
+      // 中心到边缘的径向渐变（与首页 tab 笔记统计卡 stat 同款 80% → 95% 白色）。
+      .radialGradient({
+        center: [20, 20],
+        radius: 24,
+        colors: [
+          [this.leadingSoftInner(NotesTabLogic.leadingKindFor(note, this.mindMapSet())), 0.0],
+          [this.leadingSoftOuter(NotesTabLogic.leadingKindFor(note, this.mindMapSet())), 1.0]
+        ]
+      })
       Column({ space: 3 }) {
         Row({ space: 6 }) {
           Text(this.noteTitleLabel(note))
@@ -1317,14 +1337,58 @@ export struct DashboardNotesTab {
     return this.snippetFor(note)
   }
 
-  private syncSoftBg(status: SyncStatus): string {
-    if (status === 'synced') {
-      return '#1A059669'
+  /**
+   * 笔记列表 leading icon 的「主色」：与首页 / 日历三个 tab 共用，
+   * 4 种语义图标（思维导图 / 知识图谱 / 待办 / 日程）使用对应主题色资源，
+   * 其它类型（mp3 / 提取中链接 / 普通文档）走主题 accent。
+   */
+  private noteLeadingColor(leadingKind: string): ResourceColor {
+    if (leadingKind === 'flowchart') {
+      return $r('app.color.note_leading_mindmap_fg')
     }
-    if (status === 'error') {
-      return '#1ADC2626'
+    if (leadingKind === 'knowledgeGraph') {
+      return $r('app.color.note_leading_knowledge_graph_fg')
     }
-    return '#1AD97706'
+    if (leadingKind === 'todo') {
+      return $r('app.color.calendar_kind_todo_fg')
+    }
+    if (leadingKind === 'schedule') {
+      // 待办日程与待办事项共用 todo 橙，视觉上两者不再区分（与首页 tab 一致）。
+      return $r('app.color.calendar_kind_todo_fg')
+    }
+    return $r('app.color.calendar_kind_note_fg')
+  }
+
+  /** 笔记 tab 列表 icon 盒子径向渐变内层（80% 白色混合）。 */
+  private leadingSoftInner(leadingKind: string): string {
+    // 思维导图 / 知识图谱共用蓝色（首页 tab 标签图标色 = #3B82F6），
+    // 共用蓝色径向渐变内/外圈，保持视觉一致。
+    if (leadingKind === 'flowchart' || leadingKind === 'knowledgeGraph') {
+      return '#D8E6FD'
+    }
+    if (leadingKind === 'todo') {
+      return '#FDECCE'
+    }
+    if (leadingKind === 'schedule') {
+      // 待办日程与待办事项共用 todo 同款橙色径向渐变底色。
+      return '#FDECCE'
+    }
+    return '#CFEEDB'
+  }
+
+  /** 笔记 tab 列表 icon 盒子径向渐变外层（95% 白色混合）。 */
+  private leadingSoftOuter(leadingKind: string): string {
+    if (leadingKind === 'flowchart' || leadingKind === 'knowledgeGraph') {
+      return '#F5F9FF'
+    }
+    if (leadingKind === 'todo') {
+      return '#FFFAF3'
+    }
+    if (leadingKind === 'schedule') {
+      // 待办日程与待办事项共用 todo 同款橙色径向渐变底色。
+      return '#FFFAF3'
+    }
+    return '#F3FBF6'
   }
 
   private tagFg(index: number): ResourceColor {
