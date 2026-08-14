@@ -32,6 +32,7 @@ import { WebDAVClient } from '../services/WebDAVClient'
 import { NOTE_TYPE_FLOWCHART } from '../common/model/FlowchartGraph'
 import { Logger } from '../common/utils/Logger'
 import { CryptoService } from '../services/CryptoService'
+import { HomeLiquidGlassTabBar, homeTabBarOccupiedHeight } from '../components/HomeLiquidGlassTabBar'
 import { DashboardNotesTab } from './dashboard/DashboardNotesTab'
 import { DashboardTodoTab } from './dashboard/DashboardTodoTab'
 import { DashboardCalendarTab } from './dashboard/DashboardCalendarTab'
@@ -1099,28 +1100,54 @@ struct MainShell {
 
   @Builder
   buildDashboard() {
-    Scroll() {
-      Column({ space: SECTION_GAP }) {
-        this.buildHeader()
-        this.buildQuickCreate()
-        if (this.pcLayout) {
-          this.buildPcBody()
-        } else {
-          this.buildMobileBody()
+    Stack({ alignContent: Alignment.Bottom }) {
+      Scroll() {
+        Column({ space: SECTION_GAP }) {
+          this.buildHeader()
+          this.buildQuickCreate()
+          if (this.pcLayout) {
+            this.buildPcBody()
+          } else {
+            this.buildMobileBody()
+          }
         }
+        .padding({
+          left: this.pcLayout ? 24 : 16,
+          right: this.pcLayout ? 24 : 16,
+          top: 12,
+          // 手机端底部悬浮着三按钮动作坞（占位 45 + 50），最后一张卡片要多留出来。
+          bottom: this.pcLayout ? 24 : homeTabBarOccupiedHeight() + 12
+        })
+        .width('100%')
       }
-      .padding({
-        left: this.pcLayout ? 24 : 16,
-        right: this.pcLayout ? 24 : 16,
-        top: 12,
-        bottom: 24
-      })
       .width('100%')
+      .height('100%')
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
+      .backgroundColor(Color.Transparent)
+
+      // 与 Flutter DashboardHomePage 一致：旧版首页的三按钮动作坞（链接 / 语音 / 笔记）
+      // 挪到新版首页的「首页」Tab，悬浮在底部 5 Tab 导航栏上方 50vp。
+      // PC / 平板横屏不显示。
+      if (!this.pcLayout) {
+        HomeLiquidGlassTabBar({
+          onLink: (): void => {
+            void this.quickLink()
+          },
+          onVoice: (): void => {
+            void this.quickVoice()
+          },
+          onNote: (): void => {
+            void this.quickWrite()
+          }
+        })
+          .width('100%')
+          .height('100%')
+          .hitTestBehavior(HitTestMode.None)
+      }
     }
+    .width('100%')
     .layoutWeight(1)
-    .scrollBar(BarState.Off)
-    .edgeEffect(EdgeEffect.Spring)
-    .backgroundColor(Color.Transparent)
   }
 
   @Builder

@@ -35,11 +35,6 @@ import { maybeShowReferralInviteDialog } from '../common/utils/ReferralInviteNav
 import { type NoteEditorEntryAction } from '../common/model/NoteEditorEntryAction'
 import { navigateToNoteEdit } from '../common/utils/NoteEditNavigation'
 import { navigateToFlowchart } from '../common/utils/FlowchartNavigation'
-import { HomeLiquidGlassTabBar, homeTabBarOccupiedHeight } from '../components/HomeLiquidGlassTabBar'
-import {
-  buildHomeMoreOptionsSheetContent,
-  type HomeMoreOptionsSheetParams
-} from '../dialogs/HomeMoreOptionsSheet'
 import { AppLockPinPanel } from '../components/AppLockPinPanel'
 import { AppLockService } from '../services/AppLockService'
 import { APP_LOCALE_REVISION_KEY, LocaleService } from '../services/LocaleService'
@@ -80,7 +75,6 @@ struct Index {
   @State drawerCloseNonce: number = 0
   @State pageWidth: number = 360
   @State pageHeight: number = 780
-  @State moreOptionsVisible: boolean = false
   /** 已配置自建 WebDAV，或轻羽云订阅有效（active/lifetime）时为 true，右上角不展示「去配置」图标；首帧默认 true 以免误闪。 */
   @State cloudSyncConfigured: boolean = true
   /** 侧栏顶部用户信息，与 Flutter `HomePage` 抽屉区一致。 */
@@ -622,76 +616,12 @@ struct Index {
     }
   }
 
-  private onHomeNoteTabPressed(): void {
-    if (this.searchExpanded) {
-      this.searchExpanded = false
-      return
-    }
-    void this.openEditor()
-  }
-
-  private onHomeVoiceTabPressed(): void {
-    if (this.searchExpanded) {
-      this.searchExpanded = false
-      return
-    }
-    void this.openVoiceNote()
-  }
-
   private onHomeTodoTabPressed(): void {
     if (this.searchExpanded) {
       this.searchExpanded = false
       return
     }
     void this.openEditor(undefined, false, 'todoList')
-  }
-
-  private onHomeMoreTabPressed(): void {
-    if (this.searchExpanded) {
-      this.searchExpanded = false
-      return
-    }
-    this.moreOptionsVisible = true
-  }
-
-  private async onHomePasteLink(): Promise<void> {
-    const svc = AiNoteBackgroundTaskService.getInstance()
-    if (!svc.ensureIdleOrNotifyBusy()) {
-      return
-    }
-    if (!(await svc.ensureNoPendingExtractOrNotify())) {
-      return
-    }
-    try {
-      await this.getUIContext().getRouter().pushUrl({ url: 'pages/LinkExtract' })
-    } catch (error) {
-      console.error(`open LinkExtract: ${JSON.stringify(error)}`)
-    }
-  }
-
-  private closeMoreOptionsSheet(): void {
-    this.moreOptionsVisible = false
-  }
-
-  @Builder
-  private buildMoreOptionsSheet(): void {
-    buildHomeMoreOptionsSheetContent({
-      onClose: (): void => {
-        this.closeMoreOptionsSheet()
-      },
-      onTodoList: (): void => {
-        void this.openEditor(undefined, false, 'todoList')
-      },
-      onPasteLink: (): void => {
-        void this.onHomePasteLink()
-      },
-      onPhotoImage: (): void => {
-        void this.openEditor(undefined, false, 'generateNoteFromImage')
-      },
-      onKnowledgeGraph: (): void => {
-        void this.openFlowchartFromDrawer()
-      }
-    } as HomeMoreOptionsSheetParams)
   }
 
   private async ensurePreferencesInitialized(): Promise<void> {
@@ -1190,24 +1120,6 @@ struct Index {
       return
     }
     await this.loadNotes(false)
-  }
-
-  @Builder
-  private buildHomeTabBarLayer() {
-    HomeLiquidGlassTabBar({
-      onMore: (): void => {
-        this.onHomeMoreTabPressed()
-      },
-      onVoice: (): void => {
-        this.onHomeVoiceTabPressed()
-      },
-      onNote: (): void => {
-        this.onHomeNoteTabPressed()
-      }
-    })
-    .width('100%')
-    .height('100%')
-    .hitTestBehavior(HitTestMode.None)
   }
 
   @Builder
@@ -1760,7 +1672,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .padding({ top: 4 })
-    .contentEndOffset(homeTabBarOccupiedHeight())
+    .contentEndOffset(24)
     .scrollBar(BarState.Off)
     .edgeEffect(EdgeEffect.Spring, { alwaysEnabled: true })
   }
@@ -1816,7 +1728,7 @@ struct Index {
         offsetX: 0,
         offsetY: 4
       })
-      .margin({ bottom: homeTabBarOccupiedHeight() + 8 })
+      .margin({ bottom: 16 })
     }
   }
 
@@ -1831,10 +1743,6 @@ struct Index {
       .width('100%')
       .height('100%')
       .backgroundColor($r('app.color.app_background'))
-
-      if (this.drawerModel.progress <= 0.001) {
-        this.buildHomeTabBarLayer()
-      }
 
       Column() {
         Blank()
@@ -1904,15 +1812,6 @@ struct Index {
     .width('100%')
     .height('100%')
     .alignContent(Alignment.TopStart)
-    .bindSheet($$this.moreOptionsVisible, this.buildMoreOptionsSheet(), {
-      height: SheetSize.FIT_CONTENT,
-      dragBar: false,
-      showClose: false,
-      backgroundColor: Color.Transparent,
-      onDisappear: (): void => {
-        this.moreOptionsVisible = false
-      }
-    })
     .parallelGesture(
       PanGesture({ direction: PanDirection.Horizontal, distance: 8 })
         .onActionStart((_event: GestureEvent) => {

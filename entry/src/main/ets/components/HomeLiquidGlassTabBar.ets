@@ -7,15 +7,17 @@ import {
   type SystemMaterialParams
 } from '@kit.UIDesignKit'
 
-/** 首页底部三按钮动作坞：更多 / 语音 / 笔记（HdsTabs 悬浮 + 沉浸光感，低版本毛玻璃降级）。
- * 语义为瞬时动作，不是导航 Tab（选中/未选同色）。 */
+/** 首页底部三按钮动作坞：链接 / 语音 / 笔记（HdsTabs 悬浮 + 沉浸光感，低版本毛玻璃降级）。
+ * 语义为瞬时动作，不是导航 Tab（选中/未选同色）。
+ * 现挂载在新版首页 MainShell 的「首页」Tab 内，悬浮于底部 5 Tab 导航栏上方
+ * TAB_BAR_BOTTOM_MARGIN_VP 处。 */
 
 const TAB_BAR_HEIGHT_VP = 45
 
 /** 与 HdsTabs barFloatingStyle.barOpacity 对齐。 */
 const TAB_BAR_OPACITY = 0.9
 
-/** 与 Index 原底部 padding 对齐，由外层 Column padding 承载。 */
+/** 距容器底边 50vp；挂在首页 Tab 内时容器底边即底部导航栏顶边。 */
 const TAB_BAR_BOTTOM_MARGIN_VP = 50
 
 /** 与 Flutter HomeLiquidGlassTabBar 一致：屏宽 68%。 */
@@ -31,7 +33,7 @@ export function homeTabBarOccupiedHeight(bottomInsetVp: number = 0): number {
 @Component
 export struct HomeLiquidGlassTabBar {
   @StorageProp(APP_LOCALE_REVISION_KEY) localeRevision: number = 0
-  onMore: () => void = (): void => {}
+  onLink: () => void = (): void => {}
   onVoice: () => void = (): void => {}
   onNote: () => void = (): void => {}
 
@@ -85,7 +87,7 @@ export struct HomeLiquidGlassTabBar {
 
   private dispatchTabAction(index: number): void {
     if (index === 0) {
-      this.onMore()
+      this.onLink()
     } else if (index === 1) {
       this.onVoice()
     } else if (index === 2) {
@@ -121,7 +123,7 @@ export struct HomeLiquidGlassTabBar {
 
   @Builder
   private buildTabItems() {
-    this.buildTabItem(LocaleService.loc('更多', 'More'), $r('sys.symbol.square_grid_2x2'), this.onMore)
+    this.buildTabItem(LocaleService.loc('链接', 'Link', 'リンク'), $r('sys.symbol.link'), this.onLink)
     this.buildTabItem(LocaleService.loc('语音', 'Voice'), $r('sys.symbol.mic'), this.onVoice)
     this.buildTabItem(LocaleService.loc('笔记', 'Notes'), $r('sys.symbol.square_and_pencil'), this.onNote)
   }
@@ -132,7 +134,7 @@ export struct HomeLiquidGlassTabBar {
       TabContent() {
         this.buildPassthroughTabPane()
       }
-      .tabBar(this.buildTabBarStyle($r('sys.symbol.square_grid_2x2'), LocaleService.loc('更多', 'More')))
+      .tabBar(this.buildTabBarStyle($r('sys.symbol.link'), LocaleService.loc('链接', 'Link', 'リンク')))
 
       TabContent() {
         this.buildPassthroughTabPane()
