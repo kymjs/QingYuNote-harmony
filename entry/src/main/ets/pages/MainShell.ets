@@ -1230,9 +1230,9 @@ struct MainShell {
               (): void => { void this.quickBook() }, $r('app.media.ic_quick_book'))
             this.quickCardAsset(LocaleService.loc('待办事项', 'To-do', 'ToDo'), ACCENT,
               (): void => { void this.quickTodo() }, $r('app.media.ic_quick_todo'))
-            this.quickCardAsset(LocaleService.loc('知识图谱', 'Knowledge graph', '知識グラフ'), ACCENT,
+            this.quickCardAsset(LocaleService.loc('知识图谱', 'Knowledge graph', '知識グラフ'), PURPLE,
               (): void => { void this.quickGraph() }, $r('app.media.ic_note_knowledge_graph'))
-            this.quickCardAsset(LocaleService.loc('思维导图', 'Mind map', 'マインドマップ'), ACCENT,
+            this.quickCardAsset(LocaleService.loc('思维导图', 'Mind map', 'マインドマップ'), PURPLE,
               (): void => { void this.quickMindMap() }, $r('app.media.ic_quick_mindmap'))
           }
         }
@@ -1258,9 +1258,9 @@ struct MainShell {
               (): void => { void this.quickBook() }, $r('app.media.ic_quick_book'))
             this.quickCardFlexAsset(LocaleService.loc('待办事项', 'To-do', 'ToDo'), ACCENT,
               (): void => { void this.quickTodo() }, $r('app.media.ic_quick_todo'))
-            this.quickCardFlexAsset(LocaleService.loc('知识图谱', 'Knowledge graph', '知識グラフ'), ACCENT,
+            this.quickCardFlexAsset(LocaleService.loc('知识图谱', 'Knowledge graph', '知識グラフ'), PURPLE,
               (): void => { void this.quickGraph() }, $r('app.media.ic_note_knowledge_graph'))
-            this.quickCardFlexAsset(LocaleService.loc('思维导图', 'Mind map', 'マインドマップ'), ACCENT,
+            this.quickCardFlexAsset(LocaleService.loc('思维导图', 'Mind map', 'マインドマップ'), PURPLE,
               (): void => { void this.quickMindMap() }, $r('app.media.ic_quick_mindmap'))
           }
           .width('100%')
@@ -1494,14 +1494,14 @@ struct MainShell {
             .fontSize(18)
             .fontColor([ACCENT])
         } else if (row.leadingKind === 'flowchart') {
-          // 思维导图：与首页快捷创建卡「思维导图」入口同图，三个 tab 共用蓝色。
+          // 思维导图：与首页快捷创建卡「思维导图」入口同图，三个 tab 共用紫色。
           Image($r('app.media.ic_quick_mindmap'))
             .width(18)
             .height(18)
             .objectFit(ImageFit.Contain)
             .fillColor(this.noteLeadingColor(row.leadingKind))
         } else if (row.leadingKind === 'knowledgeGraph') {
-          // 知识图谱：图一 SVG，三个 tab 共用蓝色。
+          // 知识图谱：图一 SVG，三个 tab 共用紫色。
           Image($r('app.media.ic_note_knowledge_graph'))
             .width(18)
             .height(18)

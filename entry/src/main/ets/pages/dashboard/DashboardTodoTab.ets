@@ -470,12 +470,9 @@ export struct DashboardTodoTab {
   buildTopBar() {
     if (this.pcLayout) {
       // PC：只保留搜索框 + 筛选下拉，顶部标题 / 新建日程 / 新建待办按钮已移除。
+      // 「筛选」文案已删除，搜索框 layoutWeight=1 自动占据释放出的横向空间。
       Row() {
         this.searchInput()
-        Text(LocaleService.loc('筛选', 'Filter', 'フィルター'))
-          .fontSize(13)
-          .fontColor($r('app.color.secondary_text'))
-          .margin({ left: 8, right: 4 })
         this.filterDropdown()
       }
       .width('100%')
@@ -483,12 +480,9 @@ export struct DashboardTodoTab {
       .padding({ left: PAGE_PAD, right: PAGE_PAD, top: 12, bottom: 8 })
     } else {
       // 手机：原顶部 Title + 「新建日程 / 新建待办」按钮一行已删除，只保留搜索 + 筛选。
+      // 「筛选」文案已删除，搜索框 layoutWeight=1 自动占据释放出的横向空间。
       Row() {
         this.searchInput()
-        Text(LocaleService.loc('筛选', 'Filter', 'フィルター'))
-          .fontSize(12)
-          .fontColor($r('app.color.secondary_text'))
-          .margin({ left: 8, right: 4 })
         this.filterDropdown()
       }
       .width('100%')

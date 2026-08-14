@@ -1156,14 +1156,14 @@ export struct DashboardNotesTab {
             .fontSize(18)
             .fontColor([$r('app.color.calendar_kind_note_fg')])
         } else if (NotesTabLogic.leadingKindFor(note, this.mindMapSet()) === 'flowchart') {
-          // 思维导图：与首页快捷创建卡「思维导图」入口同图，三个 tab 共用蓝色。
+          // 思维导图：与首页快捷创建卡「思维导图」入口同图，三个 tab 共用紫色。
           Image($r('app.media.ic_quick_mindmap'))
             .width(18)
             .height(18)
             .objectFit(ImageFit.Contain)
             .fillColor(this.noteLeadingColor(NotesTabLogic.leadingKindFor(note, this.mindMapSet())))
         } else if (NotesTabLogic.leadingKindFor(note, this.mindMapSet()) === 'knowledgeGraph') {
-          // 知识图谱：图一 SVG，三个 tab 共用蓝色。
+          // 知识图谱：图一 SVG，三个 tab 共用紫色。
           Image($r('app.media.ic_note_knowledge_graph'))
             .width(18)
             .height(18)
@@ -1361,10 +1361,10 @@ export struct DashboardNotesTab {
 
   /** 笔记 tab 列表 icon 盒子径向渐变内层（80% 白色混合）。 */
   private leadingSoftInner(leadingKind: string): string {
-    // 思维导图 / 知识图谱共用蓝色（首页 tab 标签图标色 = #3B82F6），
-    // 共用蓝色径向渐变内/外圈，保持视觉一致。
+    // 思维导图 / 知识图谱共用紫色（与首页 tab、日历 tab 图例一致 = #8B5CF6），
+    // 共用紫色径向渐变内/外圈，保持三个 tab 视觉同源。
     if (leadingKind === 'flowchart' || leadingKind === 'knowledgeGraph') {
-      return '#D8E6FD'
+      return '#E8DEFD'
     }
     if (leadingKind === 'todo') {
       return '#FDECCE'
@@ -1379,7 +1379,7 @@ export struct DashboardNotesTab {
   /** 笔记 tab 列表 icon 盒子径向渐变外层（95% 白色混合）。 */
   private leadingSoftOuter(leadingKind: string): string {
     if (leadingKind === 'flowchart' || leadingKind === 'knowledgeGraph') {
-      return '#F5F9FF'
+      return '#F9F7FF'
     }
     if (leadingKind === 'todo') {
       return '#FFFAF3'

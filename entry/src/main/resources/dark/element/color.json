@@ -266,11 +266,11 @@
     },
     {
       "name": "note_leading_mindmap_fg",
-      "value": "#FF60A5FA"
+      "value": "#FFA78BFA"
     },
     {
       "name": "note_leading_knowledge_graph_fg",
-      "value": "#FF60A5FA"
+      "value": "#FFA78BFA"
     }
   ]
 }
