@@ -8,6 +8,7 @@ import { Logger } from '../common/utils/Logger'
 import { buildQingyuCloudWebDavConfig } from '../services/QingyuCloudConfigHelper'
 import { SyncSettingsRemoteReport } from '../services/SyncSettingsRemoteReport'
 import { LocaleService, APP_LOCALE_REVISION_KEY } from '../services/LocaleService'
+import { openQingyuVipPage } from '../common/utils/OpenQingyuVipPage'
 
 /** 与 `Login.ets` / `pushUrl` 参数一致，登录成功后 `router.back()` 返回云同步页 */
 const LOGIN_RETURN_CLOUD_SYNC = 'cloudSync'
@@ -794,9 +795,7 @@ struct CloudSyncSettings {
                         .borderRadius($r('app.float.pill_radius'))
                         .padding({ top: 12, bottom: 12 })
                         .onClick(() => {
-                          this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
-                            console.error(`openQingyuCloudRecharge: ${JSON.stringify(err)}`)
-                          })
+                          void openQingyuVipPage(this.getUIContext())
                         })
                     }
                     if (this.qingyuSubShowConfirm) {

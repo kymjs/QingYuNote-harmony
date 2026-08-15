@@ -10,7 +10,10 @@ import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { WereadQrSaveBridge } from '../common/utils/WereadQrSaveBridge'
 import { YoudaoApiKeyBridge } from '../common/utils/YoudaoApiKeyBridge'
 import { YinxiangApiKeyBridge } from '../common/utils/YinxiangApiKeyBridge'
+import { QingyuVipBridge } from '../common/utils/QingyuVipBridge'
+import { isQingyuVipPageUrl, vipPageLangQuery } from '../common/utils/OpenQingyuVipPage'
 import { PreferencesService } from '../services/PreferencesService'
+import { QingyuVipPayService } from '../services/QingyuVipPayService'
 import { WebViewSessionCleaner } from '../common/utils/WebViewSessionCleaner'
 
 /** 微信读书 Skill / API Key 页（导入笔记「获取 API Key」入口，与 Flutter `kWereadSkillsUrl` 对齐）。 */
@@ -942,6 +945,8 @@ struct H5WebContainer {
   private qrSaveBridge: WereadQrSaveBridge = new WereadQrSaveBridge()
   private youdaoBridge: YoudaoApiKeyBridge = new YoudaoApiKeyBridge()
   private yinxiangBridge: YinxiangApiKeyBridge = new YinxiangApiKeyBridge()
+  private vipBridge: QingyuVipBridge = new QingyuVipBridge()
+  private vipSessionCache: string = '{}'
   private readonly base64: util.Base64Helper = new util.Base64Helper()
   // 「复制 API Key」流程已被处理,防止用户连点/动画期间再次 Router.back() 把上一页(导入笔记页面)也弹掉
   private apiKeyHandled: boolean = false
@@ -968,6 +973,13 @@ struct H5WebContainer {
     })
     this.yinxiangBridge.bindTokenReady((token: string, noteStoreUrl: string) => {
       void this.handleYinxiangTokenFromJs(token, noteStoreUrl)
+    })
+    this.vipBridge.bindClose(() => {
+      this.handleToolbarBack()
+    })
+    this.vipBridge.bindSessionProvider(() => this.vipSessionCache)
+    this.vipBridge.bindPay((planId: string, requestId: string) => {
+      void this.handleVipPayFromJs(planId, requestId)
     })
     // 登出时统一清理缓存（与 Flutter `WebViewSessionCleaner.register` 对齐）。
     WebViewSessionCleaner.registerController(this.webController)
@@ -1306,6 +1318,47 @@ struct H5WebContainer {
     this.watchWereadApiKeyCopyIfNeeded()
     this.patchYoudaoApiKeyPageIfNeeded()
     this.patchYinxiangApiKeyPageIfNeeded()
+    void this.pushVipSessionIfNeeded()
+  }
+
+  private async handleVipPayFromJs(planId: string, requestId: string): Promise<void> {
+    if (!isQingyuVipPageUrl(this.webUrl)) {
+      return
+    }
+    const result = await QingyuVipPayService.getInstance().startPay(planId)
+    if (result.message.trim().length > 0) {
+      this.showToast(result.message)
+    }
+    const payload: Record<string, string> = {
+      'type': 'payResult',
+      'requestId': requestId,
+      'status': result.status,
+      'message': result.message
+    }
+    this.emitVipNativeEvent(JSON.stringify(payload))
+  }
+
+  private async pushVipSessionIfNeeded(): Promise<void> {
+    if (!isQingyuVipPageUrl(this.webUrl)) {
+      return
+    }
+    try {
+      const json = await QingyuVipPayService.getInstance().buildSessionJson(vipPageLangQuery())
+      this.vipSessionCache = json
+      this.emitVipNativeEvent(json)
+    } catch (e) {
+      console.error(`H5WebContainer pushVipSession: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private emitVipNativeEvent(json: string): void {
+    try {
+      this.webController.runJavaScript(
+        `window.__qingyuVipOnNativeEvent && window.__qingyuVipOnNativeEvent(${json});`
+      )
+    } catch (e) {
+      console.error(`H5WebContainer emitVipNativeEvent: ${JSON.stringify(e)}`)
+    }
   }
 
   private hideFeishuVoiceInputIfNeeded(): void {
@@ -1424,6 +1477,12 @@ struct H5WebContainer {
             object: this.yinxiangBridge,
             name: 'QingyuYinxiangApiKeyBridge',
             methodList: ['onTokenReady'],
+            controller: this.webController
+          })
+          .javaScriptProxy({
+            object: this.vipBridge,
+            name: 'QingyuVipBridge',
+            methodList: ['pay', 'close', 'getSession'],
             controller: this.webController
           })
           .onPageBegin(() => {

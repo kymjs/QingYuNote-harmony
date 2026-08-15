@@ -590,6 +590,24 @@ export class NoteApiClient {
     return await this.postAuthJsonStatus(`/api/v1/orders/${orderId}/alipay/app-pay`, '{}', tok)
   }
 
+  /** 签发外部浏览器 VIP 页一次性支付票（与 Flutter `createH5PayTicket` 对齐）。 */
+  async createH5PayTicket(): Promise<string | null> {
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      return null
+    }
+    const obj = await this.requestJson(http.RequestMethod.POST, '/api/v1/me/h5-pay-ticket', '{}', tok)
+    if (obj === null) {
+      return null
+    }
+    const rec = obj as Record<string, Object>
+    const ticket = rec['ticket']
+    if (typeof ticket === 'string' && ticket.trim().length > 0) {
+      return ticket.trim()
+    }
+    return null
+  }
+
   /**
    * 上报华为 IAP purchaseToken，服务端调 AGC 校验后标记订单已支付并顺延订阅。
    * 4xx 时仍可能返回 JSON（含 payment_verified），请用 PostAuthJsonStatusResult 读取 status。

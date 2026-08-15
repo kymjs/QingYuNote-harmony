@@ -4,8 +4,7 @@ import { showConfirmAlertDialog } from '../../dialogs/ConfirmAlertDialog'
 import { NoteApiClient, ProfileBody } from '../../services/NoteApiClient'
 import { PreferencesService } from '../../services/PreferencesService'
 import { AppContextHolder } from '../../services/AppContextHolder'
-
-const QINGYU_CLOUD_RECHARGE_URL = 'pages/QingyuCloudRecharge'
+import { openQingyuVipPage } from './OpenQingyuVipPage'
 
 let membershipExpiryReminderInFlight: boolean = false
 
@@ -101,9 +100,7 @@ export async function maybeShowMembershipExpiryReminderDialog(
       confirmColor: '#0DAA4A'
     })
     if (confirmed) {
-      uiContext.getRouter().pushUrl({ url: QINGYU_CLOUD_RECHARGE_URL }).catch((err: Error) => {
-        console.error(`pushUrl QingyuCloudRecharge failed: ${JSON.stringify(err)}`)
-      })
+      void openQingyuVipPage(uiContext)
     }
   } catch (err) {
     console.error(`maybeShowMembershipExpiryReminderDialog failed: ${JSON.stringify(err)}`)

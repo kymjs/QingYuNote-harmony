@@ -2,6 +2,7 @@ import { AppContextHolder } from './AppContextHolder'
 import { AiNoteService } from './AiNoteService'
 import { LinkExtractClient } from './LinkExtractClient'
 import { NoteRepository } from './NoteRepository'
+import { PreferencesService } from './PreferencesService'
 import { SyncService } from './SyncService'
 import { VoiceTranscribeClient } from './VoiceTranscribeClient'
 import { AudioConstants } from '../common/constants/AudioConstants'
@@ -312,11 +313,13 @@ export class AiNoteBackgroundTaskService {
             'リンク内容から構造化されたMarkdownノート要約を生成してください。'
           )
 
+        const existingTags = await PreferencesService.getInstance().getNoteTags()
         const job = await LinkExtractClient.getInstance().submitJob(
           trimmedUrl,
           finalPrompt,
           summarize,
-          id
+          id,
+          existingTags
         )
         Logger.info('LinkExtractDebug', `FLOW step=SUBMITJOB_OK noteId=${id} jobId=${job.jobId} status=${job.status} deduped=${job.deduped}`)
 

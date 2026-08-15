@@ -9,6 +9,7 @@ import { RemoteAppConfigService } from '../../services/RemoteAppConfigService'
 import { CachedNetworkImage } from '../../components/CachedNetworkImage'
 import { MineDiamondIcon, MineScalesIcon } from '../../components/MineSvgIcons'
 import { openReferralInviteSharePage } from '../../common/utils/ReferralInviteNavigation'
+import { openQingyuVipPage } from '../../common/utils/OpenQingyuVipPage'
 import { Logger } from '../../common/utils/Logger'
 import { ImageCacheService } from '../../services/ImageCacheService'
 
@@ -231,9 +232,7 @@ export struct DashboardMineTab {
   }
 
   private openRecharge(): void {
-    this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
-      console.error(`DashboardMineTab push QingyuCloudRecharge: ${JSON.stringify(err)}`)
-    })
+    void openQingyuVipPage(this.getUIContext())
   }
 
   private openProfile(): void {

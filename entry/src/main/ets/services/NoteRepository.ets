@@ -697,11 +697,12 @@ export class NoteRepository {
       nextSummary = MarkdownUtils.summary(nextContent)
       nextImageRefs = NoteStateCodec.extractImageRefs(nextContent)
     }
+    const nextTags: string[] = patch.tags !== undefined ? patch.tags : existing.tags
     const updated: Note = {
       id: existing.id,
       title: nextTitle,
       content: nextContent,
-      tags: existing.tags,
+      tags: nextTags,
       summary: nextSummary,
       localModified: now,
       remoteModified: existing.remoteModified,
@@ -820,6 +821,7 @@ export class NoteRepository {
       if (job.status === 'succeeded' && job.result !== null) {
         const result = job.result
         const isVideo = result.mediaKind === 'video' || result.audioId.trim().length > 0
+        const nextTags = await this.mergeExtractTag(note.tags, result.tag)
         return await this.updateExtractInfo({
           noteId: id,
           jobId: job.jobId,
@@ -830,12 +832,14 @@ export class NoteRepository {
           progress: 1.0,
           audioId: result.audioId.trim().length > 0 ? result.audioId.trim() : undefined,
           voiceSummary: isVideo ? result.voiceSummary : undefined,
-          voiceTranscribeStatus: isVideo ? 'succeeded' : undefined
+          voiceTranscribeStatus: isVideo ? 'succeeded' : undefined,
+          tags: nextTags
         })
       }
       if (job.status === 'partial' && job.result !== null) {
         const result = job.result
         const isVideo = result.mediaKind === 'video' || result.audioId.trim().length > 0
+        const nextTags = await this.mergeExtractTag(note.tags, result.tag)
         return await this.updateExtractInfo({
           noteId: id,
           jobId: job.jobId,
@@ -847,7 +851,8 @@ export class NoteRepository {
           error: job.error?.code ?? '',
           audioId: result.audioId.trim().length > 0 ? result.audioId.trim() : undefined,
           voiceSummary: isVideo ? result.voiceSummary : undefined,
-          voiceTranscribeStatus: isVideo ? 'succeeded' : undefined
+          voiceTranscribeStatus: isVideo ? 'succeeded' : undefined,
+          tags: nextTags
         })
       }
       if (job.status === 'failed') {
@@ -874,6 +879,23 @@ export class NoteRepository {
     return await this.getNote(id)
   }
 
+  /** Apply server2 extract tag; undefined when empty (leave note.tags unchanged). */
+  private async mergeExtractTag(currentTags: string[], rawTag: string): Promise<string[] | undefined> {
+    const tag = (rawTag ?? '').trim()
+    if (tag.length === 0) {
+      return undefined
+    }
+    const lower = tag.toLowerCase()
+    const hasTag = currentTags.some((t: string): boolean => t.toLowerCase() === lower)
+    const next: string[] = hasTag ? currentTags.slice() : currentTags.concat([tag])
+    const stored = await PreferencesService.getInstance().getNoteTags()
+    const inPool = stored.some((t: string): boolean => t.toLowerCase() === lower)
+    if (!inPool) {
+      await PreferencesService.getInstance().saveNoteTags(stored.concat([tag]))
+    }
+    return next
+  }
+
   /** pending 但缺少 extract_job_id 时：重新 submit（或 409 复用）写回隐藏字段。 */
   private async recoverExtractJobId(note: Note): Promise<Note | null> {
     const url = (note.sourceUrl ?? '').trim()
@@ -885,11 +907,13 @@ export class NoteRepository {
       })
     }
     try {
+      const existingTags = await PreferencesService.getInstance().getNoteTags()
       const job = await LinkExtractClient.getInstance().submitJob(
         url,
         '请根据链接内容生成结构化的 Markdown 笔记摘要。',
         0,
-        note.id
+        note.id,
+        existingTags
       )
       if (job.jobId.trim().length === 0) {
         return await this.updateExtractInfo({

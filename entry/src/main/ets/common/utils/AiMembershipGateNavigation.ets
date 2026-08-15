@@ -4,8 +4,8 @@ import { showConfirmAlertDialog } from '../../dialogs/ConfirmAlertDialog'
 import { NoteApiClient, ProfileBody } from '../../services/NoteApiClient'
 import { PreferencesService } from '../../services/PreferencesService'
 import { AppContextHolder } from '../../services/AppContextHolder'
+import { openQingyuVipPage } from './OpenQingyuVipPage'
 
-const QINGYU_CLOUD_RECHARGE_URL = 'pages/QingyuCloudRecharge'
 const AI_MEMBERSHIP_DIALOG_MESSAGE = 'AI功能需要开通轻羽云会员使用'
 
 function isQingyuMember(profile: ProfileBody): boolean {
@@ -44,9 +44,7 @@ async function resolveUserProfile(): Promise<ProfileBody | null> {
 }
 
 function openQingyuRechargePage(uiContext: UIContext): void {
-  uiContext.getRouter().pushUrl({ url: QINGYU_CLOUD_RECHARGE_URL }).catch((err: Error) => {
-    console.error(`pushUrl QingyuCloudRecharge failed: ${JSON.stringify(err)}`)
-  })
+  void openQingyuVipPage(uiContext)
 }
 
 /**

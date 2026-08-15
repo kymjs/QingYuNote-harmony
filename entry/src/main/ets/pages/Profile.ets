@@ -36,6 +36,7 @@ import {
 } from '../common/constants/AvatarCropConstants'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
+import { openQingyuVipPage } from '../common/utils/OpenQingyuVipPage'
 
 /** getUIContext().getRouter() 在部分 SDK 上带有清空页面栈的扩展 */
 interface RouterWithOptionalClear {
@@ -1027,9 +1028,7 @@ struct Profile {
                   if (this.isLifetimeVip(this.profile!)) {
                     return
                   }
-                  this.getUIContext().getRouter().pushUrl({ url: 'pages/QingyuCloudRecharge' }).catch((err: Error) => {
-                    console.error(`Profile push QingyuCloudRecharge: ${JSON.stringify(err)}`)
-                  })
+                  void openQingyuVipPage(this.getUIContext())
                 },
                 !this.isLifetimeVip(this.profile!)
               )

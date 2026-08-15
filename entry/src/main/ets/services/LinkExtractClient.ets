@@ -27,6 +27,7 @@ export interface JobResultPayload {
   voiceSummary: string
   audioId: string
   mediaKind: string
+  tag: string
 }
 
 export interface JobErrorPayload {
@@ -122,7 +123,8 @@ export class LinkExtractClient {
     url: string,
     prompt: string,
     summarize: number,
-    noteId: string
+    noteId: string,
+    existingTags: string[] = []
   ): Promise<SubmitJobResult> {
     const token = await this.requireToken()
     const base = LinkExtractConstants.baseUrl.replace(/\/+$/, '')
@@ -137,7 +139,8 @@ export class LinkExtractClient {
           url: url.trim(),
           prompt: prompt.trim(),
           summarize: summarize,
-          note_id: noteId
+          note_id: noteId,
+          existing_tags: existingTags
         }),
         expectDataType: http.HttpDataType.STRING,
         connectTimeout: 10000,
@@ -241,7 +244,8 @@ export class LinkExtractClient {
           description: `${r['description'] ?? ''}`,
           voiceSummary: `${r['voice_summary'] ?? ''}`,
           audioId: `${r['audio_id'] ?? ''}`,
-          mediaKind: `${r['media_kind'] ?? ''}`
+          mediaKind: `${r['media_kind'] ?? ''}`,
+          tag: `${r['tag'] ?? ''}`
         }
       }
       let error: JobErrorPayload | null = null

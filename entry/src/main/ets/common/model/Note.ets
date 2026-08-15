@@ -287,6 +287,8 @@ export interface UpdateExtractInfo {
   audioId?: string
   voiceSummary?: string
   voiceTranscribeStatus?: VoiceTranscribeStatus
+  /** server2 AI 标签；undefined 表示不改 note.tags。 */
+  tags?: string[]
 }
 
 /** 回收站列表加载结果（含仅存在于远端、尚未写入本地的条目 id）。 */
