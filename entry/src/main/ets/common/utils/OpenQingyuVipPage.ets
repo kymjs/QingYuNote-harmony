@@ -1,14 +1,14 @@
-import { Want } from '@kit.AbilityKit'
+import { common, Want } from '@kit.AbilityKit'
 import { UIContext } from '@kit.ArkUI'
-import { AppContextHolder } from '../services/AppContextHolder'
-import { LocaleService } from '../services/LocaleService'
-import { PreferencesService } from '../services/PreferencesService'
+import { AppContextHolder } from '../../services/AppContextHolder'
+import { AppLanguage, LocaleService } from '../../services/LocaleService'
+import { PreferencesService } from '../../services/PreferencesService'
 
 /** 官网 VIP H5（与 Flutter `AppConst.officialVipPageUrl` 对齐）。 */
-export const OFFICIAL_VIP_PAGE_URL = 'https://note.kymjs.com/vip.html'
+export const OFFICIAL_VIP_PAGE_URL: string = 'https://note.kymjs.com/vip.html'
 
 export function vipPageLangQuery(): string {
-  const lang = LocaleService.getInstance().getLanguage()
+  const lang: AppLanguage = LocaleService.getInstance().getLanguage()
   if (lang === 'en') {
     return 'en'
   }
@@ -26,7 +26,7 @@ export function buildQingyuVipPageUrl(): string {
 }
 
 export function isQingyuVipPageUrl(url: string): boolean {
-  const trimmed = url.trim()
+  const trimmed: string = url.trim()
   if (trimmed.length === 0) {
     return false
   }
@@ -36,10 +36,10 @@ export function isQingyuVipPageUrl(url: string): boolean {
 function showToast(uiContext: UIContext, message: string): void {
   try {
     uiContext.getPromptAction().showToast({
-      message,
+      message: message,
       duration: 2500
     })
-  } catch (_) {
+  } catch (_e) {
   }
 }
 
@@ -48,12 +48,12 @@ function showToast(uiContext: UIContext, message: string): void {
  * Harmony 始终支持内嵌 WebView，故不走外部浏览器 + ticket。
  */
 export async function openQingyuVipPage(uiContext: UIContext): Promise<void> {
-  const context = AppContextHolder.tryGetContext()
-  if (context) {
+  const context: common.UIAbilityContext | undefined = AppContextHolder.tryGetContext()
+  if (context !== undefined) {
     await PreferencesService.getInstance().init(context)
   }
-  const guest = await PreferencesService.getInstance().isGuestMode()
-  const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+  const guest: boolean = await PreferencesService.getInstance().isGuestMode()
+  const tok: string | null = await PreferencesService.getInstance().getNoteApiAccessToken()
   if (guest || tok === null || tok.length === 0) {
     showToast(
       uiContext,
@@ -61,14 +61,14 @@ export async function openQingyuVipPage(uiContext: UIContext): Promise<void> {
     )
     return
   }
-  const title = LocaleService.loc('轻羽云会员', 'Qingyu Membership', '軽羽会員')
-  const url = buildQingyuVipPageUrl()
+  const title: string = LocaleService.loc('轻羽云会员', 'Qingyu Membership', '軽羽会員')
+  const url: string = buildQingyuVipPageUrl()
   try {
     await uiContext.getRouter().pushUrl({
       url: 'pages/H5WebContainer',
       params: {
-        title: title,
-        url: url
+        'title': title,
+        'url': url
       }
     })
   } catch (err) {
@@ -80,8 +80,8 @@ export async function openQingyuVipPage(uiContext: UIContext): Promise<void> {
         entities: ['entity.system.browsable'],
         uri: url
       }
-      const ctx = AppContextHolder.tryGetContext()
-      if (ctx) {
+      const ctx: common.UIAbilityContext | undefined = AppContextHolder.tryGetContext()
+      if (ctx !== undefined) {
         await ctx.startAbility(want)
       }
     } catch (e) {

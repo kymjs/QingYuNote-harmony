@@ -2,6 +2,7 @@ import router from '@ohos.router'
 import { UIContext } from '@kit.ArkUI'
 
 import { type NoteEditorEntryAction } from '../model/NoteEditorEntryAction'
+import { ensureAiMembershipAccess } from './AiMembershipGateNavigation'
 
 const NOTE_EDIT_URL = 'pages/NoteEdit'
 
@@ -14,6 +15,13 @@ export interface NoteEditNavParams {
   initialAction?: NoteEditorEntryAction
 }
 
+function initialActionRequiresAiMembership(action?: NoteEditorEntryAction): boolean {
+  return action === 'aiLinkExtract' ||
+    action === 'generateNoteFromImage' ||
+    action === 'bookScan' ||
+    action === 'voiceMemo'
+}
+
 /** 笔记编辑页单例导航（RouterMode.Single）。 */
 export async function navigateToNoteEdit(
   uiContext: UIContext,
@@ -21,6 +29,11 @@ export async function navigateToNoteEdit(
 ): Promise<void> {
   if (noteEditNavigationInFlight) {
     return
+  }
+  if (initialActionRequiresAiMembership(params.initialAction)) {
+    if (!(await ensureAiMembershipAccess(uiContext))) {
+      return
+    }
   }
   noteEditNavigationInFlight = true
   try {

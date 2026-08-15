@@ -148,6 +148,9 @@ export class LinkExtractClient {
       })
       const code = resp.responseCode
       Logger.info(TAG, `submitJob resp code=${code} body=${(resp.result as string ?? '').substring(0, 800)}`)
+      if (code === 403 && `${resp.result as string ?? ''}`.includes('subscription_required')) {
+        throw new Error('subscription_required')
+      }
       if (code === 401) {
         throw new Error('未登录或服务不可用')
       }

@@ -1011,6 +1011,11 @@ struct NoteEdit {
         isNew ? `タグを作成して適用：${resolved}` : `タグを適用：${resolved}`
       ))
     } catch (e) {
+      const msg = e instanceof Error ? e.message : ''
+      if (msg === 'subscription_required') {
+        await ensureAiMembershipAccess(this.getUIContext())
+        return
+      }
       const detail = e instanceof Error
         ? e.message
         : AiTagService.describeError(e as Object)

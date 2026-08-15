@@ -1,12 +1,10 @@
 import { UIContext } from '@kit.ArkUI'
 
-import { showConfirmAlertDialog } from '../../dialogs/ConfirmAlertDialog'
+import { showVipMembershipGateDialog } from '../../dialogs/VipMembershipGateDialog'
 import { NoteApiClient, ProfileBody } from '../../services/NoteApiClient'
 import { PreferencesService } from '../../services/PreferencesService'
 import { AppContextHolder } from '../../services/AppContextHolder'
 import { openQingyuVipPage } from './OpenQingyuVipPage'
-
-const AI_MEMBERSHIP_DIALOG_MESSAGE = 'AI功能需要开通轻羽云会员使用'
 
 function isQingyuMember(profile: ProfileBody): boolean {
   if (profile.membership_is_lifetime === true) {
@@ -14,6 +12,22 @@ function isQingyuMember(profile: ProfileBody): boolean {
   }
   const level = (profile.membership_level ?? '').trim()
   return level === 'active' || level === 'lifetime'
+}
+
+/** ISO 周键，形如 `2026-W33`（与 Flutter `aiMembershipGateIsoWeekKey` 对齐）。 */
+export function aiMembershipGateIsoWeekKey(date: Date = new Date()): string {
+  const day = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+  const weekday = day.getUTCDay() === 0 ? 7 : day.getUTCDay()
+  const thursday = new Date(day)
+  thursday.setUTCDate(day.getUTCDate() + (4 - weekday))
+  const yearStart = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 4))
+  const yearStartWeekday = yearStart.getUTCDay() === 0 ? 7 : yearStart.getUTCDay()
+  const week1Thursday = new Date(yearStart)
+  week1Thursday.setUTCDate(yearStart.getUTCDate() + (4 - yearStartWeekday))
+  const week =
+    1 + Math.floor((thursday.getTime() - week1Thursday.getTime()) / (7 * 24 * 3600 * 1000))
+  const weekStr = week < 10 ? `0${week}` : `${week}`
+  return `${thursday.getUTCFullYear()}-W${weekStr}`
 }
 
 async function resolveUserProfile(): Promise<ProfileBody | null> {
@@ -48,7 +62,7 @@ function openQingyuRechargePage(uiContext: UIContext): void {
 }
 
 /**
- * 未开通轻羽云会员时拦截 AI 功能：首次弹窗提示，再次点击直达充值页。
+ * 未开通轻羽云会员时拦截 AI 功能：每周首次弹窗，同周再次点击直达充值页。
  * @returns true 表示已开通会员，可继续执行 AI 逻辑。
  */
 export async function ensureAiMembershipAccess(uiContext: UIContext): Promise<boolean> {
@@ -57,17 +71,12 @@ export async function ensureAiMembershipAccess(uiContext: UIContext): Promise<bo
     return true
   }
 
-  const dialogShown = await PreferencesService.getInstance().hasAiMembershipGateDialogShown()
+  const weekKey = aiMembershipGateIsoWeekKey()
+  const shownWeek = await PreferencesService.getInstance().getAiMembershipGateDialogWeek()
 
-  if (!dialogShown) {
-    await PreferencesService.getInstance().setAiMembershipGateDialogShown(true)
-    const confirmed = await showConfirmAlertDialog(uiContext, {
-      title: '提示',
-      message: AI_MEMBERSHIP_DIALOG_MESSAGE,
-      cancelLabel: '取消',
-      confirmLabel: '确定',
-      confirmColor: '#0DAA4A'
-    })
+  if (shownWeek !== weekKey) {
+    await PreferencesService.getInstance().setAiMembershipGateDialogWeek(weekKey)
+    const confirmed = await showVipMembershipGateDialog(uiContext)
     if (confirmed) {
       openQingyuRechargePage(uiContext)
     }

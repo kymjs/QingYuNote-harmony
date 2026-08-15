@@ -12,6 +12,10 @@ export class QingyuHuaweiIapProducts {
     if (plan === 'half_year') {
       return 'com.kymjs.note.qingyu.half_year'
     }
+    if (plan === 'lifetime') {
+      // 终身买断不走华为 IAP
+      return ''
+    }
     return 'com.kymjs.note.qingyu.yearly'
   }
 }

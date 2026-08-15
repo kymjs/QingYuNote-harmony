@@ -669,33 +669,62 @@ export class NoteApiClient {
     if (tok === null || tok.length === 0) {
       return null
     }
-    const obj = await this.requestJson(http.RequestMethod.GET, '/api/v1/me/ai-tag-config', undefined, tok)
-    if (obj === null) {
-      return null
-    }
-    const record = obj as Record<string, Object>
-    const key = `${record['token_plan_key'] ?? ''}`.trim()
-    const model = `${record['model'] ?? 'MiniMax-M2.7'}`.trim()
-    const baseUrl = `${record['base_url'] ?? 'https://api.minimaxi.com/v1'}`.trim()
-    if (key.length === 0 || model.length === 0) {
-      return null
-    }
-    let reasoning: AiTagReasoningConfig | undefined = undefined
-    const reasoningRaw = record['reasoning'] as Record<string, Object> | undefined
-    if (reasoningRaw !== undefined) {
-      const effort = `${reasoningRaw['effort'] ?? ''}`.trim()
-      if (effort.length > 0) {
-        const reasoningConfig: AiTagReasoningConfig = { effort: effort }
-        reasoning = reasoningConfig
+    const req = http.createHttp()
+    try {
+      const headers = await this.buildCommonHeaders()
+      headers['Authorization'] = `Bearer ${tok}`
+      const resp = await req.request(this.joinUrl('/api/v1/me/ai-tag-config'), {
+        method: http.RequestMethod.GET,
+        header: headers,
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 15000,
+        readTimeout: 20000
+      })
+      const code = resp.responseCode
+      const text = (resp.result as string) ?? ''
+      if (code === 403 && text.includes('subscription_required')) {
+        throw new Error('subscription_required')
       }
+      if (code < 200 || code >= 300) {
+        Logger.warn('NoteApiClient', `HTTP ${code} /api/v1/me/ai-tag-config body=${text.slice(0, 400)}`)
+        return null
+      }
+      if (text.trim().length === 0) {
+        return null
+      }
+      const obj = JSON.parse(text) as Object
+      const record = obj as Record<string, Object>
+      const key = `${record['token_plan_key'] ?? ''}`.trim()
+      const model = `${record['model'] ?? 'MiniMax-M2.7'}`.trim()
+      const baseUrl = `${record['base_url'] ?? 'https://api.minimaxi.com/v1'}`.trim()
+      if (key.length === 0 || model.length === 0) {
+        return null
+      }
+      let reasoning: AiTagReasoningConfig | undefined = undefined
+      const reasoningRaw = record['reasoning'] as Record<string, Object> | undefined
+      if (reasoningRaw !== undefined) {
+        const effort = `${reasoningRaw['effort'] ?? ''}`.trim()
+        if (effort.length > 0) {
+          const reasoningConfig: AiTagReasoningConfig = { effort: effort }
+          reasoning = reasoningConfig
+        }
+      }
+      const body: AiTagConfigBody = {
+        token_plan_key: key,
+        model: model,
+        base_url: baseUrl,
+        reasoning: reasoning
+      }
+      return body
+    } catch (e) {
+      if (e instanceof Error && e.message === 'subscription_required') {
+        throw e
+      }
+      Logger.warn('NoteApiClient', `fetchAiTagConfig failed: ${JSON.stringify(e)}`)
+      return null
+    } finally {
+      req.destroy()
     }
-    const body: AiTagConfigBody = {
-      token_plan_key: key,
-      model: model,
-      base_url: baseUrl,
-      reasoning: reasoning
-    }
-    return body
   }
 
   async fetchProfile(): Promise<ProfileBody | null> {

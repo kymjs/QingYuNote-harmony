@@ -601,10 +601,6 @@ export struct DashboardMineTab {
   @Builder
   buildMenuGroup1() {
     Column() {
-      this.menuRow($r('sys.symbol.gearshape'),
-        LocaleService.loc('设置中心', 'Settings', '設定センター'), '', false, () => {
-          this.push('pages/Settings')
-        }, true)
       this.menuRow($r('sys.symbol.folder'),
         LocaleService.loc('文件管理', 'Folders', 'フォルダ管理'), '', false, () => {
           this.push('pages/FolderManage')

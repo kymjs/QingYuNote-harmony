@@ -1,5 +1,5 @@
 /** 轻羽云会员充值档位（与充值页展示一致）。 */
-export type QingyuRechargePlanId = 'monthly' | 'half_year' | 'yearly'
+export type QingyuRechargePlanId = 'monthly' | 'half_year' | 'yearly' | 'lifetime'
 
 export class QingyuRechargePlans {
   static months(planId: QingyuRechargePlanId): number {
@@ -8,6 +8,9 @@ export class QingyuRechargePlans {
     }
     if (planId === 'half_year') {
       return 7
+    }
+    if (planId === 'lifetime') {
+      return 0
     }
     return 12
   }
@@ -19,6 +22,9 @@ export class QingyuRechargePlans {
     if (planId === 'half_year') {
       return 50
     }
+    if (planId === 'lifetime') {
+      return 199
+    }
     return 73
   }
 
@@ -29,6 +35,9 @@ export class QingyuRechargePlans {
     if (planId === 'half_year') {
       return '半年'
     }
+    if (planId === 'lifetime') {
+      return '终身'
+    }
     return '年付'
   }
 
@@ -38,6 +47,9 @@ export class QingyuRechargePlans {
     }
     if (planId === 'half_year') {
       return '50 元 / 6 个月（另赠送 1 个月）'
+    }
+    if (planId === 'lifetime') {
+      return '199 元 / 终身'
     }
     return '73 元 / 年'
   }
@@ -50,6 +62,9 @@ export class QingyuRechargePlans {
     if (planId === 'half_year') {
       return '¥50/半年'
     }
+    if (planId === 'lifetime') {
+      return '¥199/终身'
+    }
     return '¥73/年'
   }
 
@@ -60,6 +75,9 @@ export class QingyuRechargePlans {
     }
     if (planId === 'half_year') {
       return '额外赠 1 个月 · 约 ¥7.1/月'
+    }
+    if (planId === 'lifetime') {
+      return '买断终身 · 一次付费'
     }
     return ' 年度优选 · 约  ¥6 /月'
   }

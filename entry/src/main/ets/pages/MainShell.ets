@@ -15,6 +15,7 @@ import {
 } from '../common/utils/GreetingAndLunar'
 import { navigateToBindPhoneIfNeeded } from '../common/utils/BindPhoneNavigation'
 import { maybeShowReferralInviteDialog } from '../common/utils/ReferralInviteNavigation'
+import { ensureAiMembershipAccess } from '../common/utils/AiMembershipGateNavigation'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { PreferencesService } from '../services/PreferencesService'
 import { NoteRepository } from '../services/NoteRepository'
@@ -935,10 +936,16 @@ struct MainShell {
   }
 
   private async quickVoice(): Promise<void> {
+    if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+      return
+    }
     await this.getUIContext().getRouter().pushUrl({ url: 'pages/VoiceNote' })
   }
 
   private async quickLink(): Promise<void> {
+    if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+      return
+    }
     await this.getUIContext().getRouter().pushUrl({ url: 'pages/LinkExtract' })
   }
 

@@ -12,6 +12,7 @@ import { YoudaoApiKeyBridge } from '../common/utils/YoudaoApiKeyBridge'
 import { YinxiangApiKeyBridge } from '../common/utils/YinxiangApiKeyBridge'
 import { QingyuVipBridge } from '../common/utils/QingyuVipBridge'
 import { isQingyuVipPageUrl, vipPageLangQuery } from '../common/utils/OpenQingyuVipPage'
+import { usePcStyleLayoutWithSize } from '../common/utils/DesktopLayout'
 import { PreferencesService } from '../services/PreferencesService'
 import { QingyuVipPayService } from '../services/QingyuVipPayService'
 import { WebViewSessionCleaner } from '../common/utils/WebViewSessionCleaner'
@@ -940,6 +941,8 @@ struct H5WebContainer {
   @State pageTitle: string = ''
   @State webUrl: string = 'about:blank'
   @State isLoading: boolean = false
+  @State pageWidth: number = 0
+  @State pageHeight: number = 0
   private webController: webview.WebviewController = new webview.WebviewController()
   private closeGuard = new PageCloseGuard()
   private qrSaveBridge: WereadQrSaveBridge = new WereadQrSaveBridge()
@@ -1019,6 +1022,12 @@ struct H5WebContainer {
 
   private isMobileContainer(): boolean {
     return deviceInfo.deviceType !== '2in1'
+  }
+
+  /** 手机端 VIP H5：隐藏标题栏，返回按钮浮盖在页面左上角（与 Flutter `_vipImmersiveChrome` 对齐）。 */
+  private isVipImmersiveChrome(): boolean {
+    return isQingyuVipPageUrl(this.webUrl) &&
+      !usePcStyleLayoutWithSize(this.pageWidth, this.pageHeight)
   }
 
   private shouldEnableWereadQrBridge(): boolean {
@@ -1418,42 +1427,44 @@ struct H5WebContainer {
 
   build() {
     Column() {
-      Row() {
+      if (!this.isVipImmersiveChrome()) {
         Row() {
-          SymbolGlyph($r('sys.symbol.arrow_left'))
-            .fontSize(18)
-            .fontColor([$r('app.color.primary_text')])
-        }
-        .height('100%')
-        .padding({
-          left: $r('app.float.toolbar_icon_button_padding_h'),
-          right: $r('app.float.toolbar_icon_button_padding_h')
-        })
-        .justifyContent(FlexAlign.Center)
-        .alignItems(VerticalAlign.Center)
-        .backgroundColor($r('app.color.surface_muted'))
-        .borderRadius($r('app.float.pill_radius'))
-        .onClick(() => {
-          this.handleToolbarBack()
-        })
+          Row() {
+            SymbolGlyph($r('sys.symbol.arrow_left'))
+              .fontSize(18)
+              .fontColor([$r('app.color.primary_text')])
+          }
+          .height('100%')
+          .padding({
+            left: $r('app.float.toolbar_icon_button_padding_h'),
+            right: $r('app.float.toolbar_icon_button_padding_h')
+          })
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
+          .backgroundColor($r('app.color.surface_muted'))
+          .borderRadius($r('app.float.pill_radius'))
+          .onClick(() => {
+            this.handleToolbarBack()
+          })
 
-        Row() {
-          Text(this.pageTitle)
-            .fontSize($r('app.float.title_font_size'))
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.primary_text'))
-            .textAlign(TextAlign.Center)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Row() {
+            Text(this.pageTitle)
+              .fontSize($r('app.float.title_font_size'))
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.primary_text'))
+              .textAlign(TextAlign.Center)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .layoutWeight(1)
+          .height('100%')
+          .alignItems(VerticalAlign.Center)
+          .justifyContent(FlexAlign.Start)
         }
-        .layoutWeight(1)
-        .height('100%')
+        .width('100%')
+        .height($r('app.float.toolbar_height'))
         .alignItems(VerticalAlign.Center)
-        .justifyContent(FlexAlign.Start)
       }
-      .width('100%')
-      .height($r('app.float.toolbar_height'))
-      .alignItems(VerticalAlign.Center)
 
       Stack() {
         Web({ src: this.webUrl, controller: this.webController })
@@ -1514,6 +1525,29 @@ struct H5WebContainer {
           .justifyContent(FlexAlign.Center)
           .backgroundColor($r('app.color.app_background'))
         }
+
+        if (this.isVipImmersiveChrome()) {
+          Row() {
+            SymbolGlyph($r('sys.symbol.arrow_left'))
+              .fontSize(18)
+              .fontColor([$r('app.color.primary_text')])
+          }
+          .padding({
+            left: $r('app.float.toolbar_icon_button_padding_h'),
+            right: $r('app.float.toolbar_icon_button_padding_h'),
+            top: 10,
+            bottom: 10
+          })
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
+          .backgroundColor($r('app.color.surface_muted'))
+          .borderRadius($r('app.float.pill_radius'))
+          .position({ x: 16, y: 8 })
+          .zIndex(2)
+          .onClick(() => {
+            this.handleToolbarBack()
+          })
+        }
       }
       .width('100%')
       .layoutWeight(1)
@@ -1521,10 +1555,21 @@ struct H5WebContainer {
     .width('100%')
     .height('100%')
     .alignItems(HorizontalAlign.Start)
-    .padding({
+    .padding(this.isVipImmersiveChrome() ? {
+      left: 0,
+      right: 0
+    } : {
       left: 16,
       right: 16
     })
     .backgroundColor($r('app.color.app_background'))
+    .onAreaChange((_oldVal: Area, newVal: Area) => {
+      const w = Number(newVal.width)
+      const h = Number(newVal.height)
+      if (w > 0 && h > 0 && (w !== this.pageWidth || h !== this.pageHeight)) {
+        this.pageWidth = w
+        this.pageHeight = h
+      }
+    })
   }
 }

@@ -18,7 +18,7 @@ export interface QingyuVipPayResult {
   message: string
 }
 
-/** 轻羽云 VIP 支付（自 QingyuCloudRecharge 抽出，供 H5 Bridge 调用）。 */
+/** 轻羽云 VIP 支付（供 H5 Bridge 调用）。 */
 export class QingyuVipPayService {
   private static instance: QingyuVipPayService = new QingyuVipPayService()
   private applying: boolean = false
@@ -45,10 +45,17 @@ export class QingyuVipPayService {
 
   private parsePlanId(planId: string): QingyuRechargePlanId | null {
     const id = planId.trim()
-    if (id === 'monthly' || id === 'half_year' || id === 'yearly') {
+    if (id === 'monthly' || id === 'half_year' || id === 'yearly' || id === 'lifetime') {
       return id as QingyuRechargePlanId
     }
     return null
+  }
+
+  /** App Store / 华为 IAP 路径下隐藏终身买断。 */
+  async shouldHideLifetimePlan(): Promise<boolean> {
+    await this.ensurePayModeLoaded()
+    const useAlipay = this.useAlipayPay && QingyuAlipayPayService.isAliPayInstalled()
+    return !useAlipay
   }
 
   private async pollOrderPaid(orderId: number): Promise<boolean> {
@@ -97,6 +104,19 @@ export class QingyuVipPayService {
     }
     await this.ensurePayModeLoaded()
     const useAlipay = this.useAlipayPay && QingyuAlipayPayService.isAliPayInstalled()
+    if (plan === 'lifetime') {
+      if (!useAlipay) {
+        return {
+          status: 'fail',
+          message: LocaleService.loc(
+            '当前支付渠道不支持终身买断',
+            'Lifetime plan is unavailable on this payment channel',
+            'この決済では生涯プランを利用できません'
+          )
+        }
+      }
+      return await this.onAlipay(plan)
+    }
     if (useAlipay) {
       return await this.onAlipay(plan)
     }
@@ -218,6 +238,16 @@ export class QingyuVipPayService {
         }
       }
       const productId = QingyuHuaweiIapProducts.productId(plan)
+      if (productId.length === 0) {
+        return {
+          status: 'fail',
+          message: LocaleService.loc(
+            '当前支付渠道不支持该套餐',
+            'Plan unavailable on this payment channel',
+            'この決済ではこのプランを利用できません'
+          )
+        }
+      }
       const pay = await QingyuHuaweiIapPayService.createPurchase(ctx, productId)
       if (pay === null) {
         return {
@@ -280,13 +310,20 @@ export class QingyuVipPayService {
       }
     } catch (_) {
     }
-    const payload: Record<string, string> = {
+    const hideLifetime = await this.shouldHideLifetimePlan()
+    const userId: string = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
+    const payload: Record<string, Object> = {
       'type': 'session',
       'locale': locale,
       'membershipKind': membershipKind,
       'expiresAt': expiresAt,
       'cta': cta,
-      'platform': 'harmony'
+      'platform': 'harmony',
+      'hideLifetime': hideLifetime,
+      'showLifetime': !hideLifetime
+    }
+    if (userId.length > 0) {
+      payload['userId'] = userId
     }
     return JSON.stringify(payload)
   }

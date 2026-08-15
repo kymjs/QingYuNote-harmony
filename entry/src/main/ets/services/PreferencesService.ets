@@ -44,8 +44,8 @@ const REFERRAL_INVITER_PHONE_KEY = 'referral_inviter_phone'
 const BETA_TEST_INVITE_DIALOG_SHOWN_KEY = 'beta_test_invite_dialog_shown'
 /** 与 Flutter `prefMembershipExpiryReminderLastShownYmdKey` 一致：会员到期提醒弹窗上次展示日期 */
 const MEMBERSHIP_EXPIRY_REMINDER_LAST_SHOWN_YMD_KEY = 'membership_expiry_reminder_last_shown_ymd'
-/** 与 Flutter `prefAiMembershipGateDialogShownKey` 一致：AI 会员拦截弹窗已展示过则不再弹出 */
-const AI_MEMBERSHIP_GATE_DIALOG_SHOWN_KEY = 'ai_membership_gate_dialog_shown'
+/** 与 Flutter `prefAiMembershipGateDialogWeekKey` 一致：本周已展示过 AI 会员弹窗则同周直达 H5（`yyyy-Www`） */
+const AI_MEMBERSHIP_GATE_DIALOG_WEEK_KEY = 'ai_membership_gate_dialog_week'
 /** 与 Flutter `AppConst.prefShareCardThemeKey` 一致 */
 const SHARE_CARD_THEME_KEY = 'share_card_theme'
 /** 与 Flutter `prefThemeModeKey` 一致：`system` | `light` | `dark` */
@@ -777,26 +777,26 @@ export class PreferencesService {
     }
   }
 
-  /** AI 会员拦截弹窗是否已在本地展示过（设备维度，再次点击直达充值页）。 */
-  async hasAiMembershipGateDialogShown(): Promise<boolean> {
+  /** 本周已展示 AI 会员拦截弹窗时返回 ISO 周键（`yyyy-Www`）；未展示过则为空。 */
+  async getAiMembershipGateDialogWeek(): Promise<string> {
     try {
       const store = this.ensureStore()
-      return store.getSync(AI_MEMBERSHIP_GATE_DIALOG_SHOWN_KEY, false) as boolean
+      return `${store.getSync(AI_MEMBERSHIP_GATE_DIALOG_WEEK_KEY, '') ?? ''}`.trim()
     } catch (error) {
       Logger.warn('PreferencesService',
-        `hasAiMembershipGateDialogShown failed: ${this.describeError(error as Object)}`)
-      return false
+        `getAiMembershipGateDialogWeek failed: ${this.describeError(error as Object)}`)
+      return ''
     }
   }
 
-  async setAiMembershipGateDialogShown(value: boolean): Promise<void> {
+  async setAiMembershipGateDialogWeek(weekKey: string): Promise<void> {
     try {
       const store = this.ensureStore()
-      store.putSync(AI_MEMBERSHIP_GATE_DIALOG_SHOWN_KEY, value)
+      store.putSync(AI_MEMBERSHIP_GATE_DIALOG_WEEK_KEY, weekKey.trim())
       await store.flush()
     } catch (error) {
       Logger.warn('PreferencesService',
-        `setAiMembershipGateDialogShown failed: ${this.describeError(error as Object)}`)
+        `setAiMembershipGateDialogWeek failed: ${this.describeError(error as Object)}`)
     }
   }
 

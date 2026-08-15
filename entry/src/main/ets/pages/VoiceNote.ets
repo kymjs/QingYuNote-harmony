@@ -10,6 +10,7 @@ import { showConfirmAlertDialog } from '../dialogs/ConfirmAlertDialog'
 import { Logger } from '../common/utils/Logger'
 import { APP_LOCALE_REVISION_KEY, LocaleService } from '../services/LocaleService'
 import { VoiceNoteVisual } from '../components/VoiceNoteVisual'
+import { ensureAiMembershipAccess } from '../common/utils/AiMembershipGateNavigation'
 
 enum VoiceNotePhase {
   Idle = 0,
@@ -41,6 +42,15 @@ struct VoiceNote {
   aboutToAppear(): void {
     this.lifecycle.appear()
     this.closeGuard.reset()
+    void this.gateMembershipOnEnter()
+  }
+
+  private async gateMembershipOnEnter(): Promise<void> {
+    if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+      this.closeGuard.runBack(() => {
+        this.getUIContext().getRouter().back()
+      }, 'VoiceNote')
+    }
   }
 
   aboutToDisappear(): void {

@@ -60,6 +60,10 @@ struct LinkExtract {
     if (context) {
       await PreferencesService.getInstance().init(context)
     }
+    if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+      this.getUIContext().getRouter().back()
+      return
+    }
     const loggedIn = await PreferencesService.getInstance().isUserLoggedIn()
     const guest = await PreferencesService.getInstance().isGuestMode()
     if (!loggedIn || guest) {
