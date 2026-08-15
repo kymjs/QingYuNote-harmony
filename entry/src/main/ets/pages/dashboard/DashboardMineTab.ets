@@ -401,29 +401,29 @@ export struct DashboardMineTab {
         this.openProfile()
       })
 
-      // 右侧「已开通会员」：底边与左侧「会员有效期至」芯片底边对齐。
+      // 右侧「开通会员」：仅未开通时展示；底边与左侧「会员有效期至」芯片底边对齐。
       // 中栏布局：用户名 Flex(~28) + gap4 + slogan(~17) + gap4 + 芯片margin-top4 = 约 57px 到芯片顶部；
       // 芯片高约 14，底边约 71px；按钮高约 30，top = 71 − 30 ≈ 41。
-      Row({ space: 4 }) {
-        MineScalesIcon({
-          iconColor: $r('app.color.accent'),
-          iconSize: 16
+      if (!this.memberActive()) {
+        Row({ space: 4 }) {
+          MineScalesIcon({
+            iconColor: $r('app.color.accent'),
+            iconSize: 16
+          })
+          Text(LocaleService.loc('开通会员', 'Go Pro', '会員になる'))
+            .fontSize(12)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.accent'))
+        }
+        .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+        .backgroundColor($r('app.color.card_background'))
+        .border({ width: 1, color: '#8C0DAA4A' })
+        .borderRadius(ACTION_RADIUS)
+        .margin({ top: 30 })
+        .onClick(() => {
+          this.openRecharge()
         })
-        Text(this.memberActive()
-          ? LocaleService.loc('已开通会员', 'Subscribed', '会員済み')
-          : LocaleService.loc('开通会员', 'Go Pro', '会員になる'))
-          .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.accent'))
       }
-      .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-      .backgroundColor($r('app.color.card_background'))
-      .border({ width: 1, color: '#8C0DAA4A' })
-      .borderRadius(ACTION_RADIUS)
-      .margin({ top: 30 })
-      .onClick(() => {
-        this.openRecharge()
-      })
     }
     .width('100%')
     .alignItems(VerticalAlign.Top)
