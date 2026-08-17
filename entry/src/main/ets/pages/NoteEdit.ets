@@ -40,6 +40,7 @@ import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { NoteImageGalleryUtils } from '../common/utils/NoteImageGalleryUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
+import { capturePhotoUri, requestCameraPermission } from '../common/utils/NoteCameraCapture'
 import { NoteFolderTree, type FolderSidebarRow, type HomeSidebarFilterMode, type MovePickerEntry } from '../common/utils/NoteFolderTree'
 import {
   hasEditorTitleOrBody,
@@ -1198,7 +1199,7 @@ struct NoteEdit {
       } else if (action === 'generateNoteFromImage') {
         void this.insertImage(true, true)
       } else if (action === 'bookScan') {
-        void this.insertImage()
+        void this.insertImage(true, true, true, true)
       } else if (action === 'todoList') {
         this.applyTodoListEntryDefaults()
       }
@@ -1693,7 +1694,9 @@ struct NoteEdit {
 
   private async insertImage(
     thenOptimize: boolean = false,
-    switchToPreviewOnSuccess: boolean = false
+    switchToPreviewOnSuccess: boolean = false,
+    fromCamera: boolean = false,
+    bookExtract: boolean = false
   ): Promise<void> {
     if (thenOptimize) {
       if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
@@ -1704,14 +1707,36 @@ struct NoteEdit {
       }
     }
     try {
-      const photoSelectOptions: photoAccessHelper.PhotoSelectOptions = new photoAccessHelper.PhotoSelectOptions()
-      photoSelectOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE
-      photoSelectOptions.maxSelectNumber = 1
-      const photoPicker: photoAccessHelper.PhotoViewPicker = new photoAccessHelper.PhotoViewPicker()
-      const result: photoAccessHelper.PhotoSelectResult = await photoPicker.select(photoSelectOptions)
-      const uri: string = result.photoUris[0] ?? ''
-      if (uri.length === 0) {
-        return
+      let uri: string = ''
+      if (fromCamera) {
+        const context = this.obtainUiAbilityContext()
+        if (!context) {
+          this.showPreviewMessage(EditorUiStrings.loc('无法打开相机', 'Unable to open camera', 'カメラを開けません'))
+          return
+        }
+        const granted = await requestCameraPermission()
+        if (!granted) {
+          this.showPreviewMessage(EditorUiStrings.loc(
+            '需要相机权限才能拍照',
+            'Camera permission is required to take photos',
+            '写真を撮るにはカメラ権限が必要です'
+          ))
+          return
+        }
+        uri = await capturePhotoUri(context)
+        if (uri.length === 0) {
+          return
+        }
+      } else {
+        const photoSelectOptions: photoAccessHelper.PhotoSelectOptions = new photoAccessHelper.PhotoSelectOptions()
+        photoSelectOptions.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE
+        photoSelectOptions.maxSelectNumber = 1
+        const photoPicker: photoAccessHelper.PhotoViewPicker = new photoAccessHelper.PhotoViewPicker()
+        const result: photoAccessHelper.PhotoSelectResult = await photoPicker.select(photoSelectOptions)
+        uri = result.photoUris[0] ?? ''
+        if (uri.length === 0) {
+          return
+        }
       }
       if (thenOptimize && !AiNoteBackgroundTaskService.getInstance().ensureIdleOrNotifyBusy()) {
         return
@@ -1750,11 +1775,13 @@ struct NoteEdit {
         this.previewDirty = true
       }
       if (thenOptimize && this.lifecycle.isActive()) {
-        await this.onAiOptimizeContent(switchToPreviewOnSuccess)
+        await this.onAiOptimizeContent(switchToPreviewOnSuccess, bookExtract)
       }
     } catch (error) {
       Logger.error('NoteEdit', `insertImage failed: ${JSON.stringify(error)}`)
-      this.showPreviewMessage(EditorUiStrings.loc('插入图片失败', 'Failed to insert image', '画像の挿入に失敗しました'))
+      this.showPreviewMessage(fromCamera
+        ? EditorUiStrings.loc('无法打开相机', 'Unable to open camera', 'カメラを開けません')
+        : EditorUiStrings.loc('插入图片失败', 'Failed to insert image', '画像の挿入に失敗しました'))
     }
   }
 
@@ -2617,7 +2644,10 @@ struct NoteEdit {
     this.maybeSwitchToPreviewAfterAiSuccess(result.switchToPreviewOnSuccess)
   }
 
-  private async onAiOptimizeContent(switchToPreviewOnSuccess: boolean = false): Promise<void> {
+  private async onAiOptimizeContent(
+    switchToPreviewOnSuccess: boolean = false,
+    bookExtract: boolean = false
+  ): Promise<void> {
     const svc = AiNoteBackgroundTaskService.getInstance()
     if (this.aiNoteWorking || svc.isBusy) {
       svc.ensureIdleOrNotifyBusy()
@@ -2644,11 +2674,13 @@ struct NoteEdit {
     if (!svc.ensureIdleOrNotifyBusy()) {
       return
     }
-    const optimizeMessage = EditorUiStrings.loc(
-      !noteHasText && hasImageRefs ? 'AI 生成笔记中…' : 'AI 处理中…',
-      !noteHasText && hasImageRefs ? 'AI writing note…' : 'AI working…',
-      !noteHasText && hasImageRefs ? 'AIがノートを生成中…' : 'AI処理中…'
-    )
+    const optimizeMessage = bookExtract
+      ? EditorUiStrings.loc('正在识别书中文字…', 'Extracting text from book…', '書籍の文字を認識中…')
+      : EditorUiStrings.loc(
+        !noteHasText && hasImageRefs ? 'AI 生成笔记中…' : 'AI 处理中…',
+        !noteHasText && hasImageRefs ? 'AI writing note…' : 'AI working…',
+        !noteHasText && hasImageRefs ? 'AIがノートを生成中…' : 'AI処理中…'
+      )
     this.aiWorkingOverlayMessage = optimizeMessage
     this.aiNoteWorking = true
     const filesDir = this.filesDirCache.length > 0
@@ -2660,7 +2692,8 @@ struct NoteEdit {
       this.title,
       filesDir,
       optimizeMessage,
-      switchToPreviewOnSuccess
+      switchToPreviewOnSuccess,
+      bookExtract
     )
     if (!started && !svc.isBusy) {
       this.aiNoteWorking = false

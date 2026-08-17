@@ -76,7 +76,11 @@ export class AiNoteService {
     return AiNoteService.instance
   }
 
-  async optimizeContent(content: string, filesBasePath: string = ''): Promise<string> {
+  async optimizeContent(
+    content: string,
+    filesBasePath: string = '',
+    bookExtract: boolean = false
+  ): Promise<string> {
     const trimmed = content.trim()
     const hasImageRefs = NoteStateCodec.extractImageRefs(content).length > 0
     const noteHasText = NoteStateCodec.hasSubstantiveNoteText(content)
@@ -97,10 +101,12 @@ export class AiNoteService {
       )
     }
     const optimized = await AiNoteService.chatWithImages(
-      AiNotePrompt.OPTIMIZE_WITH_IMAGES_SYSTEM,
-      AiNotePrompt.buildOptimizeWithImagesUserMessage(content, images.length, noteHasText),
+      bookExtract ? AiNotePrompt.BOOK_EXTRACT_SYSTEM : AiNotePrompt.OPTIMIZE_WITH_IMAGES_SYSTEM,
+      bookExtract
+        ? AiNotePrompt.buildBookExtractUserMessage(content, images.length, noteHasText)
+        : AiNotePrompt.buildOptimizeWithImagesUserMessage(content, images.length, noteHasText),
       images,
-      0.35,
+      bookExtract ? 0.1 : 0.35,
       8192
     )
     return NoteStateCodec.mergeOptimizedWithTrailingImages(content, optimized)

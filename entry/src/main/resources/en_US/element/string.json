@@ -445,6 +445,10 @@
       "value": "Used to record voice notes"
     },
     {
+      "name": "permission_camera_reason",
+      "value": "Used to photograph book pages and extract text"
+    },
+    {
       "name": "login_title",
       "value": "Sign in"
     },

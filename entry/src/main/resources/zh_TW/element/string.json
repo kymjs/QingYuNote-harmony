@@ -425,6 +425,10 @@
       "value": "用於錄製語音筆記"
     },
     {
+      "name": "permission_camera_reason",
+      "value": "用於拍攝紙書頁面並提取文字"
+    },
+    {
       "name": "login_title",
       "value": "登錄"
     },

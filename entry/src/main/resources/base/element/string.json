@@ -441,6 +441,10 @@
       "value": "用于录制语音笔记"
     },
     {
+      "name": "permission_camera_reason",
+      "value": "用于拍摄纸书页面并提取文字"
+    },
+    {
       "name": "login_title",
       "value": "登录"
     },

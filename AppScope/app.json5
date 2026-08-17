@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.kymjs.note",
     "vendor": "example",
-    "versionCode": 101160021,
-    "versionName": "1.1.16",
+    "versionCode": 101170001,
+    "versionName": "1.1.17",
     "icon": "$media:layered_image",
     "label": "$string:app_name"
   }

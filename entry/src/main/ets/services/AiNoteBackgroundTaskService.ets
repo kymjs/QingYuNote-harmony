@@ -138,7 +138,8 @@ export class AiNoteBackgroundTaskService {
     title: string = '',
     filesBasePath: string = '',
     overlayMessage: string = '',
-    switchToPreviewOnSuccess: boolean = false
+    switchToPreviewOnSuccess: boolean = false,
+    bookExtract: boolean = false
   ): Promise<boolean> {
     const id = noteId.trim()
     if (id.length === 0) {
@@ -160,7 +161,8 @@ export class AiNoteBackgroundTaskService {
         content: content,
         skipTitleAutoFill: title.trim().length === 0
       })
-      const optimized = await AiNoteService.getInstance().optimizeContent(content, filesBasePath)
+      const optimized = await AiNoteService.getInstance().optimizeContent(
+        content, filesBasePath, bookExtract)
       const parts = MarkdownUtils.splitLinkSummary(optimized)
       let nextTitle = title
       let nextContent = optimized
@@ -173,11 +175,13 @@ export class AiNoteBackgroundTaskService {
         content: nextContent,
         skipTitleAutoFill: nextTitle.trim().length === 0
       })
-      const successText = EditorUiStrings.loc(
-        noteHasText ? 'AI 已优化笔记正文' : 'AI 已根据图片生成笔记',
-        noteHasText ? 'AI polished the note' : 'AI generated note from image',
-        noteHasText ? 'AIがノート本文を最適化しました' : 'AIが画像からノートを生成しました'
-      )
+      const successText = bookExtract
+        ? EditorUiStrings.loc('AI 已提取书中文字', 'AI extracted text from the book', 'AIが本の文字を抽出しました')
+        : EditorUiStrings.loc(
+          noteHasText ? 'AI 已优化笔记正文' : 'AI 已根据图片生成笔记',
+          noteHasText ? 'AI polished the note' : 'AI generated note from image',
+          noteHasText ? 'AIがノート本文を最適化しました' : 'AIが画像からノートを生成しました'
+        )
       const result = new AiNoteBackgroundTaskResult()
       result.noteId = id
       result.kind = 'optimize'

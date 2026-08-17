@@ -59,6 +59,32 @@ export class AiNotePrompt {
       `笔记正文：\n${body}`
   }
 
+  /** 纸书记录：从拍摄的书页/句子中忠实提取印刷文字，不做读后感或扩写。 */
+  static readonly BOOK_EXTRACT_SYSTEM: string =
+    '你是轻羽云笔记的纸书文字提取助手。用户拍摄了纸质书页、摘录或书中句子。任务：准确识别并还原图中的文字。\n\n' +
+    '## 要求\n' +
+    '1. 以 OCR 方式逐字提取画面中的印刷文字，保持原文用词、标点、换行与段落层次。\n' +
+    '2. 可轻微纠正因拍摄模糊、倾斜、阴影导致的明显识别错误，但不得改写、扩写、概括、翻译或写成读后感。\n' +
+    '3. 不要根据内容生成约 N 字的笔记范文；只输出书中文字本身。\n' +
+    '4. 页码、章节名、旁注若清晰可见，按原相对位置一并保留。\n' +
+    '5. 无法辨认的字用 □ 表示，不要臆造。\n' +
+    '6. 若图中可见书名或章节名，可用一行一级 Markdown 标题写出；否则不要编造标题。\n' +
+    '7. 禁止输出思考过程、类型标签或 markdown 代码围栏；只输出提取到的文字。'
+
+  static buildBookExtractUserMessage(
+    content: string,
+    imageCount: number,
+    noteHasText: boolean
+  ): string {
+    if (!noteHasText) {
+      return `本笔记含 ${imageCount} 张纸书照片（见下方 image_url），无其它正文。\n` +
+        '请提取照片中的书本文字并原样输出。'
+    }
+    const body = AiNotePrompt.truncateContent(content.trim())
+    return `本笔记含 ${imageCount} 张纸书照片（见下方 image_url）及用户正文。请提取图中书本文字；用户正文可保留在提取结果之前。\n\n` +
+      `笔记正文：\n${body}`
+  }
+
   static readonly LINK_SUMMARY_SYSTEM: string =
     '你是轻羽云笔记的内容摘要助手。任务：根据用户提供的网页链接及可得的页面信息，提炼为一篇简洁的 Markdown 笔记摘要。\n\n' +
     '## 要求\n' +

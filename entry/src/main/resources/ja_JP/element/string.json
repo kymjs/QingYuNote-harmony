@@ -445,6 +445,10 @@
       "value": "音声メモの録音に使用します"
     },
     {
+      "name": "permission_camera_reason",
+      "value": "紙の本を撮影して文字を抽出するために使用します"
+    },
+    {
       "name": "login_title",
       "value": "ログイン"
     },
