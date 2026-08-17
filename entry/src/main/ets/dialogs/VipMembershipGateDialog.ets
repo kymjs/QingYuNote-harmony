@@ -107,7 +107,7 @@ export struct VipMembershipGateDialog {
                 this.loc('笔记实时同步', 'Realtime note sync', 'ノートをリアルタイム同期')
               )
               this.benefitCell(
-                $r('sys.symbol.iphone'),
+                $r('sys.symbol.phone'),
                 this.loc('多端访问', 'Multi-device', 'マルチデバイス'),
                 this.loc('手机、平板等', 'Phone, tablet & more', 'スマホ・タブレットなど'),
                 this.loc('多设备随时查看', 'Access on any device', 'どの端末でも確認')

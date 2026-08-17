@@ -12,6 +12,12 @@ import { openReferralInviteSharePage } from '../../common/utils/ReferralInviteNa
 import { openQingyuVipPage } from '../../common/utils/OpenQingyuVipPage'
 import { Logger } from '../../common/utils/Logger'
 import { ImageCacheService } from '../../services/ImageCacheService'
+import {
+  normalizeAppThemeMode,
+  setAndApplyAppThemeMode,
+  type AppThemeMode
+} from '../../common/utils/AppTheme'
+import { showAppearancePickerDialog } from '../../dialogs/AppearancePickerDialog'
 
 const ACCENT = '#0DAA4A'
 const CARD_RADIUS = 16
@@ -105,6 +111,7 @@ export struct DashboardMineTab {
   @State usedBytes: number = 0
   @State appVersion: string = ''
   @State showReferralInviteMenu: boolean = false
+  @State themeMode: AppThemeMode = 'system'
   @State loading: boolean = true
   @State avatarLoadFailed: boolean = false
   private reloadGeneration: number = 0
@@ -199,6 +206,12 @@ export struct DashboardMineTab {
     } catch (_) {
     }
 
+    let theme: AppThemeMode = 'system'
+    try {
+      theme = normalizeAppThemeMode(await PreferencesService.getInstance().getAppThemeMode())
+    } catch (_) {
+    }
+
     if (generation !== this.reloadGeneration) {
       return
     }
@@ -208,8 +221,31 @@ export struct DashboardMineTab {
     this.usedBytes = usedBytes
     this.appVersion = version
     this.showReferralInviteMenu = inviteEnabled && uid.length > 0
+    this.themeMode = theme
     this.avatarLoadFailed = false
     this.loading = false
+  }
+
+  private appearanceCaption(): string {
+    if (this.themeMode === 'light') {
+      return LocaleService.loc('浅色', 'Light', 'ライト')
+    }
+    if (this.themeMode === 'dark') {
+      return LocaleService.loc('深色', 'Dark', 'ダーク')
+    }
+    return LocaleService.loc('跟随系统', 'System', 'システムに合わせる')
+  }
+
+  private async openAppearancePicker(): Promise<void> {
+    const selected = await showAppearancePickerDialog(this.getUIContext(), this.themeMode)
+    if (selected === null) {
+      return
+    }
+    try {
+      this.themeMode = await setAndApplyAppThemeMode(selected)
+    } catch (error) {
+      Logger.warn('DashboardMineTab', `openAppearancePicker failed: ${JSON.stringify(error)}`)
+    }
   }
 
   private displayName(): string {
@@ -601,15 +637,24 @@ export struct DashboardMineTab {
   @Builder
   buildMenuGroup1() {
     Column() {
-      this.menuRow($r('sys.symbol.folder'),
-        LocaleService.loc('文件管理', 'Folders', 'フォルダ管理'), '', false, () => {
-          this.push('pages/FolderManage')
+      this.menuRow($r('sys.symbol.icloud'),
+        LocaleService.loc('云同步设置', 'Cloud sync', 'クラウド同期'), '', false, () => {
+          this.push('pages/CloudSyncSettings')
         }, true)
-      this.menuRow($r('sys.symbol.label'),
-        LocaleService.loc('标签管理', 'Tags', 'タグ管理'), '', false, () => {
-          this.push('pages/TagManage')
+      this.menuRow($r('sys.symbol.arrow_down_to_line'),
+        LocaleService.loc('导入笔记', 'Import notes', 'ノートをインポート'), '', false, () => {
+          this.push('pages/ImportNotes')
         }, true)
-      this.menuRow($r('sys.symbol.clean'),
+      this.menuRow($r('sys.symbol.character'),
+        LocaleService.loc('多语言', 'Language', '言語'), '', false, () => {
+          this.push('pages/LanguageSettings')
+        }, true)
+      this.menuRow($r('sys.symbol.circle'),
+        LocaleService.loc('外观', 'Appearance', '外観'),
+        this.appearanceCaption(), false, () => {
+          void this.openAppearancePicker()
+        }, true)
+      this.menuRow($r('sys.symbol.trash'),
         LocaleService.loc('回收站', 'Recycle bin', 'ゴミ箱'), '', false, () => {
           this.push('pages/RecycleBin')
         }, true)

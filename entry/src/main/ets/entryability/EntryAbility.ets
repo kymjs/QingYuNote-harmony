@@ -12,6 +12,7 @@ import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { LocaleService, APP_LOCALE_REVISION_KEY } from '../services/LocaleService'
 import { SyncConstants } from '../common/constants/SyncConstants'
 import { recheckForceUpdateOnResume } from '../services/AppUpdateUi'
+import { applyAppColorMode } from '../common/utils/AppTheme'
 
 const DOMAIN = 0x0000
 const DEFERRED_SERVICES_DELAY_MS = 1500
@@ -37,7 +38,7 @@ export default class EntryAbility extends UIAbility {
     try {
       await PreferencesService.getInstance().init(this.context)
       const mode = await PreferencesService.getInstance().getAppThemeMode()
-      this.applyColorMode(mode)
+      applyAppColorMode(mode)
     } catch (err) {
       hilog.error(DOMAIN, 'noteTag', 'Failed to apply colorMode. Cause: %{public}s', JSON.stringify(err))
       try {
@@ -46,16 +47,6 @@ export default class EntryAbility extends UIAbility {
         // ignore
       }
     }
-  }
-
-  private applyColorMode(mode: string): void {
-    let colorMode = ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET
-    if (mode === 'light') {
-      colorMode = ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT
-    } else if (mode === 'dark') {
-      colorMode = ConfigurationConstant.ColorMode.COLOR_MODE_DARK
-    }
-    this.context.getApplicationContext().setColorMode(colorMode)
   }
 
   onDestroy(): void {

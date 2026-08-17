@@ -1264,9 +1264,9 @@ struct MainShell {
               (): void => { void this.quickBook() }, $r('app.media.ic_quick_book'))
             this.quickCardAsset(LocaleService.loc('待办事项', 'To-do', 'ToDo'), ACCENT,
               (): void => { void this.quickTodo() }, $r('app.media.ic_quick_todo'))
-            this.quickCardAsset(LocaleService.loc('知识图谱', 'Knowledge graph', '知識グラフ'), PURPLE,
+            this.quickCardAsset(LocaleService.loc('知识图谱', 'Knowledge graph', '知識グラフ'), ACCENT,
               (): void => { void this.quickGraph() }, $r('app.media.ic_note_knowledge_graph'))
-            this.quickCardAsset(LocaleService.loc('思维导图', 'Mind map', 'マインドマップ'), PURPLE,
+            this.quickCardAsset(LocaleService.loc('思维导图', 'Mind map', 'マインドマップ'), ACCENT,
               (): void => { void this.quickMindMap() }, $r('app.media.ic_quick_mindmap'))
           }
         }
@@ -1292,9 +1292,9 @@ struct MainShell {
               (): void => { void this.quickBook() }, $r('app.media.ic_quick_book'))
             this.quickCardFlexAsset(LocaleService.loc('待办事项', 'To-do', 'ToDo'), ACCENT,
               (): void => { void this.quickTodo() }, $r('app.media.ic_quick_todo'))
-            this.quickCardFlexAsset(LocaleService.loc('知识图谱', 'Knowledge graph', '知識グラフ'), PURPLE,
+            this.quickCardFlexAsset(LocaleService.loc('知识图谱', 'Knowledge graph', '知識グラフ'), ACCENT,
               (): void => { void this.quickGraph() }, $r('app.media.ic_note_knowledge_graph'))
-            this.quickCardFlexAsset(LocaleService.loc('思维导图', 'Mind map', 'マインドマップ'), PURPLE,
+            this.quickCardFlexAsset(LocaleService.loc('思维导图', 'Mind map', 'マインドマップ'), ACCENT,
               (): void => { void this.quickMindMap() }, $r('app.media.ic_quick_mindmap'))
           }
           .width('100%')
