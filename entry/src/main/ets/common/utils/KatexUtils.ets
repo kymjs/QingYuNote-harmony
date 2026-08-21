@@ -113,6 +113,18 @@ export class KatexUtils {
         parts.push(`### ${block.content}`)
         continue
       }
+      if (block.type === 'heading4') {
+        parts.push(`#### ${block.content}`)
+        continue
+      }
+      if (block.type === 'heading5') {
+        parts.push(`##### ${block.content}`)
+        continue
+      }
+      if (block.type === 'heading6') {
+        parts.push(`###### ${block.content}`)
+        continue
+      }
       if (block.type === 'code') {
         parts.push('```\n' + block.content + '\n```')
         continue

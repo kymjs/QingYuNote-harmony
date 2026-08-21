@@ -7,6 +7,8 @@ import {
   type EditorTextDiff
 } from '../common/utils/EditorMarkdownInsert'
 import { EditorQuickActionBar, type EditorQuickActionType } from '../components/EditorQuickActionBar'
+import { MermaidTemplates } from '../common/utils/MermaidTemplates'
+import { MermaidRenderBarrier } from '../components/MermaidPreview'
 import { ImageCacheService } from '../services/ImageCacheService'
 import {
   buildEditorLinkInsertDialogContent,
@@ -784,6 +786,10 @@ struct NoteEdit {
       void this.insertImage()
       return
     }
+    if (action === 'mermaid') {
+      this.insertMermaidTemplate(MermaidTemplates.DEFAULT_KIND)
+      return
+    }
     const caret = this.currentContentCaret()
     let result: EditorInsertResult
     switch (action) {
@@ -838,6 +844,13 @@ struct NoteEdit {
       default:
         return
     }
+    this.applyContentInsert(result)
+  }
+
+  private insertMermaidTemplate(kind: string = MermaidTemplates.DEFAULT_KIND): void {
+    this.captureContentCaretFromSelection()
+    const caret = this.currentContentCaret()
+    const result = MermaidTemplates.insertTemplate(this.content, caret, kind)
     this.applyContentInsert(result)
   }
 
@@ -1883,6 +1896,7 @@ struct NoteEdit {
     )
     const mountDelayMs = shareExportMountDelayMs(theme, tone, hasImages)
     await noteEditDelayMs(mountDelayMs)
+    await MermaidRenderBarrier.waitUntilEmpty(8000)
   }
 
   /** 分享正文是否含 Markdown 图片块。 */
@@ -3306,6 +3320,9 @@ struct NoteEdit {
           },
           onAction: (action: EditorQuickActionType): void => {
             this.handleQuickAction(action)
+          },
+          onMermaidKindSelected: (kind: string): void => {
+            this.insertMermaidTemplate(kind)
           }
         })
       }

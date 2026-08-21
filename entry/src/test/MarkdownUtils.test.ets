@@ -17,6 +17,30 @@ export default function markdownUtilsTest() {
       expect(blocks[1].content).assertEqual('普通段落')
     })
 
+    it('should parse heading levels 1 through 6', 0, () => {
+      const src = '# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6'
+      const blocks = MarkdownUtils.parseBlocks(src)
+      expect(blocks.length).assertEqual(6)
+      expect(blocks[0].type).assertEqual('heading1')
+      expect(blocks[0].content).assertEqual('H1')
+      expect(blocks[1].type).assertEqual('heading2')
+      expect(blocks[1].content).assertEqual('H2')
+      expect(blocks[2].type).assertEqual('heading3')
+      expect(blocks[2].content).assertEqual('H3')
+      expect(blocks[3].type).assertEqual('heading4')
+      expect(blocks[3].content).assertEqual('H4')
+      expect(blocks[4].type).assertEqual('heading5')
+      expect(blocks[4].content).assertEqual('H5')
+      expect(blocks[5].type).assertEqual('heading6')
+      expect(blocks[5].content).assertEqual('H6')
+    })
+
+    it('should not treat seven hashes as heading', 0, () => {
+      const blocks = MarkdownUtils.parseBlocks('####### not a heading')
+      expect(blocks.length).assertEqual(1)
+      expect(blocks[0].type).assertEqual('paragraph')
+    })
+
     it('should group unordered and ordered lists', 0, () => {
       const blocks = MarkdownUtils.parseBlocks('- 第一项\n- 第二项\n\n1. 一\n2. 二')
       expect(blocks.length).assertEqual(2)

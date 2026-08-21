@@ -19,6 +19,7 @@ import {
   shareExportMountDelayMs,
   shareExportMountKey
 } from './NoteEditShareHelper'
+import { MermaidRenderBarrier } from '../../components/MermaidPreview'
 import {
   mergeSharePixelMapsVertical,
   normalizeAllShareSlicesForMerge,
@@ -164,6 +165,7 @@ export class NoteShareExportFlow {
       this.shareExportContentHasImages()
     )
     await noteEditDelayMs(mountDelayMs)
+    await MermaidRenderBarrier.waitUntilEmpty(8000)
   }
 
   async exportShareImageToCache(

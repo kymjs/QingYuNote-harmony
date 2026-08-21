@@ -10,7 +10,7 @@ export interface MarkdownInline {
 }
 
 export type MarkdownBlockType =
-  'heading1' | 'heading2' | 'heading3' | 'quote' | 'unordered_list' | 'ordered_list' | 'checkbox_list' | 'code' | 'divider' | 'image' | 'paragraph' | 'math_display' | 'table'
+  'heading1' | 'heading2' | 'heading3' | 'heading4' | 'heading5' | 'heading6' | 'quote' | 'unordered_list' | 'ordered_list' | 'checkbox_list' | 'code' | 'divider' | 'image' | 'paragraph' | 'math_display' | 'table'
 
 type MarkdownListBlockType = 'unordered_list' | 'ordered_list'
 
@@ -548,35 +548,13 @@ export class MarkdownUtils {
         })
         continue
       }
-      if (trimmed.startsWith('### ')) {
+      const headingMatch = /^(#{1,6})\s+(.*)$/.exec(trimmed)
+      if (headingMatch) {
         flushAll()
-        const text = trimmed.slice(4)
+        const level = headingMatch[1].length
+        const text = headingMatch[2] ?? ''
         blocks.push({
-          type: 'heading3',
-          content: text,
-          inlines: MarkdownUtils.parseInlines(text),
-          items: [],
-          language: ''
-        })
-        continue
-      }
-      if (trimmed.startsWith('## ')) {
-        flushAll()
-        const text = trimmed.slice(3)
-        blocks.push({
-          type: 'heading2',
-          content: text,
-          inlines: MarkdownUtils.parseInlines(text),
-          items: [],
-          language: ''
-        })
-        continue
-      }
-      if (trimmed.startsWith('# ')) {
-        flushAll()
-        const text = trimmed.slice(2)
-        blocks.push({
-          type: 'heading1',
+          type: (`heading${level}`) as MarkdownBlockType,
           content: text,
           inlines: MarkdownUtils.parseInlines(text),
           items: [],

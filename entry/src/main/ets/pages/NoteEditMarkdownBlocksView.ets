@@ -3,12 +3,14 @@ import { CodeHighlight, type CodeHighlightToken, type CodeHighlightTokenKind } f
 import { CachedNetworkImage } from '../components/CachedNetworkImage'
 import { PreviewStandaloneLinkCard } from '../components/PreviewStandaloneLinkCard'
 import { KatexFormulaPreview } from '../components/KatexFormulaPreview'
+import { MermaidPreview } from '../components/MermaidPreview'
 import { ImageCacheService } from '../services/ImageCacheService'
 import { KatexUtils } from '../common/utils/KatexUtils'
 import { fileUri } from '@kit.CoreFileKit'
 import display from '@ohos.display'
 import { FileService } from '../services/FileService'
 import { AppContextHolder } from '../services/AppContextHolder'
+import { ConfigurationConstant } from '@kit.AbilityKit'
 
 /** 笔记预览/分享卡片共用的 Markdown 块渲染，独立于编辑页以缩小状态失效范围。 */
 @Component
@@ -119,6 +121,51 @@ export struct NoteEditMarkdownBlocksView {
       return `#${color.substring(3)}`
     }
     return color
+  }
+
+  private mermaidIsDark(): boolean {
+    if (this.forShareExport) {
+      return this.isHexColorDark(this.mathBackgroundColor())
+    }
+    const ctx = AppContextHolder.tryGetContext()
+    if (ctx !== undefined) {
+      try {
+        const mode = ctx.config.colorMode
+        if (mode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK) {
+          return true
+        }
+        if (mode === ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT) {
+          return false
+        }
+      } catch (_) {
+      }
+    }
+    return false
+  }
+
+  private isHexColorDark(color: string): boolean {
+    if (color === 'transparent' || color.length < 7 || !color.startsWith('#')) {
+      return this.forShareExport
+    }
+    const hex = color.length >= 9 ? color.substring(3, 9) : color.substring(1, 7)
+    if (hex.length < 6) {
+      return false
+    }
+    const r = parseInt(hex.substring(0, 2), 16)
+    const g = parseInt(hex.substring(2, 4), 16)
+    const b = parseInt(hex.substring(4, 6), 16)
+    if (isNaN(r) || isNaN(g) || isNaN(b)) {
+      return false
+    }
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    return luminance < 0.45
+  }
+
+  private mermaidTextColor(): string {
+    if (this.forShareExport) {
+      return this.mathTextColor()
+    }
+    return this.mermaidIsDark() ? '#E5E5EA' : '#1D1D1F'
   }
 
   private hasMathInline(inlines: MarkdownInline[]): boolean {
@@ -758,6 +805,15 @@ export struct NoteEditMarkdownBlocksView {
     } else if (block.type === 'heading3') {
       this.buildInlineText(block.inlines, block.content, 17, this.primaryTextColor(), this.contentLineHeight(24),
         FontWeight.Medium)
+    } else if (block.type === 'heading4') {
+      this.buildInlineText(block.inlines, block.content, 16, this.primaryTextColor(), this.contentLineHeight(22),
+        FontWeight.Medium)
+    } else if (block.type === 'heading5') {
+      this.buildInlineText(block.inlines, block.content, 15, this.primaryTextColor(), this.contentLineHeight(21),
+        FontWeight.Medium)
+    } else if (block.type === 'heading6') {
+      this.buildInlineText(block.inlines, block.content, 14, this.primaryTextColor(), this.contentLineHeight(20),
+        FontWeight.Medium)
     } else if (block.type === 'quote') {
       Column() {
         this.buildInlineText(block.inlines, block.content, $r('app.float.body_font_size'), this.secondaryTextColor(),
@@ -775,20 +831,31 @@ export struct NoteEditMarkdownBlocksView {
     } else if (block.type === 'table') {
       this.buildTableBlock(block, this.tableColumnCount(block))
     } else if (block.type === 'code') {
-      Column({ space: 8 }) {
-        if (block.language.length > 0) {
-          Text(block.language.toLowerCase())
-            .fontSize(11)
-            .fontColor(this.tertiaryTextColor())
-            .copyOption(CopyOptions.LocalDevice)
+      if (block.language.trim().toLowerCase() === 'mermaid') {
+        MermaidPreview({
+          source: block.content,
+          textColor: this.mermaidTextColor(),
+          previewBackgroundColor: this.mathBackgroundColor(),
+          isDark: this.mermaidIsDark(),
+          interactive: !this.forShareExport,
+          forShareExport: this.forShareExport
+        })
+      } else {
+        Column({ space: 8 }) {
+          if (block.language.length > 0) {
+            Text(block.language.toLowerCase())
+              .fontSize(11)
+              .fontColor(this.tertiaryTextColor())
+              .copyOption(CopyOptions.LocalDevice)
+          }
+          this.buildHighlightedCode(block.content, $r('app.float.caption_font_size'), this.contentLineHeight(22))
         }
-        this.buildHighlightedCode(block.content, $r('app.float.caption_font_size'), this.contentLineHeight(22))
+        .width('100%')
+        .padding(14)
+        .backgroundColor(this.codeBackgroundColor())
+        .borderRadius(12)
+        .border({ width: 1, color: this.cardBorderColor() })
       }
-      .width('100%')
-      .padding(14)
-      .backgroundColor(this.codeBackgroundColor())
-      .borderRadius(12)
-      .border({ width: 1, color: this.cardBorderColor() })
     } else if (block.type === 'divider') {
       Divider()
         .strokeWidth(1)

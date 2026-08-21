@@ -1,3 +1,7 @@
+import { MermaidTemplates } from '../common/utils/MermaidTemplates'
+import { EditorUiStrings } from '../common/utils/EditorUiStrings'
+import { promptAction } from '@kit.ArkUI'
+
 export type EditorQuickActionType =
   | 'link'
   | 'image'
@@ -9,6 +13,7 @@ export type EditorQuickActionType =
   | 'bold'
   | 'strike'
   | 'italic'
+  | 'mermaid'
 
 @Component
 export struct EditorQuickActionBar {
@@ -19,11 +24,14 @@ export struct EditorQuickActionBar {
   }
   onAction: (action: EditorQuickActionType) => void = (_: EditorQuickActionType) => {
   }
+  /** 短按 flowchart / 长按选类型后回调 kind。 */
+  onMermaidKindSelected: (kind: string) => void = (_kind: string) => {
+  }
 
   private static readonly BAR_HEIGHT: number = 40
   private static readonly SLOT_SIZE: number = 40
   private static readonly BAR_PADDING_H: number = 0
-  private static readonly ICON_COUNT: number = 10
+  private static readonly ICON_COUNT: number = 11
   private static readonly ICON_VISUAL_SIZE: number = EditorQuickActionBar.SLOT_SIZE * 0.7
   /** 加粗/斜体/删除线图标视觉缩小 15%，点击区域仍用 ICON_VISUAL_SIZE 计算。 */
   private static readonly ICON_VISUAL_SIZE_COMPACT: number =
@@ -55,6 +63,36 @@ export struct EditorQuickActionBar {
     return EditorQuickActionBar.ICON_VISUAL_SIZE + hPad * 2
   }
 
+  private showMermaidKindMenu(): void {
+    const buttons: promptAction.ShowDialogButtonOptions[] = MermaidTemplates.KINDS.map((kind: string) => {
+      return {
+        text: EditorUiStrings.loc(
+          MermaidTemplates.labelFor(kind),
+          MermaidTemplates.labelFor(kind),
+          MermaidTemplates.labelFor(kind)
+        ),
+        color: '#007AFF'
+      } as promptAction.ShowDialogButtonOptions
+    })
+    try {
+      promptAction.showDialog({
+        title: EditorUiStrings.loc('插入 Mermaid', 'Insert Mermaid', 'Mermaidを挿入'),
+        message: EditorUiStrings.loc('选择图表类型', 'Choose diagram type', '図の種類を選択'),
+        buttons: buttons
+      }, (error, data) => {
+        if (error || data === undefined) {
+          return
+        }
+        const index = data.index as number
+        if (index >= 0 && index < MermaidTemplates.KINDS.length) {
+          this.onMermaidKindSelected(MermaidTemplates.KINDS[index])
+        }
+      })
+    } catch (_) {
+      this.onMermaidKindSelected(MermaidTemplates.DEFAULT_KIND)
+    }
+  }
+
   @Builder
   private buildSymbolIcon(
     action: EditorQuickActionType,
@@ -79,8 +117,20 @@ export struct EditorQuickActionBar {
       }
     })
     .onClick(() => {
+      if (action === 'mermaid') {
+        this.onMermaidKindSelected(MermaidTemplates.DEFAULT_KIND)
+        return
+      }
       this.onAction(action)
     })
+    .gesture(
+      LongPressGesture({ repeat: false })
+        .onAction(() => {
+          if (action === 'mermaid') {
+            this.showMermaidKindMenu()
+          }
+        })
+    )
   }
 
   @Builder
@@ -110,6 +160,10 @@ export struct EditorQuickActionBar {
       }
     })
     .onClick(() => {
+      if (action === 'mermaid') {
+        this.onMermaidKindSelected(MermaidTemplates.DEFAULT_KIND)
+        return
+      }
       this.onAction(action)
     })
   }
@@ -127,6 +181,7 @@ export struct EditorQuickActionBar {
       this.buildSymbolIcon('bold', $r('sys.symbol.bold'), hPad)
       this.buildSymbolIcon('strike', $r('sys.symbol.strikethrough'), hPad)
       this.buildSymbolIcon('italic', $r('sys.symbol.italic'), hPad)
+      this.buildSymbolIcon('mermaid', $r('sys.symbol.square_grid_2x2'), hPad)
     }
     .height(EditorQuickActionBar.BAR_HEIGHT)
     .justifyContent(justify)
@@ -149,6 +204,7 @@ export struct EditorQuickActionBar {
         this.buildSymbolIcon('bold', $r('sys.symbol.bold'), hPad)
         this.buildSymbolIcon('strike', $r('sys.symbol.strikethrough'), hPad)
         this.buildSymbolIcon('italic', $r('sys.symbol.italic'), hPad)
+        this.buildSymbolIcon('mermaid', $r('sys.symbol.square_grid_2x2'), hPad)
       }
       .height(EditorQuickActionBar.BAR_HEIGHT)
       .alignItems(VerticalAlign.Center)

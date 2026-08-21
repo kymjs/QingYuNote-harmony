@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<script src="mermaid.min.js"></script>
+<style>
+  html, body {
+    margin: 0;
+    padding: 8px 4px;
+    overflow: visible;
+    height: auto;
+    min-height: 0;
+    background: transparent;
+  }
+  #content {
+    width: 100%;
+    overflow: visible;
+  }
+  #content svg {
+    max-width: 100%;
+    height: auto;
+  }
+  #error {
+    display: none;
+    margin: 0;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid rgba(220, 38, 38, 0.35);
+    background: rgba(220, 38, 38, 0.08);
+    color: #B91C1C;
+    font-size: 13px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+</style>
+</head>
+<body>
+<div id="content"></div>
+<pre id="error"></pre>
+<script>
+(function () {
+  var renderSeq = 0;
+
+  function post(channelName, msg) {
+    try {
+      if (window[channelName] && typeof window[channelName].postMessage === 'function') {
+        window[channelName].postMessage(String(msg));
+      }
+    } catch (e) {}
+  }
+
+  function measureHeightPx() {
+    var body = document.body;
+    var root = document.documentElement;
+    var content = document.getElementById('content');
+    var err = document.getElementById('error');
+    var h = 0;
+    if (err && err.style.display !== 'none') {
+      h = Math.max(h, err.scrollHeight, err.getBoundingClientRect().height);
+    }
+    if (content) {
+      h = Math.max(h, content.scrollHeight, content.offsetHeight);
+      var rect = content.getBoundingClientRect();
+      if (rect.height > h) { h = rect.height; }
+      var svg = content.querySelector('svg');
+      if (svg) {
+        var svgRect = svg.getBoundingClientRect();
+        if (svgRect.height > h) { h = svgRect.height; }
+      }
+    }
+    if (body && body.scrollHeight > h) { h = body.scrollHeight; }
+    if (root && root.scrollHeight > h) { h = root.scrollHeight; }
+    return Math.ceil(h + 4);
+  }
+
+  function reportHeight() {
+    var px = measureHeightPx();
+    if (px > 0) {
+      post('HeightChannel', 'ok:' + px);
+    }
+  }
+
+  function scheduleHeightReports() {
+    reportHeight();
+    requestAnimationFrame(function () {
+      reportHeight();
+      requestAnimationFrame(reportHeight);
+    });
+    setTimeout(reportHeight, 80);
+    setTimeout(reportHeight, 240);
+    setTimeout(reportHeight, 500);
+  }
+
+  function showError(message, textColor) {
+    var content = document.getElementById('content');
+    var err = document.getElementById('error');
+    content.innerHTML = '';
+    err.style.display = 'block';
+    err.style.color = textColor || '#B91C1C';
+    err.textContent = message || 'Mermaid render error';
+    scheduleHeightReports();
+    post('ErrorChannel', String(message || 'Mermaid render error'));
+    post('ReadyChannel', 'error');
+  }
+
+  function showDiagram(svg) {
+    var content = document.getElementById('content');
+    var err = document.getElementById('error');
+    err.style.display = 'none';
+    err.textContent = '';
+    content.innerHTML = svg;
+    scheduleHeightReports();
+    post('ReadyChannel', 'ok');
+  }
+
+  window.renderMermaidPreview = function (source, theme, textColor, bgColor) {
+    var seq = ++renderSeq;
+    var trimmed = (source || '').trim();
+    var safeTheme = theme === 'dark' ? 'dark' : 'default';
+    var safeColor = textColor || '#1D1D1F';
+    var safeBg = bgColor || 'transparent';
+    document.body.style.background = safeBg;
+    document.body.style.color = safeColor;
+
+    if (!trimmed) {
+      document.getElementById('content').innerHTML = '';
+      document.getElementById('error').style.display = 'none';
+      post('ReadyChannel', 'ok');
+      post('HeightChannel', 'ok:0');
+      return;
+    }
+
+    if (typeof mermaid === 'undefined') {
+      showError('mermaid-undefined', safeColor);
+      return;
+    }
+
+    try {
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: safeTheme,
+        flowchart: { useMaxWidth: true, htmlLabels: true },
+        sequence: { useMaxWidth: true },
+        gantt: { useMaxWidth: true }
+      });
+    } catch (e) {
+      showError(e && e.message ? e.message : String(e), safeColor);
+      return;
+    }
+
+    var id = 'mmd-' + Date.now() + '-' + seq;
+    Promise.resolve()
+      .then(function () {
+        if (typeof mermaid.parse === 'function') {
+          return mermaid.parse(trimmed);
+        }
+      })
+      .then(function () {
+        if (seq !== renderSeq) { return null; }
+        return mermaid.render(id, trimmed);
+      })
+      .then(function (result) {
+        if (seq !== renderSeq) { return; }
+        if (!result) { return; }
+        var svg = typeof result === 'string' ? result : (result.svg || '');
+        if (!svg) {
+          showError('empty svg', safeColor);
+          return;
+        }
+        showDiagram(svg);
+      })
+      .catch(function (e) {
+        if (seq !== renderSeq) { return; }
+        var msg = e && e.message ? e.message : String(e);
+        showError(msg, safeColor);
+      });
+  };
+})();
+</script>
+</body>
+</html>
