@@ -21,6 +21,8 @@ import {
 import { FlowchartService } from './FlowchartService'
 import { DatabaseService } from './DatabaseService'
 import { FileService } from './FileService'
+import { NoteHistoryService } from './NoteHistoryService'
+import { NoteHistoryReason } from '../common/model/NoteHistory'
 import { AppContextHolder } from './AppContextHolder'
 import { PreferencesService } from './PreferencesService'
 import { WebDAVClient } from './WebDAVClient'
@@ -92,6 +94,7 @@ export class NoteRepository {
   }
 
   invalidateCachesForIdentityChange(): void {
+    NoteContentEncryptionService.getInstance().invalidateUserIdCache()
     this.invalidateListCaches()
     this.bumpVersion()
   }
@@ -589,6 +592,13 @@ export class NoteRepository {
       return this.cloneNote(existing)
     }
 
+    if (contentChanged || titleChanged) {
+      await NoteHistoryService.getInstance().captureIfNeeded(
+        existing,
+        patch.historyReason ?? NoteHistoryReason.auto
+      )
+    }
+
     const now = Date.now()
     const updated: Note = this.cloneNote(existing)
     updated.title = resolvedTitle
@@ -698,6 +708,9 @@ export class NoteRepository {
       nextImageRefs = NoteStateCodec.extractImageRefs(nextContent)
     }
     const nextTags: string[] = patch.tags !== undefined ? patch.tags : existing.tags
+    if (nextTitle !== existing.title || nextContent !== existing.content) {
+      await NoteHistoryService.getInstance().captureIfNeeded(existing, NoteHistoryReason.aiReplace)
+    }
     const updated: Note = {
       id: existing.id,
       title: nextTitle,
@@ -1071,6 +1084,7 @@ export class NoteRepository {
     this.beginBulkNotification()
     try {
       await FileService.getInstance().clearAllNoteFiles()
+      await FileService.getInstance().clearAllHistoryFiles()
       await DatabaseService.getInstance().clearAllSyncStates()
       await this.clearLocalImagesDirectory()
       await PreferencesService.getInstance().saveNoteTags([])
@@ -1118,6 +1132,7 @@ export class NoteRepository {
     }
     await FileService.getInstance().deleteNoteFile(noteId)
     await FileService.getInstance().deleteFlowchartFile(noteId)
+    await NoteHistoryService.getInstance().deleteForNote(noteId)
     await DatabaseService.getInstance().deleteSyncState(noteId)
     this.bumpVersion()
   }
@@ -1129,6 +1144,10 @@ export class NoteRepository {
 
   async overwriteFromRemote(noteId: string, content: string, remoteModified: number): Promise<Note> {
     await this.init()
+    const local = await this.getNote(noteId)
+    if (local !== null) {
+      await NoteHistoryService.getInstance().captureIfNeeded(local, NoteHistoryReason.remoteOverwrite)
+    }
     const payload = NoteStateCodec.parseNoteFile(content, noteId, remoteModified > 0 ? remoteModified : Date.now())
     const allNoteIds = new Set(await FileService.getInstance().listNoteIds())
     payload.state.parentId = NoteFolderTree.sanitizeParentId(

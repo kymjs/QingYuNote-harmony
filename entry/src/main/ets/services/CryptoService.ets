@@ -10,6 +10,8 @@ const WEBDAV_SYNC_AAD_SEED = 'qingyu-webdav-sync-aad'
 const WEBDAV_SYNC_KEY_SUFFIX = 'qingyunote'
 const FLOWCHART_AAD_SEED = 'qingyu-flowchart-aad'
 const GCM_AUTH_TAG_LENGTH = 16
+const STANDARD_GCM_ALGORITHM = 'AES128|GCM'
+const LEGACY_GCM_ALGORITHM = 'AES128|GCM|PKCS7'
 
 interface ErrorLike {
   code?: number | string
@@ -120,7 +122,7 @@ export class CryptoService {
       return ''
     }
     try {
-      const cipher = cryptoFramework.createCipher('AES128|GCM|PKCS7')
+      const cipher = cryptoFramework.createCipher(STANDARD_GCM_ALGORITHM)
       const ivBytes = this.randomBytes(12)
       const aadBytes = this.toBytes(aad)
       const params: cryptoFramework.GcmParamsSpec = {
@@ -165,6 +167,26 @@ export class CryptoService {
     }
   }
 
+  async sha256Hex(plain: string): Promise<string> {
+    try {
+      const md = cryptoFramework.createMd('SHA256')
+      await md.update({
+        data: this.toBytes(plain)
+      })
+      const digest = await md.digest()
+      const bytes = digest.data
+      let hex = ''
+      for (let i = 0; i < bytes.length; i++) {
+        const h = bytes[i].toString(16)
+        hex += h.length === 1 ? `0${h}` : h
+      }
+      return hex
+    } catch (error) {
+      Logger.warn('CryptoService', `sha256Hex failed: ${this.describeError(error)}`)
+      throw this.toRuntimeError(error)
+    }
+  }
+
   async decryptText(cipherText: string): Promise<string> {
     return this.decryptTextWithKey(cipherText, await this.getSymKey(), AAD_SEED)
   }
@@ -177,30 +199,80 @@ export class CryptoService {
     if (segments.length !== 2 && segments.length !== 3) {
       return ''
     }
+    const iv = this.base64.decodeSync(segments[0])
+    const payloadParts: PayloadParts = segments.length === 2
+      ? this.unpackNewFormatPayload(this.base64.decodeSync(segments[1]))
+      : {
+          cipherBytes: this.base64.decodeSync(segments[2]),
+          authTagBytes: this.base64.decodeSync(segments[1])
+        }
     try {
-      const cipher = cryptoFramework.createCipher('AES128|GCM|PKCS7')
-      const iv = this.base64.decodeSync(segments[0])
-      const payloadParts: PayloadParts = segments.length === 2
-        ? this.unpackNewFormatPayload(this.base64.decodeSync(segments[1]))
-        : {
-            cipherBytes: this.base64.decodeSync(segments[2]),
-            authTagBytes: this.base64.decodeSync(segments[1])
-          }
-      const params: cryptoFramework.GcmParamsSpec = {
-        iv: { data: iv },
-        aad: { data: this.toBytes(aad) },
-        authTag: { data: payloadParts.authTagBytes },
-        algName: 'GcmParamsSpec'
+      const standardPlaintext = await this.decryptGcmPayload(
+        STANDARD_GCM_ALGORITHM,
+        iv,
+        payloadParts,
+        symKey,
+        aad,
+        true
+      )
+      // 历史 `GCM|PKCS7` 密文的认证标签也可能通过标准 GCM 校验；此时标准
+      // 解密会留下填充字节而不抛错。仅在结果确实像 PKCS7 时再验证旧算法，
+      // 旧算法失败则保留标准结果，避免影响合法的 Flutter 文本。
+      if (this.hasPkcs7Padding(standardPlaintext)) {
+        try {
+          return await this.decryptGcmPayload(
+            LEGACY_GCM_ALGORITHM,
+            iv,
+            payloadParts,
+            symKey,
+            aad,
+            false
+          )
+        } catch (_) {
+          return standardPlaintext
+        }
       }
-      await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, symKey, params)
-      const decrypted = await cipher.doFinal({
-        data: payloadParts.cipherBytes
-      })
-      return this.fromBytes(decrypted.data)
-    } catch (error) {
-      Logger.warn('CryptoService', `decryptTextWithKey failed: ${this.describeError(error)}`)
-      throw this.toRuntimeError(error)
+      return standardPlaintext
+    } catch (standardError) {
+      try {
+        return await this.decryptGcmPayload(
+          LEGACY_GCM_ALGORITHM,
+          iv,
+          payloadParts,
+          symKey,
+          aad,
+          false
+        )
+      } catch (legacyError) {
+        Logger.warn('CryptoService',
+          `decryptTextWithKey failed: standard=${this.describeError(standardError)}, ` +
+          `legacy=${this.describeError(legacyError)}`)
+        throw this.toRuntimeError(legacyError)
+      }
     }
+  }
+
+  /**
+   * 读取时先使用标准 AES-GCM（Flutter 与新 Harmony 写入格式）；失败后由调用方
+   * 回退到历史 Harmony 的 `AES128|GCM|PKCS7`，确保已有笔记与历史版本可读。
+   */
+  private async decryptGcmPayload(algorithm: string, iv: Uint8Array, payload: PayloadParts,
+    symKey: cryptoFramework.SymKey, aad: string, standardGcm: boolean): Promise<string> {
+    const cipher = cryptoFramework.createCipher(algorithm)
+    const params: cryptoFramework.GcmParamsSpec = {
+      iv: { data: iv },
+      aad: { data: this.toBytes(aad) },
+      authTag: { data: payload.authTagBytes },
+      algName: 'GcmParamsSpec'
+    }
+    await cipher.init(cryptoFramework.CryptoMode.DECRYPT_MODE, symKey, params)
+    if (!standardGcm) {
+      const decrypted = await cipher.doFinal({ data: payload.cipherBytes })
+      return this.fromBytes(decrypted.data)
+    }
+    const updated = await cipher.update({ data: payload.cipherBytes })
+    const finalized = await cipher.doFinal(null)
+    return this.fromBytes(this.concatBytes(updated.data, finalized?.data ?? new Uint8Array(0)))
   }
 
   private async getSymKey(): Promise<cryptoFramework.SymKey> {
@@ -261,6 +333,22 @@ export class CryptoService {
       }
     }
     return false
+  }
+
+  private hasPkcs7Padding(value: string): boolean {
+    if (value.length === 0) {
+      return false
+    }
+    const paddingLength = value.charCodeAt(value.length - 1)
+    if (paddingLength <= 0 || paddingLength > 16 || paddingLength > value.length) {
+      return false
+    }
+    for (let index = value.length - paddingLength; index < value.length; index++) {
+      if (value.charCodeAt(index) !== paddingLength) {
+        return false
+      }
+    }
+    return true
   }
 
   private endsWithBytes(data: Uint8Array, suffix: Uint8Array): boolean {

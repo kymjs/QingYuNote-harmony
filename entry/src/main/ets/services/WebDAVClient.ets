@@ -486,6 +486,85 @@ export class WebDAVClient {
     await this.deleteFlowchartRemote(noteId)
   }
 
+  async ensureHistoryDirectories(noteId: string): Promise<void> {
+    const config = await this.requireConfig()
+    const rootUrl = PathUtils.joinRemoteNestedDirectoryUrl(
+      config.baseUrl,
+      config.notesDir,
+      [SyncConstants.noteHistoryDirName]
+    )
+    const noteUrl = PathUtils.joinRemoteNestedDirectoryUrl(
+      config.baseUrl,
+      config.notesDir,
+      [SyncConstants.noteHistoryDirName, noteId]
+    )
+    await this.ensureRemoteDirectory(rootUrl)
+    await this.ensureRemoteDirectory(noteUrl)
+  }
+
+  private async ensureRemoteDirectory(url: string): Promise<void> {
+    try {
+      const head = await this.sendRequest(url, http.RequestMethod.HEAD)
+      if (this.isReachableDirectoryResponse(head.responseCode)) {
+        return
+      }
+    } catch (_) {
+    }
+    try {
+      await this.sendRequest(url, 'MKCOL')
+    } catch (_) {
+    }
+  }
+
+  async uploadHistoryFile(noteId: string, fileName: string, content: string): Promise<void> {
+    await this.ensureHistoryDirectories(noteId)
+    const config = await this.requireConfig()
+    const targetUrl = PathUtils.joinRemoteNestedFileUrl(
+      config.baseUrl,
+      config.notesDir,
+      [SyncConstants.noteHistoryDirName, noteId, fileName]
+    )
+    const response = await this.sendRequest(targetUrl, http.RequestMethod.PUT, content, {
+      contentType: 'text/plain; charset=utf-8'
+    })
+    if (response.responseCode >= 400) {
+      throw new Error(`History upload failed with status ${response.responseCode}`)
+    }
+  }
+
+  async downloadHistoryFile(noteId: string, fileName: string): Promise<string | null> {
+    const config = await this.requireConfig()
+    const targetUrl = PathUtils.joinRemoteNestedFileUrl(
+      config.baseUrl,
+      config.notesDir,
+      [SyncConstants.noteHistoryDirName, noteId, fileName]
+    )
+    const response = await this.sendRequest(targetUrl, http.RequestMethod.GET)
+    if (response.responseCode === 404) {
+      return null
+    }
+    if (response.responseCode >= 400) {
+      throw new Error(`History download failed with status ${response.responseCode}`)
+    }
+    if (typeof response.result === 'string') {
+      return response.result
+    }
+    return JSON.stringify(response.result)
+  }
+
+  async deleteHistoryFile(noteId: string, fileName: string): Promise<void> {
+    const config = await this.requireConfig()
+    const targetUrl = PathUtils.joinRemoteNestedFileUrl(
+      config.baseUrl,
+      config.notesDir,
+      [SyncConstants.noteHistoryDirName, noteId, fileName]
+    )
+    const response = await this.sendRequest(targetUrl, http.RequestMethod.DELETE)
+    if (response.responseCode >= 400 && response.responseCode !== 404) {
+      throw new Error(`History delete failed with status ${response.responseCode}`)
+    }
+  }
+
   private async flowchartUrl(noteId: string): Promise<string> {
     const config = await this.requireConfig()
     return PathUtils.joinRemotePathFileUrl(

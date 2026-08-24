@@ -38,6 +38,11 @@ export class SyncConstants {
   static readonly youdaoImportToastEvent: string = 'youdao_import_toast'
   /** 印象笔记后台导入完成或失败时 Toast 提示。 */
   static readonly yinxiangImportToastEvent: string = 'yinxiang_import_toast'
+  /** 笔记历史版本本地/WebDAV 目录名，与 Flutter `SyncConstants.noteHistoryDirName` 一致。 */
+  static readonly noteHistoryDirName: string = 'qingyu-note-history'
+  static readonly noteHistoryManifestFile: string = 'manifest.json'
+  static readonly noteHistoryMaxVersions: number = 30
+  static readonly noteHistoryThrottleMs: number = 10 * 60 * 1000
 }
 
 /** EventHub 载荷：微信读书导入结果提示文案。 */

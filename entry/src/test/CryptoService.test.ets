@@ -3,6 +3,12 @@ import { CryptoService } from '../main/ets/services/CryptoService'
 import { util } from '@kit.ArkTS'
 
 const GCM_AUTH_TAG_LENGTH = 16
+// Flutter cryptography::AesGcm.with128bits，key = MD5(zhangtaodeqingyuliulanqi-42)，
+// nonce = 0x15..0x20，AAD = qingyu-note-rsa-aad。
+const FLUTTER_NOTE_CIPHER = 'FRYXGBkaGxwdHh8g.gGCHoP0epXS3/8nz3qD29CcLJA2gDF/1YuecUwWaVweiHg3S'
+// 旧 Harmony `AES128|GCM|PKCS7` 写入等价的 AES-GCM 密文：明文尾部保留
+// PKCS7 0x02 0x02，nonce = 0x01..0x0c，AAD = qingyu-aad。
+const LEGACY_PADDED_CIPHER = 'AQIDBAUGBwgJCgsM.xV04MepSuWDsn2QmbIQTW4xipArAWv6UObqC0E658Xs='
 
 export default function cryptoServiceTest() {
   describe('CryptoService', () => {
@@ -32,6 +38,16 @@ export default function cryptoServiceTest() {
 
       const decrypted = await service.decryptText(legacyCipherText)
       expect(decrypted).assertEqual(plainText)
+    })
+
+    it('should decrypt Flutter AES-GCM note payloads', 0, async () => {
+      const decrypted = await service.decryptNoteText(FLUTTER_NOTE_CIPHER, '42')
+      expect(decrypted).assertEqual('Flutter 跨端正文')
+    })
+
+    it('should remove legacy GCM PKCS7 padding when reading historical payloads', 0, async () => {
+      const decrypted = await service.decryptText(LEGACY_PADDED_CIPHER)
+      expect(decrypted).assertEqual('legacy-harmony')
     })
 
     it('should return empty strings unchanged', 0, async () => {

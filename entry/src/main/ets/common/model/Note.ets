@@ -270,6 +270,8 @@ export interface UpdateNoteInput {
   todoStatus?: number
   /** 待办提醒提前分钟数：0=不提醒；undefined 时不修改。 */
   todoReminderMinutes?: number
+  /** 历史版本原因；undefined 时按 auto 节流。 */
+  historyReason?: string
 }
 
 /** 仅更新异步链接提取相关字段的 patch。 */

@@ -26,6 +26,7 @@ export class LocalDataUsageService {
       const cacheDir = ctx.cacheDir ?? ''
       const roots: string[] = [
         `${filesDir}/${LocalDataUsageService.NOTES_DIR}`,
+        `${filesDir}/qingyu-note-history`,
         `${filesDir}/${LocalDataUsageService.IMAGES_DIR}`,
         `${filesDir}/${AudioConstants.audioDirectory}`,
         `${cacheDir}/${LocalDataUsageService.CACHE_DIR}`

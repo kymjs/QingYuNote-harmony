@@ -32,4 +32,20 @@ export class PathUtils {
   static joinRemoteDirectoryUrl(baseUrl: string, notesDir: string): string {
     return `${PathUtils.normalizeBaseUrl(baseUrl)}${PathUtils.normalizeNotesDir(notesDir)}`
   }
+
+  static joinRemoteNestedFileUrl(baseUrl: string, notesDir: string, segments: string[]): string {
+    const cleanBase = PathUtils.normalizeBaseUrl(baseUrl)
+    const cleanDir = PathUtils.normalizeNotesDir(notesDir)
+    const encoded: string[] = []
+    for (let i = 0; i < segments.length; i++) {
+      if (segments[i].trim().length > 0) {
+        encoded.push(encodeURIComponent(segments[i]))
+      }
+    }
+    return `${cleanBase}${cleanDir}${encoded.join('/')}`
+  }
+
+  static joinRemoteNestedDirectoryUrl(baseUrl: string, notesDir: string, segments: string[]): string {
+    return `${PathUtils.joinRemoteNestedFileUrl(baseUrl, notesDir, segments)}/`
+  }
 }

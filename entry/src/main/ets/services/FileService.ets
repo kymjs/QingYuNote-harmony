@@ -4,6 +4,7 @@ import type { Note, NoteFilePayload } from '../common/model/Note'
 import { Logger } from '../common/utils/Logger'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { NoteContentEncryptionService } from './NoteContentEncryptionService'
+import { SyncConstants } from '../common/constants/SyncConstants'
 
 const NOTES_DIR = 'notes'
 const NOTE_FILE_SUFFIX = '.md'
@@ -14,6 +15,7 @@ export class FileService {
   private static instance: FileService = new FileService()
   private context?: common.UIAbilityContext
   private baseDir: string = ''
+  private filesDir: string = ''
 
   static getInstance(): FileService {
     return FileService.instance
@@ -25,6 +27,7 @@ export class FileService {
     }
     this.context = context
     const filesDir = this.context.filesDir ?? ''
+    this.filesDir = filesDir
     this.baseDir = `${filesDir}/${NOTES_DIR}`
     await this.ensureBaseDir()
   }
@@ -296,6 +299,87 @@ export class FileService {
     } catch (error) {
       Logger.warn('FileService', `listNoteIds failed: ${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  historyRootDir(): string {
+    return `${this.filesDir}/${SyncConstants.noteHistoryDirName}`
+  }
+
+  historyDirFor(noteId: string): string {
+    return `${this.historyRootDir()}/${noteId}`
+  }
+
+  historyManifestPath(noteId: string): string {
+    return `${this.historyDirFor(noteId)}/${SyncConstants.noteHistoryManifestFile}`
+  }
+
+  historyVersionPath(noteId: string, versionId: string): string {
+    return `${this.historyDirFor(noteId)}/${versionId}.md`
+  }
+
+  historyFlowchartPath(noteId: string, versionId: string): string {
+    return `${this.historyDirFor(noteId)}/${versionId}${FLOWCHART_FILE_SUFFIX}`
+  }
+
+  async ensureHistoryDir(noteId: string): Promise<void> {
+    await this.init(this.context as common.UIAbilityContext)
+    const dir = this.historyDirFor(noteId)
+    if (!fs.accessSync(this.historyRootDir())) {
+      fs.mkdirSync(this.historyRootDir(), true)
+    }
+    if (!fs.accessSync(dir)) {
+      fs.mkdirSync(dir, true)
+    }
+  }
+
+  writeHistoryTextFile(filePath: string, content: string): void {
+    const file = fs.openSync(filePath, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
+    fs.writeSync(file.fd, content)
+    fs.closeSync(file)
+  }
+
+  readHistoryTextFile(filePath: string): string {
+    if (!fs.accessSync(filePath)) {
+      return ''
+    }
+    return fs.readTextSync(filePath)
+  }
+
+  historyFileExists(filePath: string): boolean {
+    try {
+      return fs.accessSync(filePath)
+    } catch (_) {
+      return false
+    }
+  }
+
+  deleteHistoryFile(filePath: string): void {
+    try {
+      if (fs.accessSync(filePath)) {
+        fs.unlinkSync(filePath)
+      }
+    } catch (_) {
+    }
+  }
+
+  async deleteHistoryDirForNote(noteId: string): Promise<void> {
+    const dir = this.historyDirFor(noteId)
+    try {
+      if (fs.accessSync(dir)) {
+        fs.rmdirSync(dir)
+      }
+    } catch (_) {
+    }
+  }
+
+  async clearAllHistoryFiles(): Promise<void> {
+    try {
+      const root = this.historyRootDir()
+      if (fs.accessSync(root)) {
+        fs.rmdirSync(root)
+      }
+    } catch (_) {
     }
   }
 

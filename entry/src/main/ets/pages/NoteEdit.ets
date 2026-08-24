@@ -17,6 +17,8 @@ import {
 import type { Note } from '../common/model/Note'
 import { isExtractStatusPending } from '../common/model/Note'
 import { NoteRepository } from '../services/NoteRepository'
+import { NoteHistoryService } from '../services/NoteHistoryService'
+import { NoteHistoryReason } from '../common/model/NoteHistory'
 import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
 import { NoteImagesChangedEventPayload, SyncConstants } from '../common/constants/SyncConstants'
@@ -486,6 +488,15 @@ struct NoteEdit {
         }
       }
     ]
+    if (this.noteId.length > 0) {
+      items.push({
+        value: EditorUiStrings.loc('历史版本', 'Version history', '履歴'),
+        symbolIcon: new SymbolGlyphModifier($r('sys.symbol.clock')),
+        action: (): void => {
+          void this.openHistoryPage()
+        }
+      })
+    }
     if (this.folderModeEnabled) {
       items.push({
         value: EditorUiStrings.loc('移动本文至', 'Move this note to', 'このノートを移動'),
@@ -1109,6 +1120,20 @@ struct NoteEdit {
     }
   }
 
+  private async openHistoryPage(): Promise<void> {
+    if (this.noteId.length === 0) {
+      return
+    }
+    try {
+      await this.getUIContext().getRouter().pushUrl({
+        url: 'pages/NoteHistory',
+        params: { noteId: this.noteId }
+      })
+    } catch (error) {
+      Logger.warn('NoteEdit', `openHistoryPage failed: ${JSON.stringify(error)}`)
+    }
+  }
+
   private async loadNote(): Promise<void> {
     this.aiUndoBaselineContent = null
     this.aiUndoAvailable = false
@@ -1386,6 +1411,12 @@ struct NoteEdit {
     }
     try {
       await this.handleAutoSave()
+      if (this.noteId.length > 0) {
+        const note = await NoteRepository.getInstance().getNote(this.noteId)
+        if (note !== null) {
+          await NoteHistoryService.getInstance().captureIfNeeded(note, NoteHistoryReason.editorLeave)
+        }
+      }
     } catch (error) {
       Logger.warn('NoteEdit', `flushAndAutoSaveAfterLeave failed: ${JSON.stringify(error)}`)
     }

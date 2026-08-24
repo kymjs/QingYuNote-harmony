@@ -10,13 +10,14 @@ export class NoteContentEncryptionService {
     return NoteContentEncryptionService.instance
   }
 
-  // resolveUserId 的内存缓存：避免 listNotes / loadAllNotes 在 N 条笔记路径上
-  // 重复走 Preferences.init + getNoteApiUserId。undefined 表示尚未加载。
+  // resolveUserId 的内存缓存：只缓存非空登录身份，避免 listNotes / loadAllNotes
+  // 在 N 条笔记路径上重复走 Preferences.init + getNoteApiUserId。空值不能缓存：
+  // 启动早期可能尚未登录，若缓存空值会让随后同步的加密笔记被直接当作明文展示。
   // 身份切换（登录 / 登出）由 invalidateCachesForIdentityChange 触发 invalidateUserIdCache。
   private cachedUserId: string | null | undefined = undefined
 
   async resolveUserId(): Promise<string | null> {
-    if (this.cachedUserId !== undefined) {
+    if (this.cachedUserId !== undefined && this.cachedUserId !== null) {
       return this.cachedUserId
     }
     const ctx = AppContextHolder.getContext()
@@ -24,8 +25,11 @@ export class NoteContentEncryptionService {
       await PreferencesService.getInstance().init(ctx)
     }
     const userId = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
-    this.cachedUserId = userId.length > 0 ? userId : null
-    return this.cachedUserId
+    if (userId.length === 0) {
+      return null
+    }
+    this.cachedUserId = userId
+    return userId
   }
 
   invalidateUserIdCache(): void {

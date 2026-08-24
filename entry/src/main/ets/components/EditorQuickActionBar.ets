@@ -2,6 +2,11 @@ import { MermaidTemplates } from '../common/utils/MermaidTemplates'
 import { EditorUiStrings } from '../common/utils/EditorUiStrings'
 import { promptAction } from '@kit.ArkUI'
 
+interface MermaidDialogButton {
+  text: string
+  color: string
+}
+
 export type EditorQuickActionType =
   | 'link'
   | 'image'
@@ -64,22 +69,23 @@ export struct EditorQuickActionBar {
   }
 
   private showMermaidKindMenu(): void {
-    const buttons: promptAction.ShowDialogButtonOptions[] = MermaidTemplates.KINDS.map((kind: string) => {
-      return {
-        text: EditorUiStrings.loc(
-          MermaidTemplates.labelFor(kind),
-          MermaidTemplates.labelFor(kind),
-          MermaidTemplates.labelFor(kind)
-        ),
+    const buttons: MermaidDialogButton[] = []
+    for (let i = 0; i < MermaidTemplates.KINDS.length; i++) {
+      const kind: string = MermaidTemplates.KINDS[i]
+      const label: string = MermaidTemplates.labelFor(kind)
+      const btn: MermaidDialogButton = {
+        text: EditorUiStrings.loc(label, label, label),
         color: '#007AFF'
-      } as promptAction.ShowDialogButtonOptions
-    })
+      }
+      buttons.push(btn)
+    }
+    const dialogOpts: promptAction.ShowDialogOptions = {
+      title: EditorUiStrings.loc('插入 Mermaid', 'Insert Mermaid', 'Mermaidを挿入'),
+      message: EditorUiStrings.loc('选择图表类型', 'Choose diagram type', '図の種類を選択'),
+      buttons: buttons
+    }
     try {
-      promptAction.showDialog({
-        title: EditorUiStrings.loc('插入 Mermaid', 'Insert Mermaid', 'Mermaidを挿入'),
-        message: EditorUiStrings.loc('选择图表类型', 'Choose diagram type', '図の種類を選択'),
-        buttons: buttons
-      }, (error, data) => {
+      promptAction.showDialog(dialogOpts, (error, data) => {
         if (error || data === undefined) {
           return
         }

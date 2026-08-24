@@ -6,6 +6,8 @@ import { PreferencesService } from './PreferencesService'
 import { WebDAVClient } from './WebDAVClient'
 import type { RemoteIndexEntry, RemoteIndexSnapshot } from './WebDAVClient'
 import { FileService } from './FileService'
+import { NoteHistoryService } from './NoteHistoryService'
+import { NoteHistoryReason } from '../common/model/NoteHistory'
 import { TimeUtils } from '../common/utils/TimeUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { Logger } from '../common/utils/Logger'
@@ -296,6 +298,7 @@ export class SyncService {
         await this.syncImagesForNote(note, rawContent)
         await this.syncAudioForNote(note)
         await this.uploadFlowchartSidecarIfNeeded(noteId, note)
+        await this.syncHistoryQuietly(noteId)
         if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced',
           uploaded.remoteModified || note.lastOperationAt, note.lastOperationAt)) {
           NoteRepository.getInstance().notifyNotesChanged()
@@ -317,6 +320,11 @@ export class SyncService {
         if (purgePeek !== null) {
           return purgePeek
         }
+        await NoteHistoryService.getInstance().captureFromRemoteRaw(
+          noteId,
+          remotePeek,
+          NoteHistoryReason.remoteClobber
+        )
         Logger.info('SyncService', `syncNote upload newer local note: noteId=${noteId}`)
         const uploaded = await WebDAVClient.getInstance().uploadNote(noteId, rawContent, note.lastOperationAt, {
           deletedTime: note.deletedTime,
@@ -325,6 +333,7 @@ export class SyncService {
         await this.syncImagesForNote(note, rawContent)
         await this.syncAudioForNote(note)
         await this.uploadFlowchartSidecarIfNeeded(noteId, note)
+        await this.syncHistoryQuietly(noteId)
         if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced',
           uploaded.remoteModified || note.lastOperationAt, note.lastOperationAt)) {
           NoteRepository.getInstance().notifyNotesChanged()
@@ -348,8 +357,8 @@ export class SyncService {
         await NoteRepository.getInstance().overwriteFromRemote(noteId, remoteContent, remoteStat.remoteModified)
         await this.downloadFlowchartSidecarIfRemote(noteId)
         await this.downloadImagesForNote(noteId, remoteContent)
-    await this.downloadAudioForNote(noteId, remoteContent)
         await this.downloadAudioForNote(noteId, remoteContent)
+        await this.syncHistoryQuietly(noteId)
         return {
           noteId,
           success: true,
@@ -379,6 +388,7 @@ export class SyncService {
       }
       await this.downloadImagesForNote(noteId, remoteWhenEqual)
       await this.downloadAudioForNote(noteId, remoteWhenEqual)
+      await this.syncHistoryQuietly(noteId)
       if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced', remoteStat.remoteModified, note.lastOperationAt)) {
         NoteRepository.getInstance().notifyNotesChanged()
       }
@@ -813,6 +823,10 @@ export class SyncService {
     Logger.info('SyncService', `uploadAudioForNoteOrThrow start: noteId=${noteId}, audioId=${audioId}, bytes=${bytes.byteLength}`)
     await WebDAVClient.getInstance().uploadAudio(audioId, bytes)
     Logger.info('SyncService', `uploadAudioForNoteOrThrow done: noteId=${noteId}, audioId=${audioId}`)
+  }
+
+  private async syncHistoryQuietly(noteId: string): Promise<void> {
+    await NoteHistoryService.getInstance().syncWithCloud(noteId)
   }
 
   private async uploadFlowchartSidecarIfNeeded(noteId: string, note: Note): Promise<void> {
