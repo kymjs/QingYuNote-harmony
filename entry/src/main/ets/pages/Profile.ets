@@ -82,6 +82,8 @@ struct Profile {
   @State noteApiUserId: string = ''
   /** 正在拉起华为 OAuth，用于禁用行重复点击。 */
   @State bindBusy: boolean = false
+  /** 退出登录进行中：展示全屏遮罩并拦截返回。 */
+  @State loggingOut: boolean = false
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
 
@@ -817,7 +819,47 @@ struct Profile {
     }
   }
 
+  private async handleLogout(): Promise<void> {
+    if (this.loggingOut) {
+      return
+    }
+    this.loggingOut = true
+    let success = false
+    try {
+      const context = AppContextHolder.tryGetContext()
+      if (context !== undefined) {
+        await PreferencesService.getInstance().init(context)
+        await NoteRepository.getInstance().init(context)
+      }
+      await NoteRepository.getInstance().clearAllLocalNotes()
+      await PreferencesService.getInstance().clearLoginSession()
+      success = true
+      const router = this.getUIContext().getRouter()
+      const routerWithClear = router as RouterWithOptionalClear
+      if (routerWithClear.clear !== undefined) {
+        routerWithClear.clear()
+      }
+      await router.replaceUrl({ url: 'pages/Login' })
+      this.showToast(LocaleService.loc('已退出登录', 'Signed out', 'ログアウトしました'))
+    } catch (error) {
+      Logger.warn('Profile', `handleLogout failed: ${JSON.stringify(error)}`)
+      if (success) {
+        this.showToast(LocaleService.loc('已退出登录', 'Signed out', 'ログアウトしました'))
+      } else {
+        this.loggingOut = false
+        this.showToast(LocaleService.loc(
+          '退出登录失败，请稍后重试',
+          'Sign out failed, please try again',
+          'ログアウトに失敗しました。後でもう一度お試しください'
+        ))
+      }
+    }
+  }
+
   private handleToolbarBack(): void {
+    if (this.loggingOut) {
+      return
+    }
     this.closeGuard.runBack(() => {
       this.getUIContext().getRouter().back()
     }, 'Profile')
@@ -833,33 +875,6 @@ struct Profile {
     Divider()
       .color($r('app.color.divider'))
       .strokeWidth(1)
-  }
-
-  @Builder
-  dangerNavRow(onRowClick: () => void) {
-    Row() {
-      Text(LocaleService.loc('注销账号', 'Delete account', 'アカウント削除'))
-        .fontSize($r('app.float.body_font_size'))
-        .fontColor($r('app.color.danger'))
-        .layoutWeight(1)
-      Text('›')
-        .fontSize(22)
-        .fontColor($r('app.color.danger'))
-        .width(Profile.PROFILE_KV_TRAILING_CHEVRON_WIDTH_VP)
-        .textAlign(TextAlign.Center)
-    }
-    .width('100%')
-    .padding({
-      left: 20,
-      right: 16,
-      top: 14,
-      bottom: 14
-    })
-    .justifyContent(FlexAlign.SpaceBetween)
-    .alignItems(VerticalAlign.Center)
-    .onClick((): void => {
-      onRowClick()
-    })
   }
 
   @Builder
@@ -909,6 +924,7 @@ struct Profile {
   }
 
   build() {
+    Stack() {
     Column() {
       Row() {
         Row() {
@@ -1107,15 +1123,34 @@ struct Profile {
                 false,
                 (): void => {}
               )
+              this.rowDivider()
+              this.kvRow(
+                LocaleService.loc('注销账号', 'Delete account', 'アカウント削除'),
+                '',
+                true,
+                false,
+                (): void => {
+                  void this.confirmDelete()
+                }
+              )
             }
 
-            ProfileMenuCard() {
-              this.dangerNavRow((): void => {
-                void this.confirmDelete()
-              })
+            Button() {
+              Text(LocaleService.loc('退出登录', 'Sign out', 'ログアウト'))
+                .fontColor('#FFFFFFFF')
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
             }
-
-            Column().height(24)
+            .type(ButtonType.Normal)
+            .width('100%')
+            .height(48)
+            .backgroundColor($r('app.color.danger'))
+            .borderRadius($r('app.float.pill_radius'))
+            .margin({ top: 12 })
+            .enabled(!this.loggingOut)
+            .onClick((): void => {
+              void this.handleLogout()
+            })
           }
         }
         .width('100%')
@@ -1135,5 +1170,27 @@ struct Profile {
       right: 16
     })
     .backgroundColor($r('app.color.app_background'))
+
+    if (this.loggingOut) {
+      Column() {
+        LoadingProgress()
+          .width(40)
+          .height(40)
+          .color(Color.White)
+        Text(LocaleService.loc('正在退出登录…', 'Signing out…', 'ログアウト中…'))
+          .fontSize(14)
+          .fontColor(Color.White)
+          .margin({ top: 16 })
+      }
+      .width('100%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor('#8A000000')
+      .hitTestBehavior(HitTestMode.Block)
+    }
+    }
+    .width('100%')
+    .height('100%')
   }
 }

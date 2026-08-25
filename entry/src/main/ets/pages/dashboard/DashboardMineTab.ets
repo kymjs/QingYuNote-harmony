@@ -18,6 +18,8 @@ import {
   type AppThemeMode
 } from '../../common/utils/AppTheme'
 import { showAppearancePickerDialog } from '../../dialogs/AppearancePickerDialog'
+import { AppLockService } from '../../services/AppLockService'
+import { BiometricLockService } from '../../services/BiometricLockService'
 
 const ACCENT = '#0DAA4A'
 const CARD_RADIUS = 16
@@ -114,7 +116,11 @@ export struct DashboardMineTab {
   @State themeMode: AppThemeMode = 'system'
   @State loading: boolean = true
   @State avatarLoadFailed: boolean = false
+  @State appLockEnabled: boolean = false
+  @State biometricAvailable: boolean = false
+  @State biometricEnabled: boolean = false
   private reloadGeneration: number = 0
+  private lockBusy: boolean = false
 
   aboutToAppear(): void {
     void this.reload()
@@ -212,6 +218,20 @@ export struct DashboardMineTab {
     } catch (_) {
     }
 
+    let appLockEnabled = false
+    let biometricAvailable = false
+    let biometricEnabled = false
+    try {
+      appLockEnabled = await AppLockService.getInstance().isAppLockEnabled()
+      await BiometricLockService.getInstance().ensureConsistentWithAppLock(appLockEnabled)
+      const kind = await BiometricLockService.getInstance().getAvailableKind()
+      biometricAvailable = kind !== 'none'
+      biometricEnabled = appLockEnabled && biometricAvailable &&
+        await BiometricLockService.getInstance().isEnabledLocally()
+    } catch (error) {
+      Logger.warn('DashboardMineTab', `load lock settings failed: ${JSON.stringify(error)}`)
+    }
+
     if (generation !== this.reloadGeneration) {
       return
     }
@@ -222,8 +242,101 @@ export struct DashboardMineTab {
     this.appVersion = version
     this.showReferralInviteMenu = inviteEnabled && uid.length > 0
     this.themeMode = theme
+    this.appLockEnabled = appLockEnabled
+    this.biometricAvailable = biometricAvailable
+    this.biometricEnabled = biometricEnabled
     this.avatarLoadFailed = false
     this.loading = false
+  }
+
+  private onOffCaption(enabled: boolean): string {
+    return enabled
+      ? LocaleService.loc('已开启', 'On', 'オン')
+      : LocaleService.loc('未开启', 'Off', 'オフ')
+  }
+
+  private showLockMessage(message: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: message, duration: 2000 })
+    } catch (error) {
+      Logger.warn('DashboardMineTab', `showToast failed: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private async refreshLockSettings(): Promise<void> {
+    const ctx = AppContextHolder.tryGetContext()
+    if (ctx) {
+      await PreferencesService.getInstance().init(ctx)
+    }
+    const appLockEnabled = await AppLockService.getInstance().isAppLockEnabled()
+    await BiometricLockService.getInstance().ensureConsistentWithAppLock(appLockEnabled)
+    const kind = await BiometricLockService.getInstance().getAvailableKind()
+    const biometricAvailable = kind !== 'none'
+    const biometricEnabled = appLockEnabled && biometricAvailable &&
+      await BiometricLockService.getInstance().isEnabledLocally()
+    this.appLockEnabled = appLockEnabled
+    this.biometricAvailable = biometricAvailable
+    this.biometricEnabled = biometricEnabled
+  }
+
+  private async onTapAppLock(): Promise<void> {
+    if (this.lockBusy) {
+      return
+    }
+    this.lockBusy = true
+    try {
+      const enabled = await AppLockService.getInstance().isAppLockEnabled()
+      if (enabled) {
+        await this.getUIContext().getRouter().pushUrl({
+          url: 'pages/AppLockPin',
+          params: { 'mode': 'verifyDisable' }
+        })
+      } else if (await AppLockService.getInstance().hasStoredPassword()) {
+        const ctx = AppContextHolder.tryGetContext()
+        if (ctx) {
+          await PreferencesService.getInstance().init(ctx)
+        }
+        const enc = await PreferencesService.getInstance().getAppLockPasswordEnc()
+        await PreferencesService.getInstance().enableAppLock(enc)
+        AppLockService.getInstance().markSessionUnlocked()
+        await this.refreshLockSettings()
+      } else {
+        await this.getUIContext().getRouter().pushUrl({
+          url: 'pages/AppLockPin',
+          params: { 'mode': 'setup' }
+        })
+      }
+    } catch (error) {
+      Logger.warn('DashboardMineTab', `onTapAppLock failed: ${JSON.stringify(error)}`)
+    } finally {
+      this.lockBusy = false
+    }
+  }
+
+  private async onTapBiometric(): Promise<void> {
+    if (this.lockBusy || !this.biometricAvailable) {
+      return
+    }
+    if (!this.appLockEnabled) {
+      this.showLockMessage(LocaleService.loc('请先开启应用锁', 'Enable app lock first', '先にアプリロックを有効にしてください'))
+      return
+    }
+    this.lockBusy = true
+    try {
+      if (this.biometricEnabled) {
+        await BiometricLockService.getInstance().setEnabledLocally(false)
+      } else {
+        const outcome = await BiometricLockService.getInstance().authenticate()
+        if (outcome === 'success') {
+          await BiometricLockService.getInstance().setEnabledLocally(true)
+        }
+      }
+      await this.refreshLockSettings()
+    } catch (error) {
+      Logger.warn('DashboardMineTab', `onTapBiometric failed: ${JSON.stringify(error)}`)
+    } finally {
+      this.lockBusy = false
+    }
   }
 
   private appearanceCaption(): string {
@@ -649,6 +762,18 @@ export struct DashboardMineTab {
         LocaleService.loc('多语言', 'Language', '言語'), '', false, () => {
           this.push('pages/LanguageSettings')
         }, true)
+      this.menuRow($r('sys.symbol.lock'),
+        LocaleService.loc('应用锁', 'App lock', 'アプリロック'),
+        this.onOffCaption(this.appLockEnabled), false, () => {
+          void this.onTapAppLock()
+        }, true)
+      if (this.biometricAvailable) {
+        this.menuRow($r('sys.symbol.touchid'),
+          LocaleService.loc('生物识别', 'Biometrics', '生体認証'),
+          this.onOffCaption(this.biometricEnabled), false, () => {
+            void this.onTapBiometric()
+          }, true)
+      }
       this.menuRow($r('sys.symbol.circle'),
         LocaleService.loc('外观', 'Appearance', '外観'),
         this.appearanceCaption(), false, () => {
