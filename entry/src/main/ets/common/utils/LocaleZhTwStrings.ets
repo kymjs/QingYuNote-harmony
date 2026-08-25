@@ -490,7 +490,6 @@ export const LOCALE_ZH_TW_MAP: Record<string, string> = {
   '根目录': '根目錄',
   '梯形': '梯形',
   '检查更新': '檢查更新',
-  '检测到新版本 v\${manifest.latestRelease}，是否更新？': '檢測到新版本 v\${manifest.latestRelease}，是否更新？',
   '欢迎使用\${AppConst.appDisplayName}！我们将通过': '歡迎使用\${AppConst.appDisplayName}！我們將通過',
   '正在加载…': '正在加載…',
   '正在加载笔记…': '正在加載筆記…',

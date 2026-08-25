@@ -45,6 +45,11 @@ export class MermaidRenderBarrier {
 
 @Component
 export struct MermaidPreview {
+  /** 测量阶段先提供足够视口，避免 WebView 将首帧 scrollHeight 截为容器高度。 */
+  private static readonly MEASURE_PLACEHOLDER_HEIGHT: number = 360
+  private static readonly MIN_WEB_HEIGHT: number = 80
+  private static readonly MAX_WEB_HEIGHT: number = 3200
+
   @Prop @Watch('onSourceChanged') source: string = ''
   @Prop @Watch('onStyleChanged') textColor: string = '#1D1D1F'
   @Prop @Watch('onStyleChanged') previewBackgroundColor: string = 'transparent'
@@ -54,7 +59,9 @@ export struct MermaidPreview {
   onRenderSettled: () => void = () => {
   }
 
-  @State private webHeight: number = 120
+  @State private webHeight: number = MermaidPreview.MEASURE_PLACEHOLDER_HEIGHT
+  /** 当前渲染周期内从 Web 侧观测到的最大内容高度，只增不减以避免截断。 */
+  private maxContentHeightVp: number = 0
   @State private errorMessage: string = ''
   @State private scaleValue: number = 1
   @State private offsetX: number = 0
@@ -70,6 +77,7 @@ export struct MermaidPreview {
   private registered: boolean = false
 
   aboutToAppear(): void {
+    this.resetMeasuredHeight()
     this.registerBarrier()
     this.heightBridge.bind((message: string) => {
       this.onHeightMessage(message)
@@ -90,6 +98,7 @@ export struct MermaidPreview {
   }
 
   onSourceChanged(): void {
+    this.resetMeasuredHeight()
     this.settled = false
     this.errorMessage = ''
     this.registerBarrier()
@@ -146,16 +155,26 @@ export struct MermaidPreview {
     }
     const cssPx = parseFloat(message.substring(3))
     if (!isNaN(cssPx) && cssPx > 0) {
-      const next = Math.min(Math.max(cssPx, 80), 1600)
-      if (next > this.webHeight + 0.5) {
-        this.webHeight = next
+      const next = Math.min(Math.max(cssPx, MermaidPreview.MIN_WEB_HEIGHT), MermaidPreview.MAX_WEB_HEIGHT)
+      if (next > this.maxContentHeightVp) {
+        this.maxContentHeightVp = next
+      }
+      const target = Math.max(this.webHeight, this.maxContentHeightVp)
+      if (target > this.webHeight + 0.5) {
+        this.webHeight = target
       }
     }
+  }
+
+  private resetMeasuredHeight(): void {
+    this.maxContentHeightVp = 0
+    this.webHeight = MermaidPreview.MEASURE_PLACEHOLDER_HEIGHT
   }
 
   private onErrorMessage(message: string): void {
     this.errorMessage = message.length > 0 ? message :
       EditorUiStrings.loc('Mermaid 语法错误', 'Mermaid syntax error', 'Mermaid構文エラー')
+    this.maxContentHeightVp = 0
     this.webHeight = 96
   }
 

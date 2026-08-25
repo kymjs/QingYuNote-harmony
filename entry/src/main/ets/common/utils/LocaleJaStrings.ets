@@ -490,7 +490,6 @@ export const LOCALE_JA_MAP: Record<string, string> = {
   '根目录': 'ルート',
   '梯形': '梯形',
   '检查更新': 'アップデートを確認',
-  '检测到新版本 v\${manifest.latestRelease}，是否更新？': '检测到新版本 v\${manifest.latestRelease}，是否更新？',
   '欢迎使用\${AppConst.appDisplayName}！我们将通过': '欢迎使用\${AppConst.appDisplayName}！我们将通过',
   '正在加载…': '読み込み中…',
   '正在加载笔记…': '正在加载笔记…',

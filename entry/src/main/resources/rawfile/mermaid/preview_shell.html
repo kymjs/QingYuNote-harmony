@@ -57,17 +57,26 @@
     var content = document.getElementById('content');
     var err = document.getElementById('error');
     var h = 0;
+    var bodyRect = body ? body.getBoundingClientRect() : null;
+
+    function includeElementHeight(element) {
+      if (!element) { return; }
+      h = Math.max(h, element.scrollHeight, element.offsetHeight);
+      var rect = element.getBoundingClientRect();
+      h = Math.max(h, rect.height);
+      if (bodyRect) {
+        h = Math.max(h, rect.bottom - bodyRect.top);
+      }
+    }
+
     if (err && err.style.display !== 'none') {
-      h = Math.max(h, err.scrollHeight, err.getBoundingClientRect().height);
+      includeElementHeight(err);
     }
     if (content) {
-      h = Math.max(h, content.scrollHeight, content.offsetHeight);
-      var rect = content.getBoundingClientRect();
-      if (rect.height > h) { h = rect.height; }
+      includeElementHeight(content);
       var svg = content.querySelector('svg');
       if (svg) {
-        var svgRect = svg.getBoundingClientRect();
-        if (svgRect.height > h) { h = svgRect.height; }
+        includeElementHeight(svg);
       }
     }
     if (body && body.scrollHeight > h) { h = body.scrollHeight; }
@@ -91,6 +100,10 @@
     setTimeout(reportHeight, 80);
     setTimeout(reportHeight, 240);
     setTimeout(reportHeight, 500);
+    setTimeout(reportHeight, 800);
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(reportHeight);
+    }
   }
 
   function showError(message, textColor) {

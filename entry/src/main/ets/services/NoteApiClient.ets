@@ -337,6 +337,36 @@ export class NoteApiClient {
     }
   }
 
+  /** 仅在系统应用市场确认存在新版本时调用；失败不得影响市场更新弹窗。 */
+  async reportAppMarketUpdateDetected(): Promise<void> {
+    const path = '/api/v1/app-market/version-report'
+    const req = http.createHttp()
+    try {
+      const headers = await this.buildCommonHeaders()
+      const version = (headers['X-App-Version'] ?? '').trim()
+      if (version.length === 0) {
+        Logger.warn('NoteApiClient', 'reportAppMarketUpdateDetected: app version unavailable')
+        return
+      }
+      headers['Content-Type'] = 'application/json; charset=utf-8'
+      const resp = await req.request(this.joinUrl(path), {
+        method: http.RequestMethod.POST,
+        header: headers,
+        extraData: JSON.stringify({ platform: 'harmony', version: version }),
+        expectDataType: http.HttpDataType.STRING,
+        connectTimeout: 8000,
+        readTimeout: 10000
+      })
+      if (resp.responseCode < 200 || resp.responseCode >= 300) {
+        Logger.warn('NoteApiClient', `reportAppMarketUpdateDetected: status=${resp.responseCode}`)
+      }
+    } catch (e) {
+      Logger.warn('NoteApiClient', `reportAppMarketUpdateDetected: ${JSON.stringify(e)}`)
+    } finally {
+      req.destroy()
+    }
+  }
+
   private async requestJson(method: http.RequestMethod, path: string, body?: string, bearer?: string): Promise<Object | null> {
     return this.requestJsonWithHeaders(method, path, body, bearer, undefined)
   }

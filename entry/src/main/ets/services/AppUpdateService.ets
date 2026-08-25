@@ -5,7 +5,6 @@ import { AppContextHolder } from './AppContextHolder'
 
 /** 与 CDN `harmony.json`、Flutter `ReleaseManifest` 字段一致。 */
 export interface ReleaseManifest {
-  latestRelease: string
   latestVersion: string
   downloadUrl: string
   upgradeText: string
@@ -46,7 +45,7 @@ export function compareSemanticVersions(a: string, b: string): number {
 
 export function manifestUsable(m: ReleaseManifest): boolean {
   return m.downloadUrl.length > 0 &&
-    (m.latestRelease.length > 0 || m.latestVersion.length > 0)
+    m.latestVersion.length > 0
 }
 
 export function needsForceUpdate(currentVersion: string, manifest: ReleaseManifest): boolean {
@@ -56,15 +55,7 @@ export function needsForceUpdate(currentVersion: string, manifest: ReleaseManife
   return compareSemanticVersions(currentVersion, manifest.latestVersion) < 0
 }
 
-export function needsOptionalUpdate(currentVersion: string, manifest: ReleaseManifest): boolean {
-  if (!manifestUsable(manifest) || manifest.latestRelease.length === 0) {
-    return false
-  }
-  return compareSemanticVersions(currentVersion, manifest.latestRelease) < 0
-}
-
 interface ManifestWire {
-  latestRelease?: string
   latestVersion?: string
   downloadUrl?: string
   upgradeText?: string
@@ -73,7 +64,6 @@ interface ManifestWire {
 
 function parseManifestJson(raw: ManifestWire): ReleaseManifest {
   return {
-    latestRelease: raw.latestRelease ?? '',
     latestVersion: raw.latestVersion ?? '',
     downloadUrl: raw.downloadUrl ?? '',
     upgradeText: raw.upgradeText ?? '',

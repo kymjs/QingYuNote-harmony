@@ -1,23 +1,26 @@
 import { ComponentContent, UIContext } from '@kit.ArkUI'
 import { Want } from '@kit.AbilityKit'
+import { updateManager } from '@kit.AppGalleryKit'
 import promptAction from '@ohos.promptAction'
 import { AppContextHolder } from './AppContextHolder'
+import { NoteApiClient } from './NoteApiClient'
 import { ForceUpdateDialog, ForceUpdateDialogParams } from '../dialogs/ForceUpdateDialog'
 import {
   ReleaseManifest,
   fetchReleaseManifestWithCache,
   getAppVersionNameForCompare,
   manifestUsable,
-  needsForceUpdate,
-  needsOptionalUpdate
+  needsForceUpdate
 } from './AppUpdateService'
 
-/** 本会话内可选更新仅提示一次（与 Flutter 一致）；强更不受限。 */
-let optionalPromptShownThisSession: boolean = false
+/** 本会话内应用市场普通更新仅提示一次；强更不受限。 */
+let appGalleryPromptShownThisSession: boolean = false
+let appGalleryUpdateCheckInFlight: boolean = false
 let forceUpdateDialogVisible: boolean = false
 
 const FORCE_DIALOG_MAX_ATTEMPTS = 3
 const FORCE_DIALOG_RETRY_MS = 400
+type AppGalleryUpdateCheckResult = 'shown' | 'noUpdate' | 'failed' | 'checking'
 
 @Builder
 function buildForceUpdateDialogContent(params: ForceUpdateDialogParams) {
@@ -88,36 +91,38 @@ function showForceUpdateDialog(uiContext: UIContext, manifest: ReleaseManifest, 
   }
 }
 
-function buildOptionalMessage(manifest: ReleaseManifest): string {
-  return [
-    `检测到新版本v${manifest.latestRelease}，是否更新？`,
-    '',
-    '更新内容：',
-    manifest.upgradeText
-  ].join('\n')
-}
-
-async function showOptionalUpdateDialog(
-  uiContext: UIContext,
-  manifest: ReleaseManifest
-): Promise<void> {
-  const prompt = uiContext.getPromptAction()
-  const message = buildOptionalMessage(manifest)
-  const dialogOpts: promptAction.ShowDialogOptions = {
-    title: '发现新版本',
-    message,
-    buttons: [
-      { text: '暂不更新', color: '#6B7280' },
-      { text: '立即更新', color: '#0DAA4A' }
-    ]
+/**
+ * 由应用市场判断普通更新并展示其系统弹窗。
+ * 非应用市场安装、无新版本和调用失败时均不展示自定义弹窗。
+ */
+async function checkAndShowAppGalleryUpdate(): Promise<AppGalleryUpdateCheckResult> {
+  if (appGalleryUpdateCheckInFlight) {
+    return 'checking'
   }
+  const context = AppContextHolder.tryGetContext()
+  if (context === undefined) {
+    console.error('checkAndShowAppGalleryUpdate: ability context unavailable')
+    return 'failed'
+  }
+  appGalleryUpdateCheckInFlight = true
   try {
-    const result: promptAction.ShowDialogSuccessResponse = await prompt.showDialog(dialogOpts)
-    if (result.index === 1) {
-      openDownloadUri(manifest.downloadUrl)
+    const checkResult = await updateManager.checkAppUpdate(context)
+    if (checkResult.updateAvailable !== updateManager.UpdateAvailableCode.LATER_VERSION_EXIST) {
+      return 'noUpdate'
     }
+    // 服务端版本同步只允许由应用市场明确检测到有更新的分支触发。
+    void NoteApiClient.getInstance().reportAppMarketUpdateDetected()
+    const showResult = await updateManager.showUpdateDialog(context)
+    if (showResult === updateManager.ShowUpdateResultCode.SHOW_DIALOG_SUCCESS) {
+      return 'shown'
+    }
+    console.error(`showUpdateDialog failed: result=${showResult}`)
+    return 'failed'
   } catch (e) {
-    console.error(`showOptionalUpdateDialog: ${JSON.stringify(e)}`)
+    console.error(`checkAndShowAppGalleryUpdate: ${JSON.stringify(e)}`)
+    return 'failed'
+  } finally {
+    appGalleryUpdateCheckInFlight = false
   }
 }
 
@@ -147,17 +152,16 @@ export async function runAppUpdateCheckOnLaunch(uiContext: UIContext): Promise<v
     showForceUpdateDialog(uiContext, manifest)
     return
   }
-  if (!needsOptionalUpdate(current, manifest)) {
+  if (appGalleryPromptShownThisSession) {
     return
   }
-  if (optionalPromptShownThisSession) {
-    return
+  const result = await checkAndShowAppGalleryUpdate()
+  if (result === 'shown') {
+    appGalleryPromptShownThisSession = true
   }
-  optionalPromptShownThisSession = true
-  await showOptionalUpdateDialog(uiContext, manifest)
 }
 
-/** 前后台恢复或回首页时仅复检强更（可选更新仍本会话一次）。 */
+/** 前后台恢复或回首页时仅复检强更（应用市场普通更新仍本会话一次）。 */
 export async function recheckForceUpdateOnResume(uiContext: UIContext): Promise<void> {
   const manifest = await fetchReleaseManifestWithCache()
   if (manifest === null) {
@@ -196,7 +200,6 @@ export async function handleServerUpgradeRequired(
   if (manifest !== null && minVersion !== undefined && minVersion.length > 0 &&
     manifest.latestVersion !== minVersion) {
     manifest = {
-      latestRelease: manifest.latestRelease.length > 0 ? manifest.latestRelease : minVersion,
       latestVersion: minVersion,
       downloadUrl: (downloadUrl !== undefined && downloadUrl.length > 0)
         ? downloadUrl
@@ -210,7 +213,6 @@ export async function handleServerUpgradeRequired(
   if (manifest === null) {
     const fallbackVersion = minVersion ?? ''
     manifest = {
-      latestRelease: fallbackVersion,
       latestVersion: fallbackVersion,
       downloadUrl: downloadUrl ?? '',
       upgradeText: '',
@@ -245,23 +247,25 @@ export async function runAppUpdateCheckManually(uiContext: UIContext): Promise<v
     return
   }
   const current = await getAppVersionNameForCompare()
-  if (!needsForceUpdate(current, manifest) && !needsOptionalUpdate(current, manifest)) {
-    const toastOpts: promptAction.ShowToastOptions = {
-      message: `当前已是最新版本`,
-      duration: 2000
-    }
-    try {
-      prompt.showToast(toastOpts)
-    } catch (err) {
-      console.error(`showToast failed: ${JSON.stringify(err)}`)
-    }
-    return
-  }
   if (needsForceUpdate(current, manifest)) {
     showForceUpdateDialog(uiContext, manifest)
     return
   }
-  await showOptionalUpdateDialog(uiContext, manifest)
+  const result = await checkAndShowAppGalleryUpdate()
+  if (result === 'shown' || result === 'checking') {
+    return
+  }
+  const toastOpts: promptAction.ShowToastOptions = {
+    message: result === 'noUpdate'
+      ? '当前已是最新版本'
+      : '无法通过应用市场检查更新，请稍后重试',
+    duration: 2200
+  }
+  try {
+    prompt.showToast(toastOpts)
+  } catch (err) {
+    console.error(`showToast failed: ${JSON.stringify(err)}`)
+  }
 }
 
 /** 启动门禁全屏强更页用：打开应用市场/下载页。 */
