@@ -91,6 +91,7 @@ export class NoteHistoryService {
   }
 
   async listVersions(noteId: string): Promise<NoteHistoryEntry[]> {
+    await this.syncWithCloud(noteId)
     const manifest = await this.readLocalManifest(noteId)
     const userId = await NoteContentEncryptionService.getInstance().resolveUserId()
     if (userId === null) {
@@ -268,6 +269,7 @@ export class NoteHistoryService {
     const manifest = await this.readLocalManifest(snapshot.id)
     const next = NoteHistoryLogic.prune([entry, ...manifest.versions])
     await this.writeLocalManifest(this.withVersions(snapshot.id, next))
+    void this.syncWithCloud(snapshot.id)
   }
 
   private async writeRawVersion(noteId: string, rawMarkdown: string, reason: string, hash: string,
@@ -285,6 +287,7 @@ export class NoteHistoryService {
     const manifest = await this.readLocalManifest(noteId)
     const next = NoteHistoryLogic.prune([entry, ...manifest.versions])
     await this.writeLocalManifest(this.withVersions(noteId, next))
+    void this.syncWithCloud(noteId)
   }
 
   private async readLocalManifest(noteId: string): Promise<NoteHistoryManifest> {
