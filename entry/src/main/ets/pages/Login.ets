@@ -205,16 +205,24 @@ struct Login {
     }
   }
 
-  /** 未勾选时弹窗；确定则勾选，点外部关闭则不勾选。不继续登录。 */
-  private async showAgreeTermsAndCheck(): Promise<void> {
-    const ok = await showAgreeTermsPromptDialog(this.getUIContext())
-    if (ok) {
-      this.agreeToTerms = true
+  /** 未勾选时弹窗；确定则勾选并返回 true 以继续登录，点外部关闭则不勾选也不继续。 */
+  private async ensureAgreeToTermsThenContinue(): Promise<boolean> {
+    if (this.agreeToTerms) {
+      return true
     }
+    const ok = await showAgreeTermsPromptDialog(this.getUIContext())
+    if (!ok) {
+      return false
+    }
+    this.agreeToTerms = true
+    return true
   }
 
   private async onAccountPasswordSubmit(): Promise<void> {
     if (this.accountBusy) {
+      return
+    }
+    if (!await this.ensureAgreeToTermsThenContinue()) {
       return
     }
     this.accountBusy = true
@@ -235,6 +243,9 @@ struct Login {
   }
 
   private async onHuaweiTap(): Promise<void> {
+    if (!await this.ensureAgreeToTermsThenContinue()) {
+      return
+    }
     const ctx = this.obtainUiAbilityContext()
     if (ctx === undefined) {
       return
@@ -398,10 +409,6 @@ struct Login {
             .borderRadius(12)
             .enabled(!this.accountBusy)
             .onClick((): void => {
-              if (!this.agreeToTerms) {
-                void this.showAgreeTermsAndCheck()
-                return
-              }
               void this.onAccountPasswordSubmit()
             })
 
@@ -479,10 +486,6 @@ struct Login {
                 })
                 .onClick((): void => {
                   if (!this.accountBusy) {
-                    if (!this.agreeToTerms) {
-                      void this.showAgreeTermsAndCheck()
-                      return
-                    }
                     void this.onHuaweiTap()
                   }
                 })

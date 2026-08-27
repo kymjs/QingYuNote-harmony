@@ -63,6 +63,7 @@ export function buildAgreeTermsPromptDialogContent(params: AgreeTermsPromptDialo
 
 /**
  * 与 Flutter `showDialog(barrierDismissible: true)` 对齐：仅确定按钮；点击蒙层可关闭。
+ * 调用方在点确定后勾选协议并继续登录/注册。
  * @returns true 表示点击确定，false 表示点击蒙层关闭或打开失败。
  */
 export function showAgreeTermsPromptDialog(uiContext: UIContext): Promise<boolean> {

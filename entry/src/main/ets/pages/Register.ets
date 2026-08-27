@@ -229,12 +229,17 @@ struct Register {
     }
   }
 
-  /** 未勾选时弹窗；确定则勾选，点外部关闭则不勾选。不继续注册。 */
-  private async showAgreeTermsAndCheck(): Promise<void> {
-    const ok = await showAgreeTermsPromptDialog(this.getUIContext())
-    if (ok) {
-      this.agreeToTerms = true
+  /** 未勾选时弹窗；确定则勾选并返回 true 以继续注册，点外部关闭则不勾选也不继续。 */
+  private async ensureAgreeToTermsThenContinue(): Promise<boolean> {
+    if (this.agreeToTerms) {
+      return true
     }
+    const ok = await showAgreeTermsPromptDialog(this.getUIContext())
+    if (!ok) {
+      return false
+    }
+    this.agreeToTerms = true
+    return true
   }
 
   /** 将服务端 `error` 映射为 Toast。`sms_quota_exceeded` 含义见 `server/TECHNICAL.md` §2.11；对用户勿写维度与次数。 */
@@ -381,6 +386,9 @@ struct Register {
   }
 
   private async onSubmit(): Promise<void> {
+    if (!await this.ensureAgreeToTermsThenContinue()) {
+      return
+    }
     const p = this.phone.trim()
     const c = this.code.trim()
     const pw = this.newPassword.trim()
@@ -584,10 +592,6 @@ struct Register {
             .margin({ top: 10 })
             .enabled(!this.submitting)
             .onClick((): void => {
-              if (!this.agreeToTerms) {
-                void this.showAgreeTermsAndCheck()
-                return
-              }
               void this.onSubmit()
             })
 

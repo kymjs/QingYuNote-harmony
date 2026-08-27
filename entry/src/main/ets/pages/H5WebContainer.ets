@@ -1573,6 +1573,7 @@ struct H5WebContainer {
         }
         .width('100%')
         .height($r('app.float.toolbar_height'))
+        .padding({ left: 16, right: 16 })
         .alignItems(VerticalAlign.Center)
       }
 
@@ -1672,13 +1673,6 @@ struct H5WebContainer {
     .width('100%')
     .height('100%')
     .alignItems(HorizontalAlign.Start)
-    .padding(this.isVipImmersiveChrome() ? {
-      left: 0,
-      right: 0
-    } : {
-      left: 16,
-      right: 16
-    })
     .backgroundColor($r('app.color.app_background'))
     .onAreaChange((_oldVal: Area, newVal: Area) => {
       const w = Number(newVal.width)
