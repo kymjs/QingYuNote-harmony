@@ -9,10 +9,12 @@ import { FileService } from './FileService'
 import { NoteHistoryService } from './NoteHistoryService'
 import { NoteHistoryReason } from '../common/model/NoteHistory'
 import { TimeUtils } from '../common/utils/TimeUtils'
+import { NoteSyncConflictLogic } from '../common/utils/NoteSyncConflictLogic'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { Logger } from '../common/utils/Logger'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { AppContextHolder } from './AppContextHolder'
+import { LocaleService } from './LocaleService'
 import { NoteImagesChangedEventPayload, SyncConstants } from '../common/constants/SyncConstants'
 import { NoteSettingsRemoteSync } from './NoteSettingsRemoteSync'
 import { blockWebDavSyncIfForceUpdateRequired } from './AppUpdateUi'
@@ -320,11 +322,8 @@ export class SyncService {
         if (purgePeek !== null) {
           return purgePeek
         }
-        await NoteHistoryService.getInstance().captureFromRemoteRaw(
-          noteId,
-          remotePeek,
-          NoteHistoryReason.remoteClobber
-        )
+        await this.preserveRemoteIfDivergedSinceLocalEdit(noteId, remotePeek, remoteStat.remoteModified)
+        await PreferencesService.getInstance().clearNoteEditBaseUpdatedAt(noteId)
         Logger.info('SyncService', `syncNote upload newer local note: noteId=${noteId}`)
         const uploaded = await WebDAVClient.getInstance().uploadNote(noteId, rawContent, note.lastOperationAt, {
           deletedTime: note.deletedTime,
@@ -823,6 +822,45 @@ export class SyncService {
     Logger.info('SyncService', `uploadAudioForNoteOrThrow start: noteId=${noteId}, audioId=${audioId}, bytes=${bytes.byteLength}`)
     await WebDAVClient.getInstance().uploadAudio(audioId, bytes)
     Logger.info('SyncService', `uploadAudioForNoteOrThrow done: noteId=${noteId}, audioId=${audioId}`)
+  }
+
+  private async preserveRemoteIfDivergedSinceLocalEdit(noteId: string, remotePeek: string,
+    httpRemoteModified: number): Promise<void> {
+    const parsed = NoteStateCodec.parseNoteFile(remotePeek, noteId, Date.now())
+    const remoteLastEdit = NoteSyncConflictLogic.resolveRemoteLastEditAt(
+      parsed.state.updatedAt, 0, httpRemoteModified)
+    let localBefore = await PreferencesService.getInstance().getNoteEditBaseUpdatedAt(noteId)
+    if (localBefore <= 0) {
+      const local = await NoteRepository.getInstance().getNote(noteId)
+      localBefore = local !== null ? local.remoteModified : 0
+    }
+    if (!NoteSyncConflictLogic.shouldSaveRemoteToHistory(remoteLastEdit, localBefore)) {
+      return
+    }
+    const saved = await NoteHistoryService.getInstance().captureFromRemoteRaw(
+      noteId, remotePeek, NoteHistoryReason.remoteClobber)
+    if (saved) {
+      this.showRemoteNoteConflictToast()
+    }
+  }
+
+  private showRemoteNoteConflictToast(): void {
+    try {
+      const ui = AppContextHolder.tryGetLastUiContext()
+      if (ui === undefined) {
+        return
+      }
+      ui.getPromptAction().showToast({
+        message: LocaleService.loc(
+          '远端笔记有冲突，已保存至版本历史',
+          'Remote note has a conflict and was saved to version history',
+          'リモートノートに競合があります。バージョン履歴に保存しました'
+        ),
+        duration: 2500
+      })
+    } catch (error) {
+      Logger.warn('SyncService', `showRemoteNoteConflictToast failed: ${JSON.stringify(error)}`)
+    }
   }
 
   private async syncHistoryQuietly(noteId: string): Promise<void> {

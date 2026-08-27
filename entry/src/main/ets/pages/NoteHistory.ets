@@ -2,6 +2,7 @@ import type { NoteHistoryEntry } from '../common/model/NoteHistory'
 import { NoteHistoryReason } from '../common/model/NoteHistory'
 import { NoteHistoryService } from '../services/NoteHistoryService'
 import { EditorUiStrings } from '../common/utils/EditorUiStrings'
+import { NotePlatformSource } from '../common/utils/NotePlatformSource'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 
@@ -73,6 +74,14 @@ struct NoteHistoryPage {
     return EditorUiStrings.loc('自动保存', 'Auto save', '自動保存')
   }
 
+  private platformTitle(platform: string): string {
+    const name = NotePlatformSource.normalize(platform)
+    if (name.length === 0) {
+      return EditorUiStrings.loc('最后编辑自未知端', 'Last edited from unknown', '最終編集元不明')
+    }
+    return EditorUiStrings.loc('最后编辑自XXX端', 'Last edited from XXX', 'XXXから最後に編集').replace('XXX', name)
+  }
+
   private timeLabel(ms: number): string {
     if (ms <= 0) {
       return ''
@@ -141,22 +150,37 @@ struct NoteHistoryPage {
         List() {
           ForEach(this.versions, (entry: NoteHistoryEntry) => {
             ListItem() {
-              Column() {
-                Text(entry.title.length > 0 ? entry.title : EditorUiStrings.loc('无标题', 'Untitled', '無題'))
-                  .fontSize(16)
-                  .fontColor($r('app.color.primary_text'))
-                  .maxLines(1)
-                Text(`${this.timeLabel(entry.createdAt)} · ${this.reasonLabel(entry.reason)}`)
-                  .fontSize(12)
-                  .fontColor($r('app.color.secondary_text'))
+              Row() {
+                Column() {
+                  Text(this.platformTitle(entry.platform))
+                    .fontSize(16)
+                    .fontColor($r('app.color.primary_text'))
+                    .maxLines(1)
+                    .textAlign(TextAlign.Start)
+                    .width('100%')
+                  Text(`${this.timeLabel(entry.createdAt)} · ${this.reasonLabel(entry.reason)}`)
+                    .fontSize(12)
+                    .fontColor($r('app.color.secondary_text'))
+                    .textAlign(TextAlign.Start)
+                    .width('100%')
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+
                 if (this.selectedId === entry.id) {
                   Button(this.restoring ?
                     EditorUiStrings.loc('恢复中…', 'Restoring…', '復元中…') :
                     EditorUiStrings.loc('恢复此版本', 'Restore this version', 'このバージョンに戻す'))
                     .enabled(!this.restoring)
+                    .fontSize(13)
                     .fontColor($r('app.color.on_accent'))
                     .backgroundColor($r('app.color.accent'))
-                    .margin({ top: 12 })
+                    .height(36)
+                    .padding({
+                      left: 14,
+                      right: 14
+                    })
+                    .margin({ left: 8 })
                     .onClick(() => {
                       void this.restoreSelected()
                     })
@@ -164,12 +188,14 @@ struct NoteHistoryPage {
               }
               .padding(12)
               .width('100%')
+              .alignItems(VerticalAlign.Center)
               .onClick(() => {
                 this.selectedId = entry.id
               })
             }
           }, (entry: NoteHistoryEntry) => entry.id)
         }
+        .scrollBar(BarState.Off)
         .layoutWeight(1)
         .width('100%')
       }

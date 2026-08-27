@@ -8,6 +8,7 @@ import {
 import { SyncConstants } from '../common/constants/SyncConstants'
 import { IdUtils } from '../common/utils/IdUtils'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
+import { NotePlatformSource } from '../common/utils/NotePlatformSource'
 import { CryptoService } from './CryptoService'
 import { FileService } from './FileService'
 import { NoteContentEncryptionService } from './NoteContentEncryptionService'
@@ -46,16 +47,16 @@ export class NoteHistoryService {
       if (!ok) {
         return
       }
-      await this.writeVersion(snapshot, reason, hash, now, '')
+      await this.writeVersion(snapshot, reason, hash, now, '', NotePlatformSource.current())
     } catch (error) {
       Logger.warn('NoteHistoryService', `captureIfNeeded failed: ${JSON.stringify(error)}`)
     }
   }
 
-  async captureFromRemoteRaw(noteId: string, rawMarkdown: string, reason: string): Promise<void> {
+  async captureFromRemoteRaw(noteId: string, rawMarkdown: string, reason: string): Promise<boolean> {
     try {
       if (rawMarkdown.trim().length === 0) {
-        return
+        return false
       }
       const parsed = NoteStateCodec.parseNoteFile(rawMarkdown, noteId, Date.now())
       let title = parsed.state.title
@@ -70,23 +71,26 @@ export class NoteHistoryService {
         content = plain.content
       }
       if (NoteHistoryLogic.isNoteEmpty(title, content)) {
-        return
+        return false
       }
       const hash = await CryptoService.getInstance().sha256Hex(
         NoteHistoryLogic.contentHashSource(title, content)
       )
       const manifest = await this.readLocalManifest(noteId)
       if (manifest.versions.length > 0 && manifest.versions[0].contentHash === hash) {
-        return
+        return true
       }
       const snapshot = local !== null ? this.cloneWithText(local, title, content) : local
       if (snapshot === null) {
         await this.writeRawVersion(noteId, rawMarkdown, reason, hash, content.length)
-        return
+        return true
       }
-      await this.writeVersion(snapshot, reason, hash, Date.now(), rawMarkdown)
+      await this.writeVersion(snapshot, reason, hash, Date.now(), rawMarkdown,
+        NotePlatformSource.normalize(`${parsed.state.source}`))
+      return true
     } catch (error) {
       Logger.warn('NoteHistoryService', `captureFromRemoteRaw failed: ${JSON.stringify(error)}`)
+      return false
     }
   }
 
@@ -230,7 +234,7 @@ export class NoteHistoryService {
   }
 
   private async writeVersion(snapshot: Note, reason: string, hash: string, createdAt: number,
-    rawMarkdown: string): Promise<void> {
+    rawMarkdown: string, platform: string): Promise<void> {
     const versionId = IdUtils.uuid()
     await FileService.getInstance().ensureHistoryDir(snapshot.id)
     const versionPath = FileService.getInstance().historyVersionPath(snapshot.id, versionId)
@@ -266,6 +270,7 @@ export class NoteHistoryService {
     entry.reason = reason
     entry.title = titleForManifest
     entry.hasFlowchart = hasFlowchart
+    entry.platform = platform
     const manifest = await this.readLocalManifest(snapshot.id)
     const next = NoteHistoryLogic.prune([entry, ...manifest.versions])
     await this.writeLocalManifest(this.withVersions(snapshot.id, next))
@@ -278,12 +283,14 @@ export class NoteHistoryService {
     await FileService.getInstance().ensureHistoryDir(noteId)
     FileService.getInstance().writeHistoryTextFile(
       FileService.getInstance().historyVersionPath(noteId, versionId), rawMarkdown)
+    const parsed = NoteStateCodec.parseNoteFile(rawMarkdown, noteId, Date.now())
     const entry = new NoteHistoryEntry()
     entry.id = versionId
     entry.createdAt = Date.now()
     entry.contentHash = hash
     entry.contentLength = contentLength
     entry.reason = reason
+    entry.platform = NotePlatformSource.normalize(`${parsed.state.source}`)
     const manifest = await this.readLocalManifest(noteId)
     const next = NoteHistoryLogic.prune([entry, ...manifest.versions])
     await this.writeLocalManifest(this.withVersions(noteId, next))

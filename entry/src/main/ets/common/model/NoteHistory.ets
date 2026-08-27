@@ -23,6 +23,8 @@ export class NoteHistoryEntry {
   reason: string = NoteHistoryReason.auto
   title: string = ''
   hasFlowchart: boolean = false
+  /** 写入该版本时的客户端平台（Android / iOS / iPad / macOS / Linux / Windows / HarmonyOS）。 */
+  platform: string = ''
 
   toJson(): Record<string, Object> {
     const map: Record<string, Object> = {}
@@ -33,6 +35,7 @@ export class NoteHistoryEntry {
     map['reason'] = this.reason
     map['title'] = this.title
     map['hasFlowchart'] = this.hasFlowchart
+    map['platform'] = this.platform
     return map
   }
 
@@ -45,6 +48,7 @@ export class NoteHistoryEntry {
     entry.reason = `${raw['reason'] ?? NoteHistoryReason.auto}`
     entry.title = `${raw['title'] ?? ''}`
     entry.hasFlowchart = raw['hasFlowchart'] === true
+    entry.platform = `${raw['platform'] ?? ''}`
     return entry
   }
 }

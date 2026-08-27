@@ -78,6 +78,8 @@ const CALENDAR_VIEW_MODE_KEY = 'calendar_view_mode'
 const DASH_HOME_CONTINUE_HIDDEN_KEY = 'dash_home_continue_hidden'
 /** 与 Flutter `AppConst.prefDashHomeLatestHiddenKey` 一致 */
 const DASH_HOME_LATEST_HIDDEN_KEY = 'dash_home_latest_hidden'
+/** 与 Flutter `AppConst.prefNoteEditBaseUpdatedAtKey` 一致 */
+const NOTE_EDIT_BASE_UPDATED_AT_KEY = 'note_edit_base_updated_at'
 
 export interface LegacyNoteSettingsFlags {
   quick: boolean
@@ -1385,6 +1387,101 @@ export class PreferencesService {
     const map = await this.getDashHomeContinueHidden()
     map[id] = updatedAt > 0 ? updatedAt : Date.now()
     await this.setDashHomeContinueHidden(map)
+  }
+
+  async getNoteEditBaseUpdatedAtMap(): Promise<Record<string, number>> {
+    try {
+      const store = this.ensureStore()
+      const raw = `${store.getSync(NOTE_EDIT_BASE_UPDATED_AT_KEY, '{}') ?? '{}'}`.trim()
+      if (raw.length === 0) {
+        return {}
+      }
+      const parsed: Object = JSON.parse(raw) as Object
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        return {}
+      }
+      const source = parsed as Record<string, Object>
+      const out: Record<string, number> = {}
+      const keys = Object.keys(source)
+      for (let i = 0; i < keys.length; i++) {
+        const id = keys[i].trim()
+        if (id.length === 0) {
+          continue
+        }
+        const ms = Number(source[keys[i]] ?? 0)
+        if (ms > 0) {
+          out[id] = ms
+        }
+      }
+      return out
+    } catch (error) {
+      Logger.warn('PreferencesService', `getNoteEditBaseUpdatedAtMap failed: ${this.describeError(error as Object)}`)
+      return {}
+    }
+  }
+
+  async getNoteEditBaseUpdatedAt(noteId: string): Promise<number> {
+    const id = noteId.trim()
+    if (id.length === 0) {
+      return 0
+    }
+    const map = await this.getNoteEditBaseUpdatedAtMap()
+    return map[id] ?? 0
+  }
+
+  /** 仅在尚未记录时写入「开始本次本地编辑前」的 updatedAt。 */
+  async ensureNoteEditBaseUpdatedAt(noteId: string, updatedAt: number): Promise<void> {
+    const id = noteId.trim()
+    if (id.length === 0 || updatedAt <= 0) {
+      return
+    }
+    const map = await this.getNoteEditBaseUpdatedAtMap()
+    if ((map[id] ?? 0) > 0) {
+      return
+    }
+    map[id] = updatedAt
+    try {
+      const store = this.ensureStore()
+      store.putSync(NOTE_EDIT_BASE_UPDATED_AT_KEY, JSON.stringify(map))
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `ensureNoteEditBaseUpdatedAt failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  async clearNoteEditBaseUpdatedAt(noteId: string): Promise<void> {
+    const id = noteId.trim()
+    if (id.length === 0) {
+      return
+    }
+    const map = await this.getNoteEditBaseUpdatedAtMap()
+    if (map[id] === undefined) {
+      return
+    }
+    const next: Record<string, number> = {}
+    const keys = Object.keys(map)
+    for (const key of keys) {
+      if (key !== id) {
+        next[key] = map[key]
+      }
+    }
+    try {
+      const store = this.ensureStore()
+      store.putSync(NOTE_EDIT_BASE_UPDATED_AT_KEY, JSON.stringify(next))
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `clearNoteEditBaseUpdatedAt failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  async clearAllNoteEditBaseUpdatedAt(): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.deleteSync(NOTE_EDIT_BASE_UPDATED_AT_KEY)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `clearAllNoteEditBaseUpdatedAt failed: ${this.describeError(error as Object)}`)
+    }
   }
 
   /** 首页「最新笔记」永久隐藏的 noteId 列表。 */

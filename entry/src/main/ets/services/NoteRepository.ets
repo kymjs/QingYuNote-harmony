@@ -634,6 +634,7 @@ export class NoteRepository {
     updated.lastOperationAt = now
     updated.syncStatus = 'pending'
     updated.updatedAt = now
+    await PreferencesService.getInstance().ensureNoteEditBaseUpdatedAt(id, existing.updatedAt)
     await FileService.getInstance().writeNoteFile(updated)
     await DatabaseService.getInstance().upsertSyncState(this.toSyncState(updated))
     this.bumpVersion()
@@ -1052,6 +1053,7 @@ export class NoteRepository {
 
   async deleteNote(id: string, operationTime: number): Promise<void> {
     await this.init()
+    await PreferencesService.getInstance().clearNoteEditBaseUpdatedAt(id)
     const existing = await this.getNote(id)
     if (!existing) {
       await DatabaseService.getInstance().markDeleted(id, operationTime)
@@ -1091,6 +1093,7 @@ export class NoteRepository {
       await PreferencesService.getInstance().setLastSyncTime(0)
       await PreferencesService.getInstance().setLastRemoteIndexUpdatedAt(0)
       await PreferencesService.getInstance().setLastRemoteIndexFingerprint('')
+      await PreferencesService.getInstance().clearAllNoteEditBaseUpdatedAt()
     } finally {
       this.endBulkNotification()
       this.invalidateCachesForIdentityChange()
@@ -1144,6 +1147,7 @@ export class NoteRepository {
 
   async overwriteFromRemote(noteId: string, content: string, remoteModified: number): Promise<Note> {
     await this.init()
+    await PreferencesService.getInstance().clearNoteEditBaseUpdatedAt(noteId)
     const local = await this.getNote(noteId)
     if (local !== null) {
       await NoteHistoryService.getInstance().captureIfNeeded(local, NoteHistoryReason.remoteOverwrite)
