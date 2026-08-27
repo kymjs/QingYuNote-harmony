@@ -5,8 +5,10 @@ import { NoteApiClient } from '../../services/NoteApiClient'
 import { PreferencesService } from '../../services/PreferencesService'
 import { AppContextHolder } from '../../services/AppContextHolder'
 import { RemoteAppConfigService } from '../../services/RemoteAppConfigService'
+import { LocaleService } from '../../services/LocaleService'
 
 const OFFICIAL_INVITE_PAGE_URL = 'https://note.kymjs.com/invite.html'
+const OFFICIAL_ACTIVITY_PAGE_URL = 'https://note.kymjs.com/activity.html'
 const BRAND_GREEN = '#0DAA4A'
 
 let referralInviteInFlight: boolean = false
@@ -276,6 +278,32 @@ export async function openReferralInviteSharePage(uiContext: UIContext): Promise
     })
   } catch (err) {
     console.error(`openReferralInviteSharePage failed: ${JSON.stringify(err)}`)
+  }
+}
+
+/** 我的页「免费得会员」：应用内 WebView 打开活动 H5。 */
+export async function openQingyuActivityPage(uiContext: UIContext): Promise<void> {
+  let uid = ''
+  try {
+    uid = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
+  } catch (_) {
+  }
+  const title: string = LocaleService.loc('免费得会员', 'Free membership', '無料で会員')
+  const parts: string[] = ['from=qingyu', 'platform=harmony']
+  if (uid.length > 0) {
+    parts.push(`uid=${encodeURIComponent(uid)}`)
+  }
+  const url: string = `${OFFICIAL_ACTIVITY_PAGE_URL}?${parts.join('&')}`
+  try {
+    await uiContext.getRouter().pushUrl({
+      url: 'pages/H5WebContainer',
+      params: {
+        'title': title,
+        'url': url
+      }
+    })
+  } catch (err) {
+    console.error(`openQingyuActivityPage failed: ${JSON.stringify(err)}`)
   }
 }
 

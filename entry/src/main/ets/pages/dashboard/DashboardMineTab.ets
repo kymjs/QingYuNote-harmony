@@ -8,7 +8,7 @@ import { PreferencesService } from '../../services/PreferencesService'
 import { RemoteAppConfigService } from '../../services/RemoteAppConfigService'
 import { CachedNetworkImage } from '../../components/CachedNetworkImage'
 import { MineDiamondIcon, MineScalesIcon } from '../../components/MineSvgIcons'
-import { openReferralInviteSharePage } from '../../common/utils/ReferralInviteNavigation'
+import { openQingyuActivityPage } from '../../common/utils/ReferralInviteNavigation'
 import { openQingyuVipPage } from '../../common/utils/OpenQingyuVipPage'
 import { Logger } from '../../common/utils/Logger'
 import { ImageCacheService } from '../../services/ImageCacheService'
@@ -812,11 +812,11 @@ export struct DashboardMineTab {
     Column() {
       if (this.showReferralInviteMenu) {
         this.menuRow($r('sys.symbol.share'),
-          LocaleService.loc('邀请得会员', 'Invite for membership', '招待で会員'),
+          LocaleService.loc('免费得会员', 'Free membership', '無料で会員'),
           LocaleService.loc('限时奖励', 'Limited offer', '期間限定'),
           true,
           () => {
-            void openReferralInviteSharePage(this.getUIContext())
+            void openQingyuActivityPage(this.getUIContext())
           }, true)
       }
       this.menuRow($r('sys.symbol.doc_text'),

@@ -21,7 +21,8 @@
     ],
     "pages": "$profile:main_pages",
     "querySchemes": [
-      "alipays"
+      "alipays",
+      "store"
     ],
     "requestPermissions": [
       {

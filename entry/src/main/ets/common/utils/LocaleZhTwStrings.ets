@@ -781,6 +781,7 @@ export const LOCALE_ZH_TW_MAP: Record<string, string> = {
   '选择文件夹': '選擇文件夾',
   '邀请好友得会员': '邀請好友得會員',
   '邀请得会员': '邀請得會員',
+  '免费得会员': '免費得會員',
   '邀请文案已复制，快去分享给好友吧': '邀請文案已複製，快去分享給好友吧',
   '部分图片未找到：\${result.missingImages.join(': '部分圖片未找到：\${result.missingImages.join(',
   '重置密码': '重置密碼',

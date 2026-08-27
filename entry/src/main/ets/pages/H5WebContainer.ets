@@ -1,6 +1,6 @@
 import { webview } from '@kit.ArkWeb'
 import { http } from '@kit.NetworkKit'
-import { abilityAccessCtrl, common } from '@kit.AbilityKit'
+import { abilityAccessCtrl, common, Want } from '@kit.AbilityKit'
 import { fileIo, fileUri } from '@kit.CoreFileKit'
 import { photoAccessHelper } from '@kit.MediaLibraryKit'
 import { pasteboard } from '@kit.BasicServicesKit'
@@ -11,9 +11,12 @@ import { WereadQrSaveBridge } from '../common/utils/WereadQrSaveBridge'
 import { YoudaoApiKeyBridge } from '../common/utils/YoudaoApiKeyBridge'
 import { YinxiangApiKeyBridge } from '../common/utils/YinxiangApiKeyBridge'
 import { QingyuVipBridge } from '../common/utils/QingyuVipBridge'
+import { QingyuAppBridge } from '../common/utils/QingyuAppBridge'
+import { openReferralInviteSharePage } from '../common/utils/ReferralInviteNavigation'
 import { isQingyuVipPageUrl, vipPageLangQuery } from '../common/utils/OpenQingyuVipPage'
 import { usePcStyleLayoutWithSize } from '../common/utils/DesktopLayout'
 import { PreferencesService } from '../services/PreferencesService'
+import { AppContextHolder } from '../services/AppContextHolder'
 import { QingyuVipPayService } from '../services/QingyuVipPayService'
 import { WebViewSessionCleaner } from '../common/utils/WebViewSessionCleaner'
 
@@ -949,6 +952,7 @@ struct H5WebContainer {
   private youdaoBridge: YoudaoApiKeyBridge = new YoudaoApiKeyBridge()
   private yinxiangBridge: YinxiangApiKeyBridge = new YinxiangApiKeyBridge()
   private vipBridge: QingyuVipBridge = new QingyuVipBridge()
+  private appBridge: QingyuAppBridge = new QingyuAppBridge()
   private vipSessionCache: string = '{}'
   private readonly base64: util.Base64Helper = new util.Base64Helper()
   // 「复制 API Key」流程已被处理,防止用户连点/动画期间再次 Router.back() 把上一页(导入笔记页面)也弹掉
@@ -983,6 +987,15 @@ struct H5WebContainer {
     this.vipBridge.bindSessionProvider(() => this.vipSessionCache)
     this.vipBridge.bindPay((planId: string, requestId: string) => {
       void this.handleVipPayFromJs(planId, requestId)
+    })
+    this.appBridge.bindOpenInvite(() => {
+      void openReferralInviteSharePage(this.getUIContext())
+    })
+    this.appBridge.bindOpenStoreReview(() => {
+      this.openStoreReviewFromJs()
+    })
+    this.appBridge.bindOpenMineTab(() => {
+      this.openMineTabFromJs()
     })
     // 登出时统一清理缓存（与 Flutter `WebViewSessionCleaner.register` 对齐）。
     WebViewSessionCleaner.registerController(this.webController)
@@ -1322,12 +1335,109 @@ struct H5WebContainer {
   }
 
   private runPageScriptsIfNeeded(): void {
+    this.injectQingyuAppMarker()
     this.hideFeishuVoiceInputIfNeeded()
     this.hideWereadSkillsExtraIfNeeded()
     this.watchWereadApiKeyCopyIfNeeded()
     this.patchYoudaoApiKeyPageIfNeeded()
     this.patchYinxiangApiKeyPageIfNeeded()
     void this.pushVipSessionIfNeeded()
+  }
+
+  private updateTitleIfStoreReview(): void {
+    try {
+      const url = this.webController.getUrl()
+      if (url.indexOf('store_review_upload.html') >= 0) {
+        this.pageTitle = '上传好评截图'
+      } else if (url.indexOf('store_review_pending.html') >= 0) {
+        this.pageTitle = '审核中'
+      } else if (url.indexOf('store_review_approved.html') >= 0) {
+        this.pageTitle = '审核通过'
+      } else if (url.indexOf('store_review_rejected.html') >= 0) {
+        this.pageTitle = '审核不通过'
+      } else if (url.indexOf('store_review.html') >= 0) {
+        this.pageTitle = '前往应用市场'
+      }
+    } catch (_) {
+    }
+  }
+
+  private injectQingyuAppMarker(): void {
+    void this.injectQingyuAppMarkerAsync()
+  }
+
+  private async injectQingyuAppMarkerAsync(): Promise<void> {
+    let token = ''
+    try {
+      const raw = await PreferencesService.getInstance().getNoteApiAccessToken()
+      token = raw ?? ''
+    } catch (_) {
+    }
+    const payload = JSON.stringify({
+      inApp: true,
+      platform: 'harmony',
+      token: token
+    })
+    try {
+      this.webController.runJavaScript(
+        `window.__QINGYU_APP__=${payload};` +
+          "if(typeof window.__qingyuOnAppReady==='function')window.__qingyuOnAppReady();"
+      )
+    } catch (e) {
+      console.error(`H5WebContainer injectQingyuAppMarker: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private rewriteHtmlFilename(url: string, filename: string): string {
+    const q = url.indexOf('?')
+    const h = url.indexOf('#')
+    let end = url.length
+    if (q >= 0) {
+      end = q
+    }
+    if (h >= 0 && h < end) {
+      end = h
+    }
+    const slash = url.lastIndexOf('/', end)
+    if (slash < 0) {
+      return `https://note.kymjs.com/${filename}`
+    }
+    return url.substring(0, slash + 1) + filename + url.substring(end)
+  }
+
+  private loadCampaignUploadPage(): void {
+    try {
+      const current = this.webController.getUrl()
+      const next = this.rewriteHtmlFilename(current, 'store_review_upload.html')
+      this.webController.loadUrl(next)
+      this.pageTitle = '上传好评截图'
+    } catch (e) {
+      console.error(`H5WebContainer loadCampaignUploadPage: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private openMineTabFromJs(): void {
+    this.handleToolbarBack()
+  }
+
+  private openStoreReviewFromJs(): void {
+    let context = this.getUIContext().getHostContext() as common.UIAbilityContext | undefined
+    if (context === undefined) {
+      context = AppContextHolder.tryGetContext()
+    }
+    if (context === undefined) {
+      this.showToast('设备暂不支持')
+      return
+    }
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      uri: 'store://appgallery.huawei.com/app/detail?id=com.kymjs.note&action=write-review'
+    }
+    context.startAbility(want).catch((err: Error) => {
+      console.error(`H5WebContainer openStoreReview: ${JSON.stringify(err)}`)
+      this.showToast('设备暂不支持')
+    })
+    this.loadCampaignUploadPage()
   }
 
   private async handleVipPayFromJs(planId: string, requestId: string): Promise<void> {
@@ -1496,12 +1606,19 @@ struct H5WebContainer {
             methodList: ['pay', 'close', 'getSession'],
             controller: this.webController
           })
+          .javaScriptProxy({
+            object: this.appBridge,
+            name: 'QingyuAppBridge',
+            methodList: ['openInvite', 'openStoreReview', 'openMineTab'],
+            controller: this.webController
+          })
           .onPageBegin(() => {
             this.isLoading = true
           })
           .onPageEnd(() => {
             this.runPageScriptsIfNeeded()
             this.isLoading = false
+            this.updateTitleIfStoreReview()
           })
           .onErrorReceive(() => {
             this.isLoading = false

@@ -767,6 +767,7 @@ export const LOCALE_JA_MAP: Record<string, string> = {
   '选择文件夹': '选择文件夹',
   '邀请好友得会员': '邀请好友得会员',
   '邀请得会员': '邀请得会员',
+  '免费得会员': '無料で会員',
   '邀请文案已复制，快去分享给好友吧': '邀请文案已复制，快去分享给好友吧',
   '部分图片未找到：\${result.missingImages.join(': '部分图片未找到：\${result.missingImages.join(',
   '重置密码': 'パスワードリセット',
