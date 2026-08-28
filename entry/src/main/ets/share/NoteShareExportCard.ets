@@ -251,7 +251,7 @@ export struct NoteShareExportCard {
         }
       })
     } else {
-      Image($r('app.media.icon_app'))
+      Image($r('app.media.default_avatar'))
         .width(SHARE_AVATAR_SIZE)
         .height(SHARE_AVATAR_SIZE)
         .borderRadius(SHARE_AVATAR_SIZE / 2)

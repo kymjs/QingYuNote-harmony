@@ -207,7 +207,7 @@ export struct HomeDrawerLayer {
           }
         })
       } else {
-        Image($r('app.media.icon_app'))
+        Image($r('app.media.default_avatar'))
           .width(44)
           .height(44)
           .borderRadius(22)

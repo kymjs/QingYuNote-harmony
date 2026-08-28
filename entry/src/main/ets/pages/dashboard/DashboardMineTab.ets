@@ -594,7 +594,7 @@ export struct DashboardMineTab {
           }
         })
       } else {
-        Image($r('app.media.icon_app'))
+        Image($r('app.media.default_avatar'))
           .width(56)
           .height(56)
           .borderRadius(28)
@@ -767,7 +767,7 @@ export struct DashboardMineTab {
         this.onOffCaption(this.appLockEnabled), false, () => {
           void this.onTapAppLock()
         }, true)
-      if (this.biometricAvailable) {
+      if (this.appLockEnabled && this.biometricAvailable) {
         this.menuRow($r('sys.symbol.touchid'),
           LocaleService.loc('生物识别', 'Biometrics', '生体認証'),
           this.onOffCaption(this.biometricEnabled), false, () => {

@@ -75,7 +75,7 @@ struct Profile {
   @State loading: boolean = true
   @State loadError: string = ''
   @State avatarUploading: boolean = false
-  /** 网络头像加载失败（含明文 HTTP 被拦截）时回退到应用图标 */
+  /** 网络头像加载失败（含明文 HTTP 被拦截）时回退到默认头像 */
   @State avatarNetworkLoadFailed: boolean = false
   @State profile: ProfileBody | null = null
   /** 登录会话写入的 Note API `users.id`，用于「第 xx 名用户」。 */
@@ -1002,7 +1002,7 @@ struct Profile {
                     }
                   })
                 } else {
-                  Image($r('app.media.icon_app'))
+                  Image($r('app.media.default_avatar'))
                     .width(56)
                     .height(56)
                     .borderRadius(28)
