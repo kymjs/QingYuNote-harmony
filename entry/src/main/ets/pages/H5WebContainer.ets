@@ -11,9 +11,11 @@ import { WereadQrSaveBridge } from '../common/utils/WereadQrSaveBridge'
 import { YoudaoApiKeyBridge } from '../common/utils/YoudaoApiKeyBridge'
 import { YinxiangApiKeyBridge } from '../common/utils/YinxiangApiKeyBridge'
 import { QingyuVipBridge } from '../common/utils/QingyuVipBridge'
+import { QingyuFeedbackBridge } from '../common/utils/QingyuFeedbackBridge'
 import { QingyuAppBridge } from '../common/utils/QingyuAppBridge'
 import { openReferralInviteSharePage } from '../common/utils/ReferralInviteNavigation'
 import { isQingyuVipPageUrl, vipPageLangQuery } from '../common/utils/OpenQingyuVipPage'
+import { isQingyuFeedbackPageUrl } from '../common/utils/OpenQingyuFeedbackPage'
 import { usePcStyleLayoutWithSize } from '../common/utils/DesktopLayout'
 import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
@@ -952,6 +954,8 @@ struct H5WebContainer {
   private youdaoBridge: YoudaoApiKeyBridge = new YoudaoApiKeyBridge()
   private yinxiangBridge: YinxiangApiKeyBridge = new YinxiangApiKeyBridge()
   private vipBridge: QingyuVipBridge = new QingyuVipBridge()
+  private feedbackBridge: QingyuFeedbackBridge = new QingyuFeedbackBridge()
+  private feedbackSessionCache: string = '{}'
   private appBridge: QingyuAppBridge = new QingyuAppBridge()
   private vipSessionCache: string = '{}'
   private readonly base64: util.Base64Helper = new util.Base64Helper()
@@ -988,6 +992,10 @@ struct H5WebContainer {
     this.vipBridge.bindPay((planId: string, requestId: string) => {
       void this.handleVipPayFromJs(planId, requestId)
     })
+    this.feedbackBridge.bindClose(() => {
+      this.handleToolbarBack()
+    })
+    this.feedbackBridge.bindSessionProvider(() => this.feedbackSessionCache)
     this.appBridge.bindOpenInvite(() => {
       void openReferralInviteSharePage(this.getUIContext())
     })
@@ -1031,6 +1039,67 @@ struct H5WebContainer {
 
   aboutToDisappear(): void {
     WebViewSessionCleaner.unregisterController(this.webController)
+  }
+
+  /**
+   * 鸿蒙 `javaScriptProxy` 属性一次只能注册一个对象。
+   * 本容器按目标 URL 只挂当前页需要的那一个（与 Flutter 按需 addJavaScriptChannel 对齐）。
+   */
+  private activeJavaScriptProxyName(): string {
+    if (isQingyuVipPageUrl(this.webUrl)) {
+      return 'QingyuVipBridge'
+    }
+    if (isQingyuFeedbackPageUrl(this.webUrl)) {
+      return 'QingyuFeedbackBridge'
+    }
+    if (isWereadSkillsUrl(this.webUrl)) {
+      return 'QingyuWereadBridge'
+    }
+    if (isYoudaoApiKeyUrl(this.webUrl)) {
+      return 'QingyuYoudaoApiKeyBridge'
+    }
+    if (isYinxiangApiKeyUrl(this.webUrl)) {
+      return 'QingyuYinxiangApiKeyBridge'
+    }
+    return 'QingyuAppBridge'
+  }
+
+  private activeJavaScriptProxyObject(): Object {
+    if (isQingyuVipPageUrl(this.webUrl)) {
+      return this.vipBridge
+    }
+    if (isQingyuFeedbackPageUrl(this.webUrl)) {
+      return this.feedbackBridge
+    }
+    if (isWereadSkillsUrl(this.webUrl)) {
+      return this.qrSaveBridge
+    }
+    if (isYoudaoApiKeyUrl(this.webUrl)) {
+      return this.youdaoBridge
+    }
+    if (isYinxiangApiKeyUrl(this.webUrl)) {
+      return this.yinxiangBridge
+    }
+    return this.appBridge
+  }
+
+  private activeJavaScriptProxyMethods(): string[] {
+    if (isQingyuVipPageUrl(this.webUrl)) {
+      return ['pay', 'close', 'getSession']
+    }
+    if (isQingyuFeedbackPageUrl(this.webUrl)) {
+      return ['close', 'getSession']
+    }
+    if (isWereadSkillsUrl(this.webUrl)) {
+      return ['saveQrImage', 'onApiKeyCopied']
+    }
+    if (isYoudaoApiKeyUrl(this.webUrl)) {
+      return ['onApiKeyCopied']
+    }
+    if (isYinxiangApiKeyUrl(this.webUrl)) {
+      return ['onTokenReady']
+    }
+    return ['openInvite', 'openStoreReview', 'openMineTab']
   }
 
   private isMobileContainer(): boolean {
@@ -1336,12 +1405,14 @@ struct H5WebContainer {
 
   private runPageScriptsIfNeeded(): void {
     this.injectQingyuAppMarker()
+    this.injectVipBridgeCompatShim()
     this.hideFeishuVoiceInputIfNeeded()
     this.hideWereadSkillsExtraIfNeeded()
     this.watchWereadApiKeyCopyIfNeeded()
     this.patchYoudaoApiKeyPageIfNeeded()
     this.patchYinxiangApiKeyPageIfNeeded()
     void this.pushVipSessionIfNeeded()
+    void this.pushFeedbackSessionIfNeeded()
   }
 
   private updateTitleIfStoreReview(): void {
@@ -1364,6 +1435,41 @@ struct H5WebContainer {
 
   private injectQingyuAppMarker(): void {
     void this.injectQingyuAppMarkerAsync()
+  }
+
+  /**
+   * 把鸿蒙 JSProxy 包一层真正的 JS function（含 postMessage），让线上旧版 vip.html
+   * 的 `typeof xxx === 'function'` / hasBridge 能通过；并主动拉起会话、关掉 gate。
+   */
+  private injectVipBridgeCompatShim(): void {
+    if (!isQingyuVipPageUrl(this.webUrl)) {
+      return
+    }
+    const js: string =
+      '(function(){try{' +
+      'var n=window.QingyuVipBridge;if(!n||n.__qingyuWrapped)return;' +
+      'var w={__qingyuWrapped:true,' +
+      'postMessage:function(raw){try{var p=typeof raw==="string"?JSON.parse(raw):(raw||{});' +
+      'var a=p.action||"";' +
+      'if(a==="pay")n.pay(String(p.planId||""),String(p.requestId||""));' +
+      'else if(a==="close")n.close();' +
+      'else if(a==="getSession"){var s=n.getSession();' +
+      'if(s&&typeof window.__qingyuVipOnNativeEvent==="function"){' +
+      'try{window.__qingyuVipOnNativeEvent(JSON.parse(s));}catch(e){}}}' +
+      '}catch(e){}},' +
+      'pay:function(planId,requestId){n.pay(String(planId||""),String(requestId||""));},' +
+      'close:function(){n.close();},' +
+      'getSession:function(){return n.getSession();}};' +
+      'window.QingyuVipBridge=w;' +
+      'var gate=document.getElementById("vipGate");if(gate)gate.classList.remove("show");' +
+      'if(typeof window.__qingyuOnAppReady==="function")window.__qingyuOnAppReady();' +
+      'w.postMessage(JSON.stringify({action:"getSession"}));' +
+      '}catch(e){}})();'
+    try {
+      this.webController.runJavaScript(js)
+    } catch (e) {
+      console.error(`H5WebContainer injectVipBridgeCompatShim: ${JSON.stringify(e)}`)
+    }
   }
 
   private async injectQingyuAppMarkerAsync(): Promise<void> {
@@ -1480,6 +1586,41 @@ struct H5WebContainer {
     }
   }
 
+
+  private async pushFeedbackSessionIfNeeded(): Promise<void> {
+    if (!isQingyuFeedbackPageUrl(this.webUrl)) {
+      return
+    }
+    try {
+      const userId = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
+      const profile = await PreferencesService.getInstance().getCachedUserProfile()
+      let phone = ''
+      if (profile !== null) {
+        phone = `${profile['phone'] ?? ''}`.trim()
+      }
+      const payload: Record<string, string> = {
+        'type': 'session',
+        'userId': userId,
+        'phone': phone
+      }
+      const json = JSON.stringify(payload)
+      this.feedbackSessionCache = json
+      this.emitFeedbackNativeEvent(json)
+    } catch (e) {
+      console.error(`H5WebContainer pushFeedbackSession: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private emitFeedbackNativeEvent(json: string): void {
+    try {
+      this.webController.runJavaScript(
+        `window.__qingyuFeedbackOnNativeEvent && window.__qingyuFeedbackOnNativeEvent(${json});`
+      )
+    } catch (e) {
+      console.error(`H5WebContainer emitFeedbackNativeEvent: ${JSON.stringify(e)}`)
+    }
+  }
+
   private hideFeishuVoiceInputIfNeeded(): void {
     if (!isFeedbackFormUrl(this.webUrl)) {
       return
@@ -1584,33 +1725,9 @@ struct H5WebContainer {
           .javaScriptAccess(true)
           .domStorageAccess(true)
           .javaScriptProxy({
-            object: this.qrSaveBridge,
-            name: 'QingyuWereadBridge',
-            methodList: ['saveQrImage', 'onApiKeyCopied'],
-            controller: this.webController
-          })
-          .javaScriptProxy({
-            object: this.youdaoBridge,
-            name: 'QingyuYoudaoApiKeyBridge',
-            methodList: ['onApiKeyCopied'],
-            controller: this.webController
-          })
-          .javaScriptProxy({
-            object: this.yinxiangBridge,
-            name: 'QingyuYinxiangApiKeyBridge',
-            methodList: ['onTokenReady'],
-            controller: this.webController
-          })
-          .javaScriptProxy({
-            object: this.vipBridge,
-            name: 'QingyuVipBridge',
-            methodList: ['pay', 'close', 'getSession'],
-            controller: this.webController
-          })
-          .javaScriptProxy({
-            object: this.appBridge,
-            name: 'QingyuAppBridge',
-            methodList: ['openInvite', 'openStoreReview', 'openMineTab'],
+            object: this.activeJavaScriptProxyObject(),
+            name: this.activeJavaScriptProxyName(),
+            methodList: this.activeJavaScriptProxyMethods(),
             controller: this.webController
           })
           .onPageBegin(() => {

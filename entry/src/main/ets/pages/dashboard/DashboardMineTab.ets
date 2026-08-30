@@ -9,6 +9,7 @@ import { RemoteAppConfigService } from '../../services/RemoteAppConfigService'
 import { CachedNetworkImage } from '../../components/CachedNetworkImage'
 import { MineDiamondIcon, MineScalesIcon } from '../../components/MineSvgIcons'
 import { openQingyuActivityPage } from '../../common/utils/ReferralInviteNavigation'
+import { openQingyuFeedbackPage } from '../../common/utils/OpenQingyuFeedbackPage'
 import { openQingyuVipPage } from '../../common/utils/OpenQingyuVipPage'
 import { Logger } from '../../common/utils/Logger'
 import { ImageCacheService } from '../../services/ImageCacheService'
@@ -785,15 +786,7 @@ export struct DashboardMineTab {
         }, true)
       this.menuRow($r('sys.symbol.quote'),
         LocaleService.loc('用户反馈', 'Feedback', 'フィードバック'), '', false, () => {
-          this.getUIContext().getRouter().pushUrl({
-            url: 'pages/H5WebContainer',
-            params: {
-              title: LocaleService.loc('用户反馈', 'Feedback', 'フィードバック'),
-              url: 'https://vcnedpub4ekz.feishu.cn/share/base/form/shrcnexjZUlhIkZ4eD9BjcDfdkb'
-            }
-          }).catch((err: Error) => {
-            console.error(`openFeedback: ${JSON.stringify(err)}`)
-          })
+          void openQingyuFeedbackPage(this.getUIContext())
         }, false)
     }
     .width('100%')

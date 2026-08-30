@@ -8,6 +8,7 @@ import { EditorUiStrings } from '../common/utils/EditorUiStrings'
 import { APP_LOCALE_REVISION_KEY } from '../services/LocaleService'
 import { PageCloseGuard } from '../common/utils/PageCloseGuard'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
+import { openQingyuFeedbackPage } from '../common/utils/OpenQingyuFeedbackPage'
 import {
   isExtractStatusPending,
   type Note,
@@ -315,13 +316,7 @@ struct LinkExtractProgress {
 
   private async onFeedback(): Promise<void> {
     try {
-      await this.getUIContext().getRouter().pushUrl({
-        url: 'pages/H5WebContainer',
-        params: {
-          title: this.loc('用户反馈', 'Feedback', 'フィードバック'),
-          url: 'https://vcnedpub4ekz.feishu.cn/share/base/form/shrcnexjZUlhIkZ4eD9BjcDfdkb'
-        }
-      })
+      await openQingyuFeedbackPage(this.getUIContext())
     } catch (error) {
       console.error(`feedback: ${JSON.stringify(error)}`)
     }
