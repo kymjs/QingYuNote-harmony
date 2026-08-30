@@ -1758,7 +1758,7 @@ struct MainShell {
         // 避免和底部钉住的「查看完整日程」链接重叠。
         Column() {
           if (this.upcomingSchedules.length === 0) {
-            Text(LocaleService.loc('暂无日程', 'No schedule', '予定なし'))
+            Text(LocaleService.loc('今日暂无日程', 'Today No schedule', '今日予定なし'))
               .fontSize(12)
               .fontColor($r('app.color.secondary_text'))
               .padding({ top: 24, bottom: 24 })

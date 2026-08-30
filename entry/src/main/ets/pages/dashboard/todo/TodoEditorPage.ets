@@ -684,30 +684,18 @@ struct TodoEditorPage {
   @Builder
   buildDateTimeCard() {
     Column() {
-      this.buildDateRow(
-        LocaleService.loc('开始时间', 'Start time', '開始時間'),
-        this.startDateLabel,
-        this.startTimeLabel,
-        (): void => { this.openStartPicker() }
-      )
+      // 日期/提醒文案必须在 Builder 内直接读 @State：按值传入 string 参数时 ArkUI 不会刷新。
+      this.buildDateRow('start')
       Divider()
         .color($r('app.color.divider'))
         .strokeWidth(1)
         .width('100%')
-      this.buildDateRow(
-        LocaleService.loc('截止时间', 'Deadline', '締切'),
-        this.endDateLabel,
-        this.endTimeLabel,
-        (): void => { this.openEndPicker() }
-      )
+      this.buildDateRow('end')
       Divider()
         .color($r('app.color.divider'))
         .strokeWidth(1)
         .width('100%')
-      this.buildReminderRow(
-        LocaleService.loc('提醒时间', 'Reminder', 'リマインダー'),
-        this.reminderLabel
-      )
+      this.buildReminderRow()
     }
     .width('100%')
     .padding(4)
@@ -870,13 +858,17 @@ struct TodoEditorPage {
   }
 
   @Builder
-  buildDateRow(label: string, dateLabel: string, timeLabel: string, onTap: () => void) {
+  buildDateRow(which: string) {
     Row() {
-      Text(label)
+      Text(which === 'start'
+        ? LocaleService.loc('开始时间', 'Start time', '開始時間')
+        : LocaleService.loc('截止时间', 'Deadline', '締切'))
         .fontSize(14)
         .fontColor($r('app.color.secondary_text'))
       Blank()
-      Text(`${dateLabel}  ${timeLabel}`)
+      Text(which === 'start'
+        ? `${this.startDateLabel}  ${this.startTimeLabel}`
+        : `${this.endDateLabel}  ${this.endTimeLabel}`)
         .fontSize(14)
         .fontColor($r('app.color.primary_text'))
         .maxLines(1)
@@ -889,20 +881,26 @@ struct TodoEditorPage {
     .width('100%')
     .padding({ left: 8, right: 8, top: 12, bottom: 12 })
     .alignItems(VerticalAlign.Center)
-    .onClick(onTap)
+    .onClick((): void => {
+      if (which === 'start') {
+        this.openStartPicker()
+      } else {
+        this.openEndPicker()
+      }
+    })
   }
 
   @Builder
-  buildReminderRow(label: string, value: string) {
+  buildReminderRow() {
     Row() {
-      Text(label)
+      Text(LocaleService.loc('提醒时间', 'Reminder', 'リマインダー'))
         .fontSize(14)
         .fontColor($r('app.color.secondary_text'))
       Blank()
       // 把 bindMenu 挂在「value + chevron」这个子 Row 上，菜单锚点对齐下拉箭头，
       // 第一个选项「不提醒」会直接出现在 chevron 正上方，而不是整个外层 Row 的中点。
       Row({ space: 4 }) {
-        Text(value)
+        Text(this.reminderLabel)
           .fontSize(14)
           .fontColor($r('app.color.primary_text'))
           .maxLines(1)
