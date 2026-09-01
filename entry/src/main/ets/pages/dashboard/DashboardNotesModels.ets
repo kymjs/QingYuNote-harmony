@@ -391,7 +391,8 @@ export function cloneNoteWithFavorite(note: Note, isFavorite: number): Note {
     extractProgress: note.extractProgress,
     voiceSummary: note.voiceSummary,
     voiceSegmentsJson: note.voiceSegmentsJson,
-    voiceTranscribeStatus: note.voiceTranscribeStatus
+    voiceTranscribeStatus: note.voiceTranscribeStatus,
+    flowchartExt: note.flowchartExt
   }
 }
 

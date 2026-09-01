@@ -28,6 +28,7 @@ import { NotesTabLogic } from './DashboardNotesModels'
 import { showCalendarAddScheduleDialog } from '../../dialogs/CalendarAddScheduleDialog'
 import { FlowchartService } from '../../services/FlowchartService'
 import { FlowchartMindMap } from '../../common/utils/FlowchartMindMap'
+import { FlowchartMermaidCodec } from '../../common/utils/FlowchartMermaidCodec'
 
 const PAGE_PAD = 8
 const WEEK_PAD = 4
@@ -151,6 +152,10 @@ export struct DashboardCalendarTab {
     const result = new Set<string>()
     for (const n of notes) {
       if (n.type_ !== NOTE_TYPE_FLOWCHART) {
+        continue
+      }
+      if (FlowchartMermaidCodec.isMindMapContent(n.content ?? '')) {
+        result.add(n.id)
         continue
       }
       try {

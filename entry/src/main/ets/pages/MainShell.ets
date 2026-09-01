@@ -7,6 +7,13 @@ import { NoteStateCodec } from '../common/utils/NoteStateCodec'
 import { navigateToNoteEdit } from '../common/utils/NoteEditNavigation'
 import { navigateToTodoEditor } from '../common/utils/TodoEditorNavigation'
 import { navigateToFlowchart } from '../common/utils/FlowchartNavigation'
+import {
+  FLOWCHART_INLINE_NOTE_ID_KEY,
+  FLOWCHART_INLINE_FOCUS_QUERY_KEY,
+  FLOWCHART_INLINE_INITIAL_MIND_MAP_KEY,
+  FLOWCHART_PC_LAYOUT_KEY
+} from '../common/utils/FlowchartInlineBridge'
+import { FlowchartEditor } from '../components/FlowchartEditor'
 import { IdUtils } from '../common/utils/IdUtils'
 import { usePcStyleLayoutWithSize } from '../common/utils/DesktopLayout'
 import {
@@ -42,6 +49,7 @@ import { CalendarProjector } from './dashboard/calendar/CalendarProjector'
 import type { CalendarItemKind } from './dashboard/calendar/CalendarModels'
 import { FlowchartService } from '../services/FlowchartService'
 import { FlowchartMindMap } from '../common/utils/FlowchartMindMap'
+import { FlowchartMermaidCodec } from '../common/utils/FlowchartMermaidCodec'
 
 const ACCENT = '#0DAA4A'
 const BLUE = '#3B82F6'
@@ -107,6 +115,9 @@ struct MainShell {
   /** 从子页返回时递增，驱动待办 Tab 静默刷新（与笔记 Tab 同一事件，独立 nonce 便于各自演进）。 */
   @State todoShellRefreshNonce: number = 0
   @State pcLayout: boolean = false
+  @StorageLink(FLOWCHART_INLINE_NOTE_ID_KEY) flowchartInlineNoteId: string = ''
+  @StorageLink(FLOWCHART_INLINE_FOCUS_QUERY_KEY) flowchartInlineFocusQuery: string = ''
+  @StorageLink(FLOWCHART_INLINE_INITIAL_MIND_MAP_KEY) flowchartInlineInitialMindMap: string = '0'
   @State pageWidth: number = 360
   @State pageHeight: number = 800
   @State username: string = '轻羽'
@@ -684,14 +695,15 @@ struct MainShell {
         continue
       }
       if (n.type_ === NOTE_TYPE_FLOWCHART) {
-        // 流程图（包括思维导图）都不计入；其中思维导图要额外 `.qy` 解析。
+        if (FlowchartMermaidCodec.isMindMapContent(n.content ?? '')) {
+          continue
+        }
         try {
           const graph = await FlowchartService.getInstance().load(n.id)
           if (FlowchartMindMap.isMindMapMode(graph)) {
             continue
           }
         } catch (e) {
-          // 解析失败 / 边车缺失 → 当流程图排除。
           Logger.warn('MainShell', `countTodo mindMap load failed: ${JSON.stringify(e)}`)
           continue
         }
@@ -713,6 +725,10 @@ struct MainShell {
     const result = new Set<string>()
     for (const n of notes) {
       if (n.type_ !== NOTE_TYPE_FLOWCHART) {
+        continue
+      }
+      if (FlowchartMermaidCodec.isMindMapContent(n.content ?? '')) {
+        result.add(n.id)
         continue
       }
       try {
@@ -842,7 +858,10 @@ struct MainShell {
 
   private async openNote(row: DashNoteRow): Promise<void> {
     if (row.isFlowchart) {
-      await navigateToFlowchart(this.getUIContext(), { noteId: row.id })
+      await navigateToFlowchart(this.getUIContext(), {
+        noteId: row.id,
+        inlineInShell: this.pcLayout
+      })
       void this.reloadDashboard()
       return
     }
@@ -962,20 +981,34 @@ struct MainShell {
   }
 
   private async quickGraph(): Promise<void> {
-    await navigateToFlowchart(this.getUIContext(), { noteId: IdUtils.uuid() })
+    await navigateToFlowchart(this.getUIContext(), {
+      noteId: IdUtils.uuid(),
+      inlineInShell: this.pcLayout
+    })
   }
 
   private async quickMindMap(): Promise<void> {
     await navigateToFlowchart(this.getUIContext(), {
       noteId: IdUtils.uuid(),
-      initialMindMap: true
+      initialMindMap: true,
+      inlineInShell: this.pcLayout
     })
   }
 
   build() {
     Column() {
-      // 与 Flutter IndexedStack 一致：Tab 保活，避免切回笔记页反复销毁重建并闪「加载中」。
-      Stack() {
+      if (this.flowchartInlineNoteId.length > 0) {
+        FlowchartEditor({
+          embeddedMode: true,
+          embeddedNoteId: this.flowchartInlineNoteId,
+          embeddedFocusQuery: this.flowchartInlineFocusQuery,
+          embeddedInitialMindMap: this.flowchartInlineInitialMindMap === '1'
+        })
+          .layoutWeight(1)
+          .width('100%')
+      } else {
+        // 与 Flutter IndexedStack 一致：Tab 保活，避免切回笔记页反复销毁重建并闪「加载中」。
+        Stack() {
         // 首页 tab：保留自上而下的绿色渐变背景。
         Column() {
           this.buildDashboard()
@@ -1029,6 +1062,7 @@ struct MainShell {
       }
       .width('100%')
       .layoutWeight(1)
+      }
       this.buildBottomBar()
     }
     .width('100%')
@@ -1043,6 +1077,7 @@ struct MainShell {
       if (next !== this.pcLayout) {
         Logger.info('DashHomeLoad', `onAreaChange pcLayout ${this.pcLayout} -> ${next}, reload`)
         this.pcLayout = next
+        AppStorage.setOrCreate(FLOWCHART_PC_LAYOUT_KEY, next)
         void this.reloadDashboard()
       }
     })

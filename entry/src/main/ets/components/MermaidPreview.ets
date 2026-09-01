@@ -17,6 +17,15 @@ class MermaidChannelBridge {
   }
 }
 
+export interface MermaidInteractionEvent {
+  action: string
+  kind: string
+  id: string
+  label: string
+  targetId?: string
+  targetLabel?: string
+}
+
 /**
  * 分享截图等待：所有 MermaidPreview 定稿后再截。
  * 与 Flutter MermaidRenderBarrier 语义对齐。
@@ -49,6 +58,7 @@ export struct MermaidPreview {
   private static readonly MEASURE_PLACEHOLDER_HEIGHT: number = 360
   private static readonly MIN_WEB_HEIGHT: number = 80
   private static readonly MAX_WEB_HEIGHT: number = 3200
+  private static readonly EDITABLE_MIN_HEIGHT: number = 320
 
   @Prop @Watch('onSourceChanged') source: string = ''
   @Prop @Watch('onStyleChanged') textColor: string = '#1D1D1F'
@@ -56,7 +66,16 @@ export struct MermaidPreview {
   @Prop @Watch('onStyleChanged') isDark: boolean = false
   @Prop interactive: boolean = true
   @Prop forShareExport: boolean = false
+  /** 流程图编辑页预览模式：允许点选/双击，并由 shell 内 pan/zoom。 */
+  @Prop @Watch('onEditableChanged') editable: boolean = false
+  @Prop @Watch('onSelectionChanged') selectedKind: string = ''
+  @Prop @Watch('onSelectionChanged') selectedId: string = ''
+  @Prop @Watch('onColorsChanged') colorsJson: string = ''
+  /** 语法错误标题；空则用默认「Mermaid 语法错误」。 */
+  @Prop syntaxErrorTitle: string = ''
   onRenderSettled: () => void = () => {
+  }
+  onMermaidInteraction: (event: MermaidInteractionEvent) => void = (_: MermaidInteractionEvent) => {
   }
 
   @State private webHeight: number = MermaidPreview.MEASURE_PLACEHOLDER_HEIGHT
@@ -70,6 +89,7 @@ export struct MermaidPreview {
   private heightBridge: MermaidChannelBridge = new MermaidChannelBridge()
   private errorBridge: MermaidChannelBridge = new MermaidChannelBridge()
   private readyBridge: MermaidChannelBridge = new MermaidChannelBridge()
+  private interactionBridge: MermaidChannelBridge = new MermaidChannelBridge()
   private webAttached: boolean = false
   private shellReady: boolean = false
   private settled: boolean = false
@@ -87,6 +107,11 @@ export struct MermaidPreview {
     })
     this.readyBridge.bind((_message: string) => {
       this.markSettled()
+      this.syncSelectionToJs()
+      this.syncColorsToJs()
+    })
+    this.interactionBridge.bind((message: string) => {
+      this.onInteractionMessage(message)
     })
     WebViewSessionCleaner.registerController(this.webController)
   }
@@ -109,6 +134,20 @@ export struct MermaidPreview {
     this.settled = false
     this.registerBarrier()
     this.scheduleInject(this.forShareExport)
+  }
+
+  onEditableChanged(): void {
+    this.settled = false
+    this.registerBarrier()
+    this.scheduleInject(true)
+  }
+
+  onSelectionChanged(): void {
+    this.syncSelectionToJs()
+  }
+
+  onColorsChanged(): void {
+    this.syncColorsToJs()
   }
 
   private registerBarrier(): void {
@@ -155,7 +194,9 @@ export struct MermaidPreview {
     }
     const cssPx = parseFloat(message.substring(3))
     if (!isNaN(cssPx) && cssPx > 0) {
-      const next = Math.min(Math.max(cssPx, MermaidPreview.MIN_WEB_HEIGHT), MermaidPreview.MAX_WEB_HEIGHT)
+      const minH = this.editable ? MermaidPreview.EDITABLE_MIN_HEIGHT : MermaidPreview.MIN_WEB_HEIGHT
+      const maxH = this.editable ? 4000 : MermaidPreview.MAX_WEB_HEIGHT
+      const next = Math.min(Math.max(cssPx, minH), maxH)
       if (next > this.maxContentHeightVp) {
         this.maxContentHeightVp = next
       }
@@ -168,14 +209,76 @@ export struct MermaidPreview {
 
   private resetMeasuredHeight(): void {
     this.maxContentHeightVp = 0
-    this.webHeight = MermaidPreview.MEASURE_PLACEHOLDER_HEIGHT
+    this.webHeight = this.editable
+      ? MermaidPreview.EDITABLE_MIN_HEIGHT
+      : MermaidPreview.MEASURE_PLACEHOLDER_HEIGHT
+  }
+
+  private syntaxErrorTitleText(): string {
+    if (this.syntaxErrorTitle.length > 0) {
+      return this.syntaxErrorTitle
+    }
+    return EditorUiStrings.loc('Mermaid 语法错误', 'Mermaid syntax error', 'Mermaid構文エラー')
   }
 
   private onErrorMessage(message: string): void {
-    this.errorMessage = message.length > 0 ? message :
-      EditorUiStrings.loc('Mermaid 语法错误', 'Mermaid syntax error', 'Mermaid構文エラー')
+    this.errorMessage = message.length > 0 ? message : this.syntaxErrorTitleText()
     this.maxContentHeightVp = 0
     this.webHeight = 96
+  }
+
+  private onInteractionMessage(message: string): void {
+    if (!this.editable) {
+      return
+    }
+    try {
+      const parsed = JSON.parse(message) as Record<string, Object>
+      const action = `${parsed['action'] ?? ''}`.trim()
+      const kind = `${parsed['kind'] ?? ''}`.trim()
+      if (action.length === 0 || kind.length === 0) {
+        return
+      }
+      const event: MermaidInteractionEvent = {
+        action: action,
+        kind: kind,
+        id: `${parsed['id'] ?? ''}`.trim(),
+        label: `${parsed['label'] ?? ''}`.trim(),
+        targetId: `${parsed['targetId'] ?? ''}`.trim(),
+        targetLabel: `${parsed['targetLabel'] ?? ''}`.trim()
+      }
+      this.onMermaidInteraction(event)
+    } catch (_) {
+    }
+  }
+
+  private syncSelectionToJs(): void {
+    if (!this.shellReady || !this.webAttached || !this.editable) {
+      return
+    }
+    const kind = this.selectedKind
+    const id = this.selectedId
+    try {
+      this.webController.runJavaScript(
+        `typeof setMermaidSelection==="function"&&setMermaidSelection(${JSON.stringify(kind)},${JSON.stringify(id)});`
+      )
+    } catch (_) {
+    }
+  }
+
+  private syncColorsToJs(): void {
+    if (!this.shellReady || !this.webAttached || !this.editable) {
+      return
+    }
+    const colors = this.colorsJson
+    if (colors.length === 0) {
+      return
+    }
+    try {
+      this.webController.runJavaScript(
+        `typeof applyMermaidColors==="function"&&applyMermaidColors(${JSON.stringify(colors)});`
+      )
+    } catch (_) {
+    }
   }
 
   private injectContent(): void {
@@ -190,7 +293,8 @@ export struct MermaidPreview {
     const theme = this.isDark ? 'dark' : 'default'
     const script =
       `renderMermaidPreview(${JSON.stringify(trimmed)},${JSON.stringify(theme)},` +
-        `${JSON.stringify(this.textColor)},${JSON.stringify(this.previewBackgroundColor)});`
+        `${JSON.stringify(this.textColor)},${JSON.stringify(this.previewBackgroundColor)},` +
+        `${this.editable},${JSON.stringify(this.colorsJson)});`
     try {
       this.webController.runJavaScript(script)
     } catch (_) {
@@ -209,7 +313,7 @@ export struct MermaidPreview {
   @Builder
   private buildErrorCard() {
     Column({ space: 6 }) {
-      Text(EditorUiStrings.loc('Mermaid 语法错误', 'Mermaid syntax error', 'Mermaid構文エラー'))
+      Text(this.syntaxErrorTitleText())
         .fontSize(13)
         .fontWeight(FontWeight.Medium)
         .fontColor('#B91C1C')
@@ -232,7 +336,8 @@ export struct MermaidPreview {
   private buildWeb() {
     Web({ src: $rawfile('mermaid/preview_shell.html'), controller: this.webController })
       .width('100%')
-      .height(this.webHeight)
+      .height(this.editable ? '100%' : this.webHeight)
+      .layoutWeight(this.editable ? 1 : 0)
       .overScrollMode(OverScrollMode.NEVER)
       .nestedScroll({
         scrollForward: NestedScrollMode.PARENT_FIRST,
@@ -264,6 +369,12 @@ export struct MermaidPreview {
         methodList: ['postMessage'],
         controller: this.webController
       })
+      .javaScriptProxy({
+        object: this.interactionBridge,
+        name: 'InteractionChannel',
+        methodList: ['postMessage'],
+        controller: this.webController
+      })
       .onControllerAttached(() => {
         this.webAttached = true
       })
@@ -281,6 +392,14 @@ export struct MermaidPreview {
       Column()
     } else if (this.errorMessage.length > 0) {
       this.buildErrorCard()
+    } else if (this.editable) {
+      // shell 内负责 pan/zoom，外层铺满即可
+      Column() {
+        this.buildWeb()
+      }
+      .width('100%')
+      .height('100%')
+      .layoutWeight(1)
     } else {
       Column() {
         this.buildWeb()

@@ -141,6 +141,9 @@ export class NoteHistoryService {
     if (current === null) {
       throw new Error(`Note ${noteId} does not exist`)
     }
+    if (current.type_ === 2) {
+      throw new Error('Flowchart notes do not support history restore')
+    }
     await this.captureIfNeeded(current, NoteHistoryReason.restore)
     const version = await this.readVersion(noteId, versionId)
     if (version === null) {
@@ -151,13 +154,6 @@ export class NoteHistoryService {
       content: version.content,
       historyReason: NoteHistoryReason.restore
     })
-    const qyPath = FileService.getInstance().historyFlowchartPath(noteId, versionId)
-    if (FileService.getInstance().historyFileExists(qyPath)) {
-      const qy = FileService.getInstance().readHistoryTextFile(qyPath)
-      if (qy.length > 0) {
-        await FileService.getInstance().writeFlowchartFile(noteId, qy)
-      }
-    }
     return restored
   }
 
@@ -211,9 +207,6 @@ export class NoteHistoryService {
         FileService.getInstance().deleteHistoryFile(
           FileService.getInstance().historyVersionPath(noteId, entry.id)
         )
-        FileService.getInstance().deleteHistoryFile(
-          FileService.getInstance().historyFlowchartPath(noteId, entry.id)
-        )
       }
       for (let i = 0; i < remote.versions.length; i++) {
         const entry = remote.versions[i]
@@ -248,15 +241,6 @@ export class NoteHistoryService {
       }
       FileService.getInstance().writeHistoryTextFile(versionPath, NoteStateCodec.serializeNoteFile(storageNote))
     }
-    let hasFlowchart = false
-    if (FileService.getInstance().flowchartFileExists(snapshot.id)) {
-      const qy = await FileService.getInstance().readFlowchartFile(snapshot.id)
-      if (qy.length > 0) {
-        hasFlowchart = true
-        FileService.getInstance().writeHistoryTextFile(
-          FileService.getInstance().historyFlowchartPath(snapshot.id, versionId), qy)
-      }
-    }
     let titleForManifest = snapshot.title
     const userId = await NoteContentEncryptionService.getInstance().resolveUserId()
     if (userId !== null && titleForManifest.length > 0) {
@@ -269,7 +253,7 @@ export class NoteHistoryService {
     entry.contentLength = snapshot.content.length
     entry.reason = reason
     entry.title = titleForManifest
-    entry.hasFlowchart = hasFlowchart
+    entry.hasFlowchart = false
     entry.platform = platform
     const manifest = await this.readLocalManifest(snapshot.id)
     const next = NoteHistoryLogic.prune([entry, ...manifest.versions])
@@ -372,7 +356,8 @@ export class NoteHistoryService {
       extractProgress: note.extractProgress,
       voiceSummary: note.voiceSummary,
       voiceSegmentsJson: note.voiceSegmentsJson,
-      voiceTranscribeStatus: note.voiceTranscribeStatus
+      voiceTranscribeStatus: note.voiceTranscribeStatus,
+      flowchartExt: note.flowchartExt
     }
   }
 }

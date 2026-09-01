@@ -211,7 +211,8 @@ export class NoteContentEncryptionService {
       extractProgress: note.extractProgress,
       voiceSummary: note.voiceSummary,
       voiceSegmentsJson: note.voiceSegmentsJson,
-      voiceTranscribeStatus: note.voiceTranscribeStatus
+      voiceTranscribeStatus: note.voiceTranscribeStatus,
+      flowchartExt: note.flowchartExt
     }
   }
 }

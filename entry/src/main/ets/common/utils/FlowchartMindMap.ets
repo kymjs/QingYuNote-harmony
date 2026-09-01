@@ -299,6 +299,30 @@ export class FlowchartMindMap {
     return ''
   }
 
+  /** 根据锚点偏好或父子水平位置推断子节点在左侧还是右侧。 */
+  static inferChildSide(
+    parent: FlowchartNodeModel,
+    child: FlowchartNodeModel,
+    preferredSource?: FlowchartAnchor,
+    preferredTarget?: FlowchartAnchor
+  ): string {
+    if (preferredSource !== undefined && preferredTarget !== undefined) {
+      const fromAnchors = FlowchartMindMap.edgeSideFromAnchors(preferredSource, preferredTarget)
+      if (fromAnchors.length > 0) {
+        return fromAnchors
+      }
+    }
+    if (preferredSource === 'left') {
+      return FLOWCHART_MIND_MAP_SIDE_LEFT
+    }
+    if (preferredSource === 'right') {
+      return FLOWCHART_MIND_MAP_SIDE_RIGHT
+    }
+    const pcx = parent.position.x + parent.width / 2
+    const ccx = child.position.x + child.width / 2
+    return ccx < pcx ? FLOWCHART_MIND_MAP_SIDE_LEFT : FLOWCHART_MIND_MAP_SIDE_RIGHT
+  }
+
   static expansionSide(graph: FlowchartGraphModel, nodeId: string): string {
     const node = graph.nodes.find((item) => item.id === nodeId)
     if (node === undefined || FlowchartMindMap.isRoot(graph, node) ||

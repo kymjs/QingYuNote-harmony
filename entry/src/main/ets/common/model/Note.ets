@@ -102,6 +102,8 @@ export interface NoteStateBlock {
   voiceSegmentsJson: string
   /** 语音转写任务状态。 */
   voiceTranscribeStatus: VoiceTranscribeStatus
+  /** 流程图布局扩展 JSON（NOTE_STATE `flowchart_ext`）。 */
+  flowchartExt: string
 }
 
 export interface NoteSyncState {
@@ -168,6 +170,8 @@ export interface Note {
   voiceSummary: string
   voiceSegmentsJson: string
   voiceTranscribeStatus: VoiceTranscribeStatus
+  /** 流程图布局扩展 JSON（NOTE_STATE `flowchart_ext`）。 */
+  flowchartExt: string
 }
 
 export interface NoteFilePayload {

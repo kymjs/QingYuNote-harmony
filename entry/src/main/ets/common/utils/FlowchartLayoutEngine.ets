@@ -572,6 +572,48 @@ export class FlowchartLayoutEngine {
         properties: node.properties
       }
     })
+    const posById: Record<string, FlowchartNodeModel> = {}
+    for (const n of nodes) {
+      posById[n.id] = n
+    }
+    const edges = graph.edges.map((edge: FlowchartEdgeModel): FlowchartEdgeModel => {
+      const src = posById[edge.source]
+      const tgt = posById[edge.target]
+      if (src === undefined || tgt === undefined) {
+        return edge
+      }
+      const side = FlowchartMindMap.edgeSideFromAnchors(edge.sourceAnchor, edge.targetAnchor)
+      let sourceAnchor: FlowchartAnchor = edge.sourceAnchor
+      let targetAnchor: FlowchartAnchor = edge.targetAnchor
+      if (side === FLOWCHART_MIND_MAP_SIDE_LEFT) {
+        sourceAnchor = 'left'
+        targetAnchor = 'right'
+      } else if (side === FLOWCHART_MIND_MAP_SIDE_RIGHT) {
+        sourceAnchor = 'right'
+        targetAnchor = 'left'
+      } else {
+        const scx = src.position.x + src.width / 2
+        const tcx = tgt.position.x + tgt.width / 2
+        if (scx <= tcx) {
+          sourceAnchor = 'right'
+          targetAnchor = 'left'
+        } else {
+          sourceAnchor = 'left'
+          targetAnchor = 'right'
+        }
+      }
+      return {
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        label: edge.label,
+        lineType: edge.lineType,
+        directed: edge.directed,
+        sourceAnchor,
+        targetAnchor,
+        properties: edge.properties
+      }
+    })
     const metadata: Record<string, Object> = {}
     for (const key of Object.keys(graph.metadata)) {
       metadata[key] = graph.metadata[key]
@@ -583,7 +625,7 @@ export class FlowchartLayoutEngine {
       version: graph.version,
       metadata,
       nodes,
-      edges: [...graph.edges]
+      edges
     }
   }
 

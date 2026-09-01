@@ -89,7 +89,8 @@ export class NoteStateCodec {
       extractProgress: note.extractProgress ?? 0,
       voiceSummary: note.voiceSummary ?? '',
       voiceSegmentsJson: note.voiceSegmentsJson ?? '',
-      voiceTranscribeStatus: note.voiceTranscribeStatus ?? 'none'
+      voiceTranscribeStatus: note.voiceTranscribeStatus ?? 'none',
+      flowchartExt: note.flowchartExt ?? ''
     }
   }
 
@@ -156,6 +157,9 @@ export class NoteStateCodec {
     if (state.voiceTranscribeStatus && state.voiceTranscribeStatus !== 'none') {
       lines.push(`voice_transcribe_status: ${state.voiceTranscribeStatus}`)
     }
+    if (state.flowchartExt.length > 0) {
+      lines.push(`flowchart_ext: ${state.flowchartExt}`)
+    }
     lines.push('-->')
     return lines.join('\n')
   }
@@ -218,7 +222,8 @@ export class NoteStateCodec {
       extractProgress: state.extractProgress,
       voiceSummary: state.voiceSummary,
       voiceSegmentsJson: state.voiceSegmentsJson,
-      voiceTranscribeStatus: state.voiceTranscribeStatus
+      voiceTranscribeStatus: state.voiceTranscribeStatus,
+      flowchartExt: state.flowchartExt
     }
     return NoteStateCodec.serializeNoteFile(note)
   }
@@ -261,7 +266,8 @@ export class NoteStateCodec {
       extractProgress: 0,
       voiceSummary: '',
       voiceSegmentsJson: '',
-      voiceTranscribeStatus: 'none'
+      voiceTranscribeStatus: 'none',
+      flowchartExt: ''
     }
   }
 
@@ -392,6 +398,9 @@ export class NoteStateCodec {
           parsed.voiceTranscribeStatus = VOICE_TRANSCRIBE_STATUS_VALUES.includes(v) ? v : 'none'
           break
         }
+        case 'flowchart_ext':
+          parsed.flowchartExt = value
+          break
         default:
           break
       }

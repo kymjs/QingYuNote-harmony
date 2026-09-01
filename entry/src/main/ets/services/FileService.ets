@@ -267,7 +267,8 @@ export class FileService {
       extractProgress: state.extractProgress,
       voiceSummary: state.voiceSummary,
       voiceSegmentsJson: state.voiceSegmentsJson,
-      voiceTranscribeStatus: state.voiceTranscribeStatus
+      voiceTranscribeStatus: state.voiceTranscribeStatus,
+      flowchartExt: state.flowchartExt
     })
   }
 

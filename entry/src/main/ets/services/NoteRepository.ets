@@ -14,11 +14,10 @@ import type { FlowchartGraphModel } from '../common/model/FlowchartGraph'
 import {
   FLOWCHART_DEFAULT_TITLE,
   flowchartSearchSummary,
-  flowchartSearchableText,
   isDefaultFlowchartTitle,
   shouldShowFlowchartInHomeList
 } from '../common/model/FlowchartGraph'
-import { FlowchartService } from './FlowchartService'
+import { FlowchartMermaidCodec } from '../common/utils/FlowchartMermaidCodec'
 import { DatabaseService } from './DatabaseService'
 import { FileService } from './FileService'
 import { NoteHistoryService } from './NoteHistoryService'
@@ -208,7 +207,7 @@ export class NoteRepository {
     const id = IdUtils.uuid()
     const resolvedTitle = title.trim().length > 0 ? title.trim() : '编辑标题'
     const state = NoteStateCodec.createDefaultState(id, resolvedTitle, now, 2)
-    state.userData = '{"kind":"flowchart","formatVersion":1}'
+    state.userData = '{"kind":"flowchart","formatVersion":2}'
     const note = this.createNoteFromState(state, '', {
       noteId: id,
       remoteModified: 0,
@@ -233,7 +232,7 @@ export class NoteRepository {
     const now = Date.now()
     const resolvedTitle = title.trim().length > 0 ? title.trim() : FLOWCHART_DEFAULT_TITLE
     const state = NoteStateCodec.createDefaultState(noteId, resolvedTitle, now, 2)
-    state.userData = '{"kind":"flowchart","formatVersion":1}'
+    state.userData = '{"kind":"flowchart","formatVersion":2}'
     const note = this.createNoteFromState(state, '', {
       noteId: noteId,
       remoteModified: 0,
@@ -249,20 +248,29 @@ export class NoteRepository {
     return note
   }
 
-  async saveFlowchartNote(id: string, graph: FlowchartGraphModel, title?: string): Promise<Note> {
+  async saveFlowchartNote(
+    id: string,
+    graph: FlowchartGraphModel,
+    title?: string,
+    mermaidBodyOverride?: string,
+    deleteRemoteQySidecar: boolean = false
+  ): Promise<Note> {
     await this.init()
     const existing = await this.getNote(id)
     if (!existing) {
       throw new Error(`Note ${id} does not exist`)
     }
-    await FlowchartService.getInstance().save(graph, id)
-    const searchable = flowchartSearchableText(graph)
+    const encoded = FlowchartMermaidCodec.encodeGraph(graph)
+    const mermaidBody = (mermaidBodyOverride ?? encoded.mermaidBody).trim()
+    const content = FlowchartMermaidCodec.wrapMermaidFence(mermaidBody)
     const resolvedTitle = (title ?? existing.title ?? '').trim()
-    const nextTitle = resolvedTitle.length > 0 ? resolvedTitle : '编辑标题'
+    const nextTitle = resolvedTitle.length > 0 ? resolvedTitle : FLOWCHART_DEFAULT_TITLE
     const now = Date.now()
     const updated = this.cloneNote(existing)
     updated.title = nextTitle
-    updated.content = searchable
+    updated.content = content
+    updated.flowchartExt = encoded.flowchartExtJson
+    updated.userData = '{"kind":"flowchart","formatVersion":2}'
     updated.summary = flowchartSearchSummary(graph)
     updated.type_ = 2
     updated.localModified = now
@@ -275,6 +283,13 @@ export class NoteRepository {
     await DatabaseService.getInstance().upsertSyncState(this.toSyncState(updated))
     this.bumpVersion()
     this.scheduleSyncHandler?.(id)
+    if (deleteRemoteQySidecar) {
+      try {
+        await WebDAVClient.getInstance().deleteFlowchart(id)
+      } catch (error) {
+        Logger.warn('NoteRepository', `saveFlowchartNote delete remote .qy skipped: ${JSON.stringify(error)}`)
+      }
+    }
     return updated
   }
 
@@ -760,7 +775,8 @@ export class NoteRepository {
       voiceSegmentsJson: existing.voiceSegmentsJson,
       voiceTranscribeStatus: patch.voiceTranscribeStatus !== undefined
         ? patch.voiceTranscribeStatus
-        : existing.voiceTranscribeStatus
+        : existing.voiceTranscribeStatus,
+      flowchartExt: existing.flowchartExt
     }
     await FileService.getInstance().writeNoteFile(updated)
     await DatabaseService.getInstance().upsertSyncState(this.toSyncState(updated))
@@ -1307,19 +1323,20 @@ export class NoteRepository {
     if (!isDefaultFlowchartTitle(note.title ?? '')) {
       return true
     }
-    // 标题为默认占位「编辑标题」时，需要 `.qy` 边车至少有非占位节点才展示。
-    // `.qy` 缺失只表明本地未同步完成（远端可能仍有），不应 purge 笔记，
-    // 否则 `syncRemoteOnlyNote` 拉 `.md` 之后没拉到 `.qy` 时会被这里一并清掉。
+    const mermaidBody = FlowchartMermaidCodec.unwrapMermaidFence(note.content)
+    if (mermaidBody !== undefined && mermaidBody.length > 0) {
+      const graph = FlowchartMermaidCodec.parseFromNote(note.content, note.flowchartExt)
+      if (shouldShowFlowchartInHomeList(note.title ?? '', graph)) {
+        return true
+      }
+      await this.purgeLocalNoteCompletely(note.id)
+      return false
+    }
     const hasFlowchartFile = FileService.getInstance().flowchartFileExists(note.id)
     if (!hasFlowchartFile) {
       return false
     }
-    const graph = await FlowchartService.getInstance().load(note.id)
-    if (shouldShowFlowchartInHomeList(note.title ?? '', graph)) {
-      return true
-    }
-    await this.purgeLocalNoteCompletely(note.id)
-    return false
+    return true
   }
 
   private async loadAllNotes(): Promise<Note[]> {
@@ -1471,8 +1488,23 @@ export class NoteRepository {
       extractProgress: base.extractProgress,
       voiceSummary: base.voiceSummary,
       voiceSegmentsJson: base.voiceSegmentsJson,
-      voiceTranscribeStatus: base.voiceTranscribeStatus
+      voiceTranscribeStatus: base.voiceTranscribeStatus,
+      flowchartExt: base.flowchartExt
     }
+  }
+
+  private static flowchartSummaryFromStoredContent(content: string, flowchartExt: string): string {
+    const searchable = FlowchartMermaidCodec.extractSearchableTextFromNote(content)
+    if (searchable.trim().length === 0) {
+      return FLOWCHART_DEFAULT_TITLE
+    }
+    const titles = searchable
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .slice(0, 3)
+      .join(' · ')
+    return titles.length === 0 ? FLOWCHART_DEFAULT_TITLE : titles
   }
 
   private createNoteFromPayload(payload: NoteFilePayload, syncState?: NoteSyncState, tags?: string[]): Note {
@@ -1481,7 +1513,12 @@ export class NoteRepository {
 
   private createNoteFromState(state: NoteStateBlock, content: string, syncState?: NoteSyncState, tags?: string[],
     filePath?: string, modifiedAt?: number): Note {
-    const resolvedTitle = state.title.trim().length > 0 ? state.title.trim() : MarkdownUtils.extractTitle(content)
+    const resolvedTitle = state.type_ === 2
+      ? (state.title.trim().length > 0 ? state.title.trim() : FLOWCHART_DEFAULT_TITLE)
+      : (state.title.trim().length > 0 ? state.title.trim() : MarkdownUtils.extractTitle(content))
+    const resolvedSummary = state.type_ === 2
+      ? NoteRepository.flowchartSummaryFromStoredContent(content, state.flowchartExt)
+      : MarkdownUtils.summary(content)
     const resolvedCreatedAt = state.createdAt > 0 ? state.createdAt : (modifiedAt ?? Date.now())
     const resolvedUpdatedAt = state.updatedAt > 0 ? state.updatedAt : resolvedCreatedAt
     const resolvedLocalModified = Math.max(resolvedUpdatedAt, modifiedAt ?? 0)
@@ -1502,7 +1539,7 @@ export class NoteRepository {
       tags: [...resolvedTags],
       imageRefs: resolvedImageRefs,
       audioId: state.audioId ?? '',
-      summary: MarkdownUtils.summary(content),
+      summary: resolvedSummary,
       localModified: resolvedLocalModified,
       remoteModified: effectiveSyncState.remoteModified,
       deleted: effectiveSyncState.deleted,
@@ -1541,7 +1578,8 @@ export class NoteRepository {
       extractProgress: state.extractProgress,
       voiceSummary: state.voiceSummary,
       voiceSegmentsJson: state.voiceSegmentsJson,
-      voiceTranscribeStatus: state.voiceTranscribeStatus
+      voiceTranscribeStatus: state.voiceTranscribeStatus,
+      flowchartExt: state.flowchartExt
     }
     if (state.extractJobId.length > 0 && note.extractJobId.length === 0) {
       Logger.warn('LinkExtractDebug',
@@ -1637,7 +1675,8 @@ export class NoteRepository {
       extractProgress: note.extractProgress,
       voiceSummary: note.voiceSummary,
       voiceSegmentsJson: note.voiceSegmentsJson,
-      voiceTranscribeStatus: note.voiceTranscribeStatus
+      voiceTranscribeStatus: note.voiceTranscribeStatus,
+      flowchartExt: note.flowchartExt
     }
   }
 

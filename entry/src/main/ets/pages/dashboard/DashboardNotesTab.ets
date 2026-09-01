@@ -9,6 +9,7 @@ import { navigateToNoteEdit } from '../../common/utils/NoteEditNavigation'
 import { NoteFolderTree } from '../../common/utils/NoteFolderTree'
 import { TagSortUtils } from '../../common/utils/TagSortUtils'
 import { FlowchartMindMap } from '../../common/utils/FlowchartMindMap'
+import { FlowchartMermaidCodec } from '../../common/utils/FlowchartMermaidCodec'
 import { AppContextHolder } from '../../services/AppContextHolder'
 import { FlowchartService } from '../../services/FlowchartService'
 import { LocaleService } from '../../services/LocaleService'
@@ -272,6 +273,10 @@ export struct DashboardNotesTab {
     const ids: Set<string> = new Set()
     for (const note of notes) {
       if (note.type_ !== NOTE_TYPE_FLOWCHART) {
+        continue
+      }
+      if (FlowchartMermaidCodec.isMindMapContent(note.content ?? '')) {
+        ids.add(note.id)
         continue
       }
       try {

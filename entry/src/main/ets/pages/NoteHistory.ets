@@ -1,6 +1,8 @@
 import type { NoteHistoryEntry } from '../common/model/NoteHistory'
 import { NoteHistoryReason } from '../common/model/NoteHistory'
+import { NOTE_TYPE_FLOWCHART } from '../common/model/FlowchartGraph'
 import { NoteHistoryService } from '../services/NoteHistoryService'
+import { NoteRepository } from '../services/NoteRepository'
 import { EditorUiStrings } from '../common/utils/EditorUiStrings'
 import { NotePlatformSource } from '../common/utils/NotePlatformSource'
 import { PageLifecycle } from '../common/utils/PageLifecycle'
@@ -13,6 +15,7 @@ struct NoteHistoryPage {
   @State loading: boolean = true
   @State selectedId: string = ''
   @State restoring: boolean = false
+  @State restoreDisabled: boolean = false
   private noteId: string = ''
   private lifecycle = new PageLifecycle()
   private closeGuard = new PageCloseGuard()
@@ -43,7 +46,11 @@ struct NoteHistoryPage {
   private async loadList(): Promise<void> {
     this.loading = true
     try {
+      const note = await NoteRepository.getInstance().getNote(this.noteId)
       this.versions = await NoteHistoryService.getInstance().listVersions(this.noteId)
+      if (this.lifecycle.isActive()) {
+        this.restoreDisabled = note?.type_ === NOTE_TYPE_FLOWCHART
+      }
     } catch (_) {
       this.versions = []
     }
@@ -92,7 +99,7 @@ struct NoteHistoryPage {
   }
 
   private async restoreSelected(): Promise<void> {
-    if (this.selectedId.length === 0 || this.restoring) {
+    if (this.restoreDisabled || this.selectedId.length === 0 || this.restoring) {
       return
     }
     this.restoring = true
@@ -167,7 +174,7 @@ struct NoteHistoryPage {
                 .layoutWeight(1)
                 .alignItems(HorizontalAlign.Start)
 
-                if (this.selectedId === entry.id) {
+                if (this.selectedId === entry.id && !this.restoreDisabled) {
                   Button(this.restoring ?
                     EditorUiStrings.loc('恢复中…', 'Restoring…', '復元中…') :
                     EditorUiStrings.loc('恢复此版本', 'Restore this version', 'このバージョンに戻す'))

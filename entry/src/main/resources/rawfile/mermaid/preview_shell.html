@@ -7,23 +7,91 @@
 <style>
   html, body {
     margin: 0;
-    padding: 8px 4px;
-    overflow: visible;
-    height: auto;
+    padding: 0;
+    overflow: hidden;
+    height: 100%;
     min-height: 0;
     background: transparent;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
   #content {
     width: 100%;
-    overflow: visible;
+    height: 100%;
+    overflow: hidden;
+    position: relative;
+    touch-action: none;
   }
-  #content svg {
-    max-width: 100%;
+  #viewport {
+    transform-origin: 0 0;
+    will-change: transform;
+    display: inline-block;
+    padding: 8px 4px;
+  }
+  #viewport svg {
+    max-width: none;
     height: auto;
+    display: block;
+  }
+  .mmd-hit {
+    cursor: pointer;
+  }
+  .mmd-selected {
+    outline: 2px solid #4CAF50 !important;
+    outline-offset: 2px;
+  }
+  .mmd-selected path,
+  .mmd-selected rect,
+  .mmd-selected circle,
+  .mmd-selected polygon,
+  .mmd-selected ellipse,
+  .mmd-selected line {
+    stroke: #4CAF50 !important;
+    stroke-width: 2.5px !important;
+  }
+  .mmd-sel-chrome {
+    pointer-events: none;
+  }
+  .mmd-sel-chrome .mmd-sel-box {
+    fill: none;
+    stroke: #4CAF50;
+    stroke-width: 1.5;
+    pointer-events: none;
+  }
+  .mmd-sel-chrome .mmd-sel-anchor {
+    fill: #4CAF50;
+    stroke: #ffffff;
+    stroke-width: 1.5;
+    pointer-events: auto;
+    cursor: crosshair;
+  }
+  .mmd-sel-chrome .mmd-sel-delete {
+    pointer-events: auto;
+    cursor: pointer;
+  }
+  .mmd-sel-chrome .mmd-sel-delete-bg {
+    fill: #E53935;
+    stroke: #ffffff;
+    stroke-width: 1.5;
+  }
+  .mmd-sel-chrome .mmd-sel-delete-x {
+    fill: #ffffff;
+    font-size: 14px;
+    font-weight: 700;
+    font-family: system-ui, -apple-system, sans-serif;
+    pointer-events: none;
+  }
+  .mmd-connect-draft {
+    stroke: #4CAF50;
+    stroke-width: 2;
+    stroke-dasharray: 6 4;
+    fill: none;
+    pointer-events: none;
   }
   #error {
     display: none;
-    margin: 0;
+    margin: 8px 4px;
     padding: 12px 14px;
     border-radius: 12px;
     border: 1px solid rgba(220, 38, 38, 0.35);
@@ -42,6 +110,21 @@
 <script>
 (function () {
   var renderSeq = 0;
+  var editableMode = false;
+  var panX = 0;
+  var panY = 0;
+  var scale = 1;
+  var MIN_SCALE = 0.2;
+  var MAX_SCALE = 4;
+  var selectedEl = null;
+  var selectedKind = '';
+  var selectedId = '';
+  var lastTapTs = 0;
+  var lastTapTarget = null;
+  var gesture = null;
+  var ignoreMouseUntil = 0;
+  var pendingColors = null;
+  var connectDrag = null;
 
   function post(channelName, msg) {
     try {
@@ -51,32 +134,36 @@
     } catch (e) {}
   }
 
+  function postInteraction(payload) {
+    try {
+      post('InteractionChannel', JSON.stringify(payload));
+    } catch (e) {}
+  }
+
+  function normalizeLabel(raw) {
+    return String(raw || '').replace(/\s+/g, ' ').trim();
+  }
+
   function measureHeightPx() {
     var body = document.body;
     var root = document.documentElement;
     var content = document.getElementById('content');
     var err = document.getElementById('error');
     var h = 0;
-    var bodyRect = body ? body.getBoundingClientRect() : null;
-
-    function includeElementHeight(element) {
-      if (!element) { return; }
-      h = Math.max(h, element.scrollHeight, element.offsetHeight);
-      var rect = element.getBoundingClientRect();
-      h = Math.max(h, rect.height);
-      if (bodyRect) {
-        h = Math.max(h, rect.bottom - bodyRect.top);
-      }
-    }
-
     if (err && err.style.display !== 'none') {
-      includeElementHeight(err);
+      h = Math.max(h, err.scrollHeight, err.getBoundingClientRect().height);
     }
     if (content) {
-      includeElementHeight(content);
+      h = Math.max(h, content.scrollHeight, content.offsetHeight);
+      var rect = content.getBoundingClientRect();
+      if (rect.height > h) { h = rect.height; }
       var svg = content.querySelector('svg');
       if (svg) {
-        includeElementHeight(svg);
+        var svgRect = svg.getBoundingClientRect();
+        if (svgRect.height > h) { h = svgRect.height; }
+      }
+      if (editableMode && window.innerHeight > h) {
+        h = window.innerHeight;
       }
     }
     if (body && body.scrollHeight > h) { h = body.scrollHeight; }
@@ -100,10 +187,6 @@
     setTimeout(reportHeight, 80);
     setTimeout(reportHeight, 240);
     setTimeout(reportHeight, 500);
-    setTimeout(reportHeight, 800);
-    if (document.fonts && document.fonts.ready) {
-      document.fonts.ready.then(reportHeight);
-    }
   }
 
   function showError(message, textColor) {
@@ -113,9 +196,1002 @@
     err.style.display = 'block';
     err.style.color = textColor || '#B91C1C';
     err.textContent = message || 'Mermaid render error';
+    selectedEl = null;
+    selectedKind = '';
+    selectedId = '';
     scheduleHeightReports();
     post('ErrorChannel', String(message || 'Mermaid render error'));
     post('ReadyChannel', 'error');
+  }
+
+  function applyTransform() {
+    var vp = document.getElementById('viewport');
+    if (!vp) { return; }
+    vp.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + scale + ')';
+  }
+
+  function removeSelChrome() {
+    var old = document.querySelectorAll('.mmd-sel-chrome');
+    for (var i = 0; i < old.length; i++) {
+      if (old[i].parentNode) {
+        old[i].parentNode.removeChild(old[i]);
+      }
+    }
+  }
+
+  function clearSelectionHighlight() {
+    removeSelChrome();
+    if (selectedEl) {
+      selectedEl.classList.remove('mmd-selected');
+      selectedEl = null;
+    }
+    var all = document.querySelectorAll('.mmd-selected');
+    for (var i = 0; i < all.length; i++) {
+      all[i].classList.remove('mmd-selected');
+    }
+  }
+
+  function drawSelChrome(el) {
+    removeSelChrome();
+    if (!el) { return; }
+    var svg = el.ownerSVGElement;
+    if (!svg) { return; }
+    var elRect = el.getBoundingClientRect();
+    var ctm = svg.getScreenCTM();
+    if (!ctm || elRect.width <= 0 || elRect.height <= 0) { return; }
+    var inv = ctm.inverse();
+    function toSvg(clientX, clientY) {
+      var pt = svg.createSVGPoint();
+      pt.x = clientX;
+      pt.y = clientY;
+      return pt.matrixTransform(inv);
+    }
+    var tl = toSvg(elRect.left, elRect.top);
+    var br = toSvg(elRect.right, elRect.bottom);
+    var x = Math.min(tl.x, br.x);
+    var y = Math.min(tl.y, br.y);
+    var w = Math.abs(br.x - tl.x);
+    var h = Math.abs(br.y - tl.y);
+    if (w < 2 || h < 2) { return; }
+    var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'mmd-sel-chrome');
+    g.style.pointerEvents = 'none';
+    var box = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    box.setAttribute('class', 'mmd-sel-box');
+    box.setAttribute('x', String(x - 2));
+    box.setAttribute('y', String(y - 2));
+    box.setAttribute('width', String(w + 4));
+    box.setAttribute('height', String(h + 4));
+    g.appendChild(box);
+    var anchors = [
+      [x + w / 2, y],
+      [x + w, y + h / 2],
+      [x + w / 2, y + h],
+      [x, y + h / 2]
+    ];
+    var r = 7;
+    for (var i = 0; i < anchors.length; i++) {
+      var c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      c.setAttribute('class', 'mmd-sel-anchor');
+      c.setAttribute('cx', String(anchors[i][0]));
+      c.setAttribute('cy', String(anchors[i][1]));
+      c.setAttribute('r', String(r));
+      c.setAttribute('data-mmd-anchor', String(i));
+      c.style.pointerEvents = 'auto';
+      c.style.cursor = 'crosshair';
+      g.appendChild(c);
+    }
+    // 右上角删除（与画布节点选中态一致）
+    var delG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    delG.setAttribute('class', 'mmd-sel-delete');
+    delG.setAttribute('data-mmd-delete', '1');
+    delG.style.pointerEvents = 'auto';
+    delG.style.cursor = 'pointer';
+    var delCx = x + w + 2;
+    var delCy = y - 2;
+    var delBg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    delBg.setAttribute('class', 'mmd-sel-delete-bg');
+    delBg.setAttribute('cx', String(delCx));
+    delBg.setAttribute('cy', String(delCy));
+    delBg.setAttribute('r', '9');
+    delBg.setAttribute('data-mmd-delete', '1');
+    var delX = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    delX.setAttribute('class', 'mmd-sel-delete-x');
+    delX.setAttribute('x', String(delCx));
+    delX.setAttribute('y', String(delCy + 5));
+    delX.setAttribute('text-anchor', 'middle');
+    delX.setAttribute('data-mmd-delete', '1');
+    delX.textContent = '\u00D7';
+    delG.appendChild(delBg);
+    delG.appendChild(delX);
+    g.appendChild(delG);
+    svg.appendChild(g);
+  }
+
+  function clearConnectDraft() {
+    connectDrag = null;
+    var old = document.querySelectorAll('.mmd-connect-draft');
+    for (var i = 0; i < old.length; i++) {
+      if (old[i].parentNode) {
+        old[i].parentNode.removeChild(old[i]);
+      }
+    }
+  }
+
+  function updateConnectDraft(clientX, clientY) {
+    if (!connectDrag) { return; }
+    var svg = connectDrag.svg;
+    if (!svg) { return; }
+    var ctm = svg.getScreenCTM();
+    if (!ctm) { return; }
+    var inv = ctm.inverse();
+    var pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    var p = pt.matrixTransform(inv);
+    var line = document.querySelector('.mmd-connect-draft');
+    if (!line) {
+      line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('class', 'mmd-connect-draft');
+      line.setAttribute('x1', String(connectDrag.x1));
+      line.setAttribute('y1', String(connectDrag.y1));
+      svg.appendChild(line);
+    }
+    line.setAttribute('x2', String(p.x));
+    line.setAttribute('y2', String(p.y));
+  }
+
+  function startConnectFromAnchor(anchorEl, clientX, clientY) {
+    if (!selectedId || !anchorEl) { return; }
+    var svg = anchorEl.ownerSVGElement;
+    if (!svg) { return; }
+    var cx = parseFloat(anchorEl.getAttribute('cx') || '0');
+    var cy = parseFloat(anchorEl.getAttribute('cy') || '0');
+    clearConnectDraft();
+    connectDrag = {
+      fromId: selectedId,
+      fromLabel: selectedEl ? textOf(selectedEl) : '',
+      svg: svg,
+      x1: cx,
+      y1: cy,
+      moved: false,
+      startClientX: clientX,
+      startClientY: clientY
+    };
+    updateConnectDraft(clientX, clientY);
+  }
+
+  function finishConnectAt(clientX, clientY, targetEl) {
+    if (!connectDrag) { return; }
+    var fromId = connectDrag.fromId;
+    var fromLabel = connectDrag.fromLabel;
+    var moved = connectDrag.moved;
+    clearConnectDraft();
+    if (!moved || !fromId) { return; }
+    var hit = targetEl ? findHitTarget(targetEl) : null;
+    if (!hit || (hit.getAttribute('data-mmd-kind') || '') !== 'node') {
+      return;
+    }
+    var toId = idOf(hit);
+    var toLabel = textOf(hit);
+    if (!toId || toId === fromId) { return; }
+    postInteraction({
+      action: 'connect',
+      kind: 'node',
+      id: fromId,
+      label: fromLabel,
+      targetId: toId,
+      targetLabel: toLabel
+    });
+  }
+
+  function highlightEl(el) {
+    clearSelectionHighlight();
+    if (!el) { return; }
+    try {
+      if (el.classList && el.classList.add) {
+        el.classList.add('mmd-selected');
+      } else {
+        var prev = el.getAttribute('class') || '';
+        if ((' ' + prev + ' ').indexOf(' mmd-selected ') < 0) {
+          el.setAttribute('class', (prev + ' mmd-selected').trim());
+        }
+      }
+    } catch (clsErr) {}
+    selectedEl = el;
+    selectedKind = el.getAttribute('data-mmd-kind') || '';
+    selectedId = idOf(el);
+    drawSelChrome(el);
+  }
+
+  function textOf(el) {
+    if (!el) { return ''; }
+    var t = el.getAttribute('data-mmd-label') || el.textContent || '';
+    return normalizeLabel(t);
+  }
+
+  function idOf(el) {
+    if (!el) { return ''; }
+    var raw = el.getAttribute('data-mmd-id') || '';
+    if (raw) { return raw; }
+    raw = el.id || '';
+    if (/^e\d+$/i.test(raw) || /^actor\d+$/i.test(raw)) {
+      return raw;
+    }
+    var m = raw.match(/(?:flowchart|flowchart-v2|actor|actor-man|state|class|pie|node|edge)[-:]?([A-Za-z0-9_]+)/i);
+    if (m && m[1] && m[1] !== '0' && m[1] !== '1') {
+      return m[1];
+    }
+    var cleaned = raw.replace(/^.*?([A-Za-z_][A-Za-z0-9_]{0,31}).*$/, '$1');
+    if (cleaned && cleaned !== raw) {
+      return cleaned;
+    }
+    return raw;
+  }
+
+  function findHitTarget(target) {
+    var el = target;
+    while (el && el !== document.body) {
+      if (el.getAttribute && el.getAttribute('data-mmd-kind')) {
+        return el;
+      }
+      el = el.parentNode;
+    }
+    return null;
+  }
+
+  function emitHit(action, el) {
+    if (!el) { return; }
+    var kind = el.getAttribute('data-mmd-kind') || 'node';
+    var id = idOf(el);
+    var label = textOf(el);
+    highlightEl(el);
+    postInteraction({
+      action: action,
+      kind: kind,
+      id: id,
+      label: label
+    });
+  }
+
+  function bindHitElement(el, kind, idHint, labelHint, forceId) {
+    if (!el) { return; }
+    if (el.getAttribute('data-mmd-bound') === '1') {
+      // 允许补写稳定 id / label；forceId 时覆盖（类图等需纠正误绑）
+      if (idHint && (forceId || !el.getAttribute('data-mmd-id'))) {
+        el.setAttribute('data-mmd-id', idHint);
+      }
+      if (labelHint && !el.getAttribute('data-mmd-label')) {
+        el.setAttribute('data-mmd-label', normalizeLabel(labelHint));
+      }
+      return;
+    }
+    el.setAttribute('data-mmd-bound', '1');
+    el.setAttribute('data-mmd-kind', kind);
+    if (idHint) { el.setAttribute('data-mmd-id', idHint); }
+    if (labelHint) { el.setAttribute('data-mmd-label', normalizeLabel(labelHint)); }
+    try {
+      if (el.classList && el.classList.add) {
+        el.classList.add('mmd-hit');
+      } else {
+        var prev = el.getAttribute('class') || '';
+        if ((' ' + prev + ' ').indexOf(' mmd-hit ') < 0) {
+          el.setAttribute('class', (prev + ' mmd-hit').trim());
+        }
+      }
+    } catch (clsErr) {}
+  }
+
+  function widenEdgeHit(el) {
+    if (!el) { return; }
+    var shapes = [];
+    if (el.tagName && /^(path|line)$/i.test(el.tagName)) {
+      shapes = [el];
+    } else {
+      shapes = el.querySelectorAll('path, line');
+    }
+    for (var i = 0; i < shapes.length; i++) {
+      var s = shapes[i];
+      if (s.getAttribute('data-mmd-fat') === '1') { continue; }
+      try {
+        var clone = s.cloneNode(false);
+        clone.setAttribute('data-mmd-fat', '1');
+        clone.setAttribute('stroke', 'transparent');
+        clone.setAttribute('fill', 'none');
+        clone.setAttribute('stroke-width', '16');
+        clone.style.stroke = 'transparent';
+        clone.style.fill = 'none';
+        clone.style.pointerEvents = 'stroke';
+        if (s.parentNode) {
+          s.parentNode.insertBefore(clone, s);
+        }
+      } catch (e) {}
+      try {
+        s.style.pointerEvents = 'stroke';
+      } catch (e2) {}
+    }
+  }
+
+  function extractIdFromDomId(domId) {
+    if (!domId) { return ''; }
+    if (/^e\d+$/i.test(domId) || /^actor\d+$/i.test(domId)) {
+      return domId;
+    }
+    var parts = String(domId).split('-');
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      if (/^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(p) && p !== 'flowchart' && p !== 'actor' &&
+          p !== 'state' && p !== 'class' && p !== 'pie' && p !== 'edge' && p !== 'node' &&
+          p !== 'v2' && p !== 'man' && p !== 'label' && p !== 'path') {
+        if (p.length >= 1 && p.length <= 32) {
+          return p;
+        }
+      }
+    }
+    return domId;
+  }
+
+  function bindInteractions(root) {
+    if (!editableMode || !root) { return; }
+    var svg = root.querySelector('svg') || (root.tagName === 'svg' ? root : null);
+    if (!svg) { return; }
+
+    var edgeIndex = 0;
+    function nextEdgeId() {
+      return 'e' + (edgeIndex++);
+    }
+
+    // flowchart / graph nodes
+    var nodes = svg.querySelectorAll('g.node, g.nodes > g, .node');
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      var nid = extractIdFromDomId(n.id);
+      var labelEl = n.querySelector('.label, foreignObject, span, p, div');
+      bindHitElement(n, 'node', nid, (labelEl && labelEl.textContent) || textOf(n));
+    }
+
+    // flowchart edges（稳定 eN）
+    var edgePaths = svg.querySelectorAll('g.edgePaths > g.edgePath, g.edgePath');
+    if (!edgePaths.length) {
+      edgePaths = svg.querySelectorAll('g.edgePath, path.path');
+    }
+    for (var j = 0; j < edgePaths.length; j++) {
+      var e = edgePaths[j];
+      var eid = nextEdgeId();
+      var labelNode = null;
+      var edgeLabels = svg.querySelectorAll('g.edgeLabel, g.edgeLabels > g');
+      if (edgeLabels[j]) {
+        labelNode = edgeLabels[j];
+      }
+      var elabel = labelNode ? textOf(labelNode) : textOf(e);
+      bindHitElement(e, 'edge', eid, elabel);
+      widenEdgeHit(e);
+      if (labelNode) {
+        bindHitElement(labelNode, 'edge', eid, elabel);
+      }
+    }
+
+    // sequence participants：同一 X 的上下 rect 成对 → actorN（勿用 floor(i/2)，Mermaid 常为「上半列再下半列」）
+    var actorRects = Array.prototype.slice.call(svg.querySelectorAll('rect.actor'));
+    var actorGroups = svg.querySelectorAll('g.actor, g.actor-man, g[id^="actor"]');
+    var actorTexts = svg.querySelectorAll('text.actor, text[class*="actor"]');
+    if (actorRects.length) {
+      function actorBoxX(el) {
+        var ax = parseFloat(el.getAttribute('x'));
+        if (!isNaN(ax)) { return Math.round(ax); }
+        try { return Math.round(el.getBBox().x); } catch (err) { return 0; }
+      }
+      var buckets = {};
+      var orderKeys = [];
+      for (var a = 0; a < actorRects.length; a++) {
+        var act = actorRects[a];
+        var rawId = act.id || '';
+        var idMatch = rawId.match(/actor(\d+)/i);
+        var key = idMatch ? ('id:' + idMatch[1]) : ('x:' + actorBoxX(act));
+        if (!buckets[key]) {
+          buckets[key] = [];
+          orderKeys.push(key);
+        }
+        buckets[key].push(act);
+      }
+      var hasIdKey = false;
+      var hasXKey = false;
+      for (var ok = 0; ok < orderKeys.length; ok++) {
+        if (orderKeys[ok].indexOf('id:') === 0) { hasIdKey = true; }
+        if (orderKeys[ok].indexOf('x:') === 0) { hasXKey = true; }
+      }
+      if (hasIdKey && hasXKey) {
+        buckets = {};
+        orderKeys = [];
+        for (var a2 = 0; a2 < actorRects.length; a2++) {
+          var act2 = actorRects[a2];
+          var key2 = 'x:' + actorBoxX(act2);
+          if (!buckets[key2]) {
+            buckets[key2] = [];
+            orderKeys.push(key2);
+          }
+          buckets[key2].push(act2);
+        }
+      }
+      orderKeys.sort(function (ka, kb) {
+        var na = parseInt(String(ka).replace(/\D/g, ''), 10);
+        var nb = parseInt(String(kb).replace(/\D/g, ''), 10);
+        if (isNaN(na)) { na = 0; }
+        if (isNaN(nb)) { nb = 0; }
+        return na - nb;
+      });
+      for (var pi = 0; pi < orderKeys.length; pi++) {
+        var keyP = orderKeys[pi];
+        var aid = keyP.indexOf('id:') === 0 ? ('actor' + keyP.slice(3)) : ('actor' + pi);
+        var label = '';
+        var ti = parseInt(aid.replace(/\D/g, ''), 10);
+        if (!isNaN(ti) && actorTexts[ti]) {
+          label = normalizeLabel(actorTexts[ti].textContent);
+        }
+        var list = buckets[keyP];
+        for (var ri = 0; ri < list.length; ri++) {
+          var pel = list[ri];
+          if (!label && pel.nextElementSibling && /^text$/i.test(pel.nextElementSibling.tagName)) {
+            label = normalizeLabel(pel.nextElementSibling.textContent);
+          }
+          bindHitElement(pel, 'node', aid, label);
+          if (pel.nextElementSibling && /^text$/i.test(pel.nextElementSibling.tagName)) {
+            bindHitElement(pel.nextElementSibling, 'node', aid, label);
+          }
+        }
+      }
+    } else {
+      var actorIdx = 0;
+      var actorSeen = {};
+      for (var ag = 0; ag < actorGroups.length; ag++) {
+        var grp = actorGroups[ag];
+        var gid = extractIdFromDomId(grp.id) || ('actor' + actorIdx);
+        if (!/^actor\d+$/i.test(gid)) {
+          gid = 'actor' + actorIdx;
+        }
+        gid = gid.toLowerCase();
+        if (actorSeen[gid]) { continue; }
+        actorSeen[gid] = textOf(grp);
+        bindHitElement(grp, 'node', gid, actorSeen[gid]);
+        actorIdx++;
+      }
+    }
+
+    // sequence messages
+    var msgLines = svg.querySelectorAll('line.messageLine0, line.messageLine1, path.messageLine0, path.messageLine1');
+    var msgTexts = svg.querySelectorAll('text.messageText');
+    for (var m = 0; m < msgLines.length; m++) {
+      var msg = msgLines[m];
+      var mid = nextEdgeId();
+      var mlabel = msgTexts[m] ? normalizeLabel(msgTexts[m].textContent) : textOf(msg);
+      bindHitElement(msg, 'edge', mid, mlabel);
+      widenEdgeHit(msg);
+      if (msgTexts[m]) {
+        bindHitElement(msgTexts[m], 'edge', mid, mlabel);
+      }
+    }
+
+    // state
+    var states = svg.querySelectorAll('g.state, g[id^="state"], g.statediagram-state, g.nodeList > g');
+    for (var s = 0; s < states.length; s++) {
+      var st = states[s];
+      bindHitElement(st, 'node', extractIdFromDomId(st.id) || ('node' + s), textOf(st));
+    }
+
+    // class：稳定 class id，强制覆盖可能被 g.node 误绑的 id
+    var classes = svg.querySelectorAll('g.classGroup, g[id^="class"]');
+    for (var c = 0; c < classes.length; c++) {
+      var cl = classes[c];
+      var cid = extractIdFromDomId(cl.id) || ('node' + c);
+      bindHitElement(cl, 'node', cid, textOf(cl), true);
+    }
+
+    // pie：标题单独可编辑；扇区与图例按索引成对绑定 nodeN
+    var pieTitle = svg.querySelector('text.pieTitleText, .pieTitleText');
+    if (pieTitle) {
+      bindHitElement(pieTitle, 'node', 'pieTitle', textOf(pieTitle) || 'title');
+    }
+    var pieSlices = Array.prototype.slice.call(
+      svg.querySelectorAll('path.slice, g.pieCircle > path, .slices path')
+    );
+    var pieLegends = Array.prototype.slice.call(
+      svg.querySelectorAll('g.legend > g')
+    );
+    var pieCount = Math.max(pieSlices.length, pieLegends.length);
+    for (var pz = 0; pz < pieCount; pz++) {
+      var pid = 'node' + pz;
+      var plabel = '';
+      if (pieLegends[pz]) {
+        plabel = textOf(pieLegends[pz]);
+        bindHitElement(pieLegends[pz], 'node', pid, plabel);
+      }
+      if (pieSlices[pz]) {
+        if (!plabel) {
+          plabel = textOf(pieSlices[pz]);
+        }
+        bindHitElement(pieSlices[pz], 'node', pid, plabel);
+      }
+    }
+
+    // journey：标题 + section(流程) + 任务行
+    var journeyTitle = svg.querySelector('.journeyTitleText, text.journeyTitle, g.title text');
+    if (!journeyTitle) {
+      journeyTitle = svg.querySelector('text[class*="Title"], .title text');
+    }
+    if (journeyTitle && !journeyTitle.getAttribute('data-mmd-bound')) {
+      bindHitElement(journeyTitle, 'node', 'chartTitle', textOf(journeyTitle) || 'title');
+    }
+    var sectionTexts = svg.querySelectorAll(
+      'text.sectionTitle, .sectionTitle, g.section > text, text.actor-0, .journey-section'
+    );
+    for (var ss = 0; ss < sectionTexts.length; ss++) {
+      var sec = sectionTexts[ss];
+      if (sec.getAttribute && sec.getAttribute('data-mmd-bound') === '1') { continue; }
+      var secLabel = textOf(sec);
+      if (!secLabel) { continue; }
+      // 避免把任务行误绑成 section：section 通常较短且靠左
+      bindHitElement(sec, 'node', 'journeySection', secLabel);
+      break; // 只绑第一个 section 标题
+    }
+    var journeyTasks = svg.querySelectorAll(
+      'g.task, text.taskText, rect.task, g.tasks > g'
+    );
+    var jIdx = 0;
+    for (var jt = 0; jt < journeyTasks.length; jt++) {
+      var jEl = journeyTasks[jt];
+      if (jEl.getAttribute && jEl.getAttribute('data-mmd-bound') === '1') { continue; }
+      var jLabel = textOf(jEl);
+      if (!jLabel && (jEl.tagName || '').toLowerCase() === 'g' && !jEl.querySelector('text, rect')) {
+        continue;
+      }
+      bindHitElement(jEl, 'node', 'node' + jIdx, jLabel);
+      jIdx++;
+    }
+
+    // gitGraph：commit / tag / branch
+    var gitBullets = Array.prototype.slice.call(
+      svg.querySelectorAll('g.commit-bullets > .commit, g.commit-bullets circle.commit, circle.commit')
+    );
+    // 去重：同一 commit 可能有内外圈
+    var gitBulletUnique = [];
+    var gitBulletSeen = {};
+    for (var gb = 0; gb < gitBullets.length; gb++) {
+      var gbe = gitBullets[gb];
+      var gbk = (gbe.getAttribute('class') || '') + '|' + (gbe.getAttribute('cx') || '') + '|' + (gbe.getAttribute('cy') || '');
+      if (gitBulletSeen[gbk]) { continue; }
+      gitBulletSeen[gbk] = 1;
+      gitBulletUnique.push(gbe);
+    }
+    gitBullets = gitBulletUnique;
+    var gitLabels = Array.prototype.slice.call(
+      svg.querySelectorAll('g.commit-labels > g, text.commit-label, .commit-label')
+    );
+    var gitTags = Array.prototype.slice.call(
+      svg.querySelectorAll(
+        'g.commit-labels text.commit-tag, text.commit-tag, .commit-tag, g.tag > text, text.tag-label'
+      )
+    );
+    var gitCount = Math.max(gitBullets.length, gitLabels.length);
+    for (var gi = 0; gi < gitCount; gi++) {
+      var gid = 'node' + gi;
+      var glabel = '';
+      if (gitLabels[gi]) {
+        glabel = textOf(gitLabels[gi]);
+        bindHitElement(gitLabels[gi], 'node', gid, glabel);
+      }
+      if (gitBullets[gi]) {
+        var gBulletId = extractIdFromDomId(gitBullets[gi].id) ||
+          extractIdFromDomId(gitBullets[gi].getAttribute('class') || '');
+        if (gBulletId && /^[A-Za-z_]/.test(gBulletId) && !/^commit/i.test(gBulletId)) {
+          gid = gBulletId;
+        }
+        if (!glabel) {
+          glabel = textOf(gitBullets[gi]);
+        }
+        bindHitElement(gitBullets[gi], 'node', gid, glabel);
+      }
+      if (gitTags[gi]) {
+        bindHitElement(gitTags[gi], 'node', 'gitTag' + gi, textOf(gitTags[gi]));
+      }
+    }
+    // 若 tag 数量与 commit 不一致，按 DOM 顺序仍绑 gitTagN
+    if (gitTags.length > gitCount) {
+      for (var gti = gitCount; gti < gitTags.length; gti++) {
+        bindHitElement(gitTags[gti], 'node', 'gitTag' + gti, textOf(gitTags[gti]));
+      }
+    }
+    var branchLabels = svg.querySelectorAll(
+      'text.branchLabel, .branch-label, g.branchLabel text, text.branch, .branchName'
+    );
+    for (var bl = 0; bl < branchLabels.length; bl++) {
+      var bEl = branchLabels[bl];
+      if (bEl.getAttribute && bEl.getAttribute('data-mmd-bound') === '1') { continue; }
+      var bLabel = textOf(bEl);
+      if (!bLabel || /^main$/i.test(bLabel)) { continue; }
+      bindHitElement(bEl, 'node', 'gitBranch', bLabel);
+    }
+
+    // timeline：标题 + 事件节点
+    var timelineTitle = svg.querySelector(
+      '.timeline-title, text.timelineTitle, g.timelines text.timeline-title, text.title'
+    );
+    if (!timelineTitle) {
+      // 取最上方较大字号文本作为标题兜底
+      var allTexts = svg.querySelectorAll('text');
+      var best = null;
+      var bestY = Infinity;
+      for (var tx = 0; tx < allTexts.length; tx++) {
+        var te = allTexts[tx];
+        if (te.getAttribute && te.getAttribute('data-mmd-bound') === '1') { continue; }
+        var ty = parseFloat(te.getAttribute('y') || '0');
+        try { ty = te.getBBox().y; } catch (err2) {}
+        if (ty < bestY && textOf(te)) {
+          bestY = ty;
+          best = te;
+        }
+      }
+      timelineTitle = best;
+    }
+    if (timelineTitle && !timelineTitle.getAttribute('data-mmd-bound')) {
+      bindHitElement(timelineTitle, 'node', 'chartTitle', textOf(timelineTitle) || 'title');
+    }
+    var timelineNodes = svg.querySelectorAll(
+      'g.event, g.timeline-node, text.event, .timeline text, g.node'
+    );
+    var tlIdx = 0;
+    var tlSeen = {};
+    for (var tl = 0; tl < timelineNodes.length; tl++) {
+      var tEl = timelineNodes[tl];
+      if (tEl.getAttribute && tEl.getAttribute('data-mmd-bound') === '1') { continue; }
+      var tLabel = textOf(tEl);
+      if (!tLabel) { continue; }
+      if (tlSeen[tLabel]) { continue; }
+      tlSeen[tLabel] = 1;
+      bindHitElement(tEl, 'node', 'node' + tlIdx, tLabel);
+      tlIdx++;
+    }
+  }
+
+  function setPaint(s, prop, value) {
+    if (!s || !value) { return; }
+    try {
+      s.setAttribute(prop, value);
+      if (s.style && s.style.setProperty) {
+        s.style.setProperty(prop, value, 'important');
+      } else if (s.style) {
+        s.style[prop] = value;
+      }
+    } catch (e) {}
+  }
+
+  function paintElementColor(el, color, asEdge) {
+    if (!el || !color) { return; }
+    var shapes = el.querySelectorAll('rect, circle, polygon, path, ellipse, line');
+    if (!shapes.length) {
+      if (el.tagName && /^(path|line|rect|circle|polygon|ellipse)$/i.test(el.tagName)) {
+        shapes = [el];
+      }
+    }
+    for (var i = 0; i < shapes.length; i++) {
+      var s = shapes[i];
+      if (s.getAttribute('data-mmd-fat') === '1') { continue; }
+      if (asEdge) {
+        setPaint(s, 'stroke', color);
+        var markers = [s.getAttribute('marker-end'), s.getAttribute('marker-start')];
+        // 箭头色尽量跟随 stroke（部分浏览器靠 currentColor）
+        setPaint(s, 'color', color);
+      } else {
+        var tag = (s.tagName || '').toLowerCase();
+        if (tag === 'text' || tag === 'tspan') { continue; }
+        var prev = s.getAttribute('fill');
+        if (prev !== 'none' && prev !== 'transparent') {
+          setPaint(s, 'fill', color);
+        } else if (!prev || tag === 'rect' || tag === 'circle' || tag === 'polygon' || tag === 'ellipse') {
+          setPaint(s, 'fill', color);
+        }
+        setPaint(s, 'stroke', color);
+      }
+    }
+    if (!asEdge) {
+      var swatch = el.querySelector('rect, circle');
+      if (swatch && swatch.getAttribute('data-mmd-fat') !== '1') {
+        setPaint(swatch, 'fill', color);
+      }
+      // 自身是 actor rect
+      if (el.tagName && /^(rect|circle|polygon|ellipse)$/i.test(el.tagName)) {
+        setPaint(el, 'fill', color);
+        setPaint(el, 'stroke', color);
+      }
+    }
+  }
+
+  function lookupLabelColor(labels, label) {
+    if (!labels || !label) { return ''; }
+    if (labels[label]) { return labels[label]; }
+    var norm = normalizeLabel(label);
+    if (labels[norm]) { return labels[norm]; }
+    for (var k in labels) {
+      if (!Object.prototype.hasOwnProperty.call(labels, k)) { continue; }
+      if (normalizeLabel(k) === norm) { return labels[k]; }
+    }
+    return '';
+  }
+
+  window.applyMermaidColors = function (mapOrJson) {
+    var map = mapOrJson;
+    if (typeof mapOrJson === 'string') {
+      try { map = JSON.parse(mapOrJson); } catch (e) { return; }
+    }
+    if (!map) { return; }
+    pendingColors = map;
+    var nodeColors = map.nodes || {};
+    var labels = map.labels || {};
+    var edgeColors = map.edges || {};
+    var els = document.querySelectorAll('[data-mmd-kind]');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      var kind = el.getAttribute('data-mmd-kind') || '';
+      var id = idOf(el);
+      var label = textOf(el);
+      if (kind === 'node') {
+        // actorN / nodeN 只按 id 着色，避免同名 label（如「双击编辑」）串色
+        var c = nodeColors[id] || '';
+        if (!c && !/^actor\d+$/i.test(id) && !/^node\d+$/i.test(id)) {
+          c = lookupLabelColor(labels, label) || '';
+        }
+        if (c) { paintElementColor(el, c, false); }
+      } else if (kind === 'edge') {
+        var ec = edgeColors[id] || (label ? edgeColors['label:' + label] : '') ||
+          (label ? edgeColors['label:' + normalizeLabel(label)] : '') || '';
+        if (ec) { paintElementColor(el, ec, true); }
+      }
+    }
+    // 改色后重画选中态操作点
+    if (selectedId) {
+      window.setMermaidSelection(selectedKind, selectedId);
+    }
+  };
+
+  function setupViewportGestures(content, viewport) {
+    if (!editableMode || !content) { return; }
+    if (content.getAttribute('data-mmd-gestures') === '1') { return; }
+    content.setAttribute('data-mmd-gestures', '1');
+    panX = 0;
+    panY = 0;
+    scale = 1;
+    applyTransform();
+
+    function dist(a, b) {
+      var dx = a.x - b.x;
+      var dy = a.y - b.y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function pointFromTouch(t) {
+      return { x: t.clientX, y: t.clientY };
+    }
+
+    function isAnchorEl(el) {
+      return !!(el && el.classList && el.classList.contains('mmd-sel-anchor'));
+    }
+
+    function findDeleteControl(el) {
+      var cur = el;
+      while (cur && cur !== document.body) {
+        if (cur.getAttribute && cur.getAttribute('data-mmd-delete') === '1') {
+          return cur;
+        }
+        if (cur.classList && cur.classList.contains('mmd-sel-delete')) {
+          return cur;
+        }
+        cur = cur.parentNode;
+      }
+      return null;
+    }
+
+    function emitDeleteSelected() {
+      if (!selectedId) { return; }
+      postInteraction({
+        action: 'delete',
+        kind: selectedKind || 'node',
+        id: selectedId,
+        label: selectedEl ? textOf(selectedEl) : ''
+      });
+    }
+
+    content.addEventListener('touchstart', function () {
+      ignoreMouseUntil = Date.now() + 700;
+    }, { passive: true, capture: true });
+
+    content.addEventListener('touchstart', function (ev) {
+      if (!editableMode) { return; }
+      if (ev.touches.length === 1) {
+        var t = pointFromTouch(ev.touches[0]);
+        if (findDeleteControl(ev.target)) {
+          emitDeleteSelected();
+          gesture = null;
+          if (ev.cancelable) { ev.preventDefault(); }
+          return;
+        }
+        if (isAnchorEl(ev.target)) {
+          startConnectFromAnchor(ev.target, t.x, t.y);
+          gesture = { mode: 'connect' };
+          if (ev.cancelable) { ev.preventDefault(); }
+          return;
+        }
+        gesture = {
+          mode: 'pan',
+          startX: t.x,
+          startY: t.y,
+          origPanX: panX,
+          origPanY: panY,
+          moved: false,
+          hit: findHitTarget(ev.target)
+        };
+      } else if (ev.touches.length === 2) {
+        clearConnectDraft();
+        var a = pointFromTouch(ev.touches[0]);
+        var b = pointFromTouch(ev.touches[1]);
+        gesture = {
+          mode: 'pinch',
+          startDist: dist(a, b),
+          origScale: scale,
+          midX: (a.x + b.x) / 2,
+          midY: (a.y + b.y) / 2,
+          origPanX: panX,
+          origPanY: panY
+        };
+        lastTapTs = 0;
+        lastTapTarget = null;
+      }
+    }, { passive: false });
+
+    content.addEventListener('touchmove', function (ev) {
+      if (connectDrag && gesture && gesture.mode === 'connect' && ev.touches.length === 1) {
+        var tc = pointFromTouch(ev.touches[0]);
+        if (Math.abs(tc.x - connectDrag.startClientX) > 4 ||
+            Math.abs(tc.y - connectDrag.startClientY) > 4) {
+          connectDrag.moved = true;
+        }
+        updateConnectDraft(tc.x, tc.y);
+        if (ev.cancelable) { ev.preventDefault(); }
+        return;
+      }
+      if (!gesture) { return; }
+      if (gesture.mode === 'pan' && ev.touches.length === 1) {
+        var t = pointFromTouch(ev.touches[0]);
+        var dx = t.x - gesture.startX;
+        var dy = t.y - gesture.startY;
+        if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+          gesture.moved = true;
+        }
+        panX = gesture.origPanX + dx;
+        panY = gesture.origPanY + dy;
+        applyTransform();
+        if (ev.cancelable) { ev.preventDefault(); }
+      } else if (gesture.mode === 'pinch' && ev.touches.length === 2) {
+        var a = pointFromTouch(ev.touches[0]);
+        var b = pointFromTouch(ev.touches[1]);
+        var d = dist(a, b);
+        if (gesture.startDist > 0) {
+          var next = gesture.origScale * (d / gesture.startDist);
+          if (next < MIN_SCALE) { next = MIN_SCALE; }
+          if (next > MAX_SCALE) { next = MAX_SCALE; }
+          scale = next;
+          applyTransform();
+        }
+        if (ev.cancelable) { ev.preventDefault(); }
+      }
+    }, { passive: false });
+
+    content.addEventListener('touchend', function (ev) {
+      if (gesture && gesture.mode === 'connect') {
+        var endT = (ev.changedTouches && ev.changedTouches[0]) ? ev.changedTouches[0] : null;
+        var endEl = endT ? document.elementFromPoint(endT.clientX, endT.clientY) : null;
+        finishConnectAt(endT ? endT.clientX : 0, endT ? endT.clientY : 0, endEl);
+        gesture = null;
+        return;
+      }
+      if (!gesture) { return; }
+      if (gesture.mode === 'pan' && !gesture.moved && gesture.hit) {
+        var now = Date.now();
+        var isDbl = lastTapTarget === gesture.hit && (now - lastTapTs) > 40 && (now - lastTapTs) < 450;
+        if (isDbl) {
+          emitHit('edit', gesture.hit);
+          lastTapTs = 0;
+          lastTapTarget = null;
+        } else {
+          emitHit('select', gesture.hit);
+          lastTapTs = now;
+          lastTapTarget = gesture.hit;
+        }
+      }
+      if (!ev.touches || ev.touches.length === 0) {
+        gesture = null;
+      }
+    }, { passive: true });
+
+    var mouseDown = null;
+    content.addEventListener('mousedown', function (ev) {
+      if (!editableMode) { return; }
+      if (Date.now() < ignoreMouseUntil) { return; }
+      if (findDeleteControl(ev.target)) {
+        emitDeleteSelected();
+        mouseDown = null;
+        ev.preventDefault();
+        return;
+      }
+      if (isAnchorEl(ev.target)) {
+        startConnectFromAnchor(ev.target, ev.clientX, ev.clientY);
+        mouseDown = { mode: 'connect', hit: null, moved: false };
+        ev.preventDefault();
+        return;
+      }
+      mouseDown = {
+        mode: 'pan',
+        x: ev.clientX,
+        y: ev.clientY,
+        origPanX: panX,
+        origPanY: panY,
+        moved: false,
+        hit: findHitTarget(ev.target)
+      };
+    });
+    content.addEventListener('mousemove', function (ev) {
+      if (connectDrag && mouseDown && mouseDown.mode === 'connect') {
+        if (Math.abs(ev.clientX - connectDrag.startClientX) > 3 ||
+            Math.abs(ev.clientY - connectDrag.startClientY) > 3) {
+          connectDrag.moved = true;
+          mouseDown.moved = true;
+        }
+        updateConnectDraft(ev.clientX, ev.clientY);
+        return;
+      }
+      if (!mouseDown || mouseDown.mode !== 'pan') { return; }
+      if (Date.now() < ignoreMouseUntil) { mouseDown = null; return; }
+      var dx = ev.clientX - mouseDown.x;
+      var dy = ev.clientY - mouseDown.y;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        mouseDown.moved = true;
+      }
+      panX = mouseDown.origPanX + dx;
+      panY = mouseDown.origPanY + dy;
+      applyTransform();
+    });
+    content.addEventListener('mouseup', function (ev) {
+      if (mouseDown && mouseDown.mode === 'connect') {
+        var endEl = document.elementFromPoint(ev.clientX, ev.clientY);
+        finishConnectAt(ev.clientX, ev.clientY, endEl);
+        mouseDown = null;
+        return;
+      }
+      if (!mouseDown) { return; }
+      if (Date.now() < ignoreMouseUntil) { mouseDown = null; return; }
+      if (!mouseDown.moved && mouseDown.hit) {
+        var now = Date.now();
+        var isDbl = lastTapTarget === mouseDown.hit && (now - lastTapTs) > 40 && (now - lastTapTs) < 450;
+        if (isDbl) {
+          emitHit('edit', mouseDown.hit);
+          lastTapTs = 0;
+          lastTapTarget = null;
+        } else {
+          emitHit('select', mouseDown.hit);
+          lastTapTs = now;
+          lastTapTarget = mouseDown.hit;
+        }
+      }
+      mouseDown = null;
+    });
+    content.addEventListener('wheel', function (ev) {
+      if (!editableMode) { return; }
+      var delta = ev.deltaY > 0 ? 0.9 : 1.1;
+      var next = scale * delta;
+      if (next < MIN_SCALE) { next = MIN_SCALE; }
+      if (next > MAX_SCALE) { next = MAX_SCALE; }
+      scale = next;
+      applyTransform();
+      if (ev.cancelable) { ev.preventDefault(); }
+    }, { passive: false });
   }
 
   function showDiagram(svg) {
@@ -123,19 +1199,80 @@
     var err = document.getElementById('error');
     err.style.display = 'none';
     err.textContent = '';
-    content.innerHTML = svg;
+    selectedEl = null;
+    removeSelChrome();
+    if (editableMode) {
+      content.removeAttribute('data-mmd-gestures');
+      content.innerHTML = '<div id="viewport">' + svg + '</div>';
+      var viewport = document.getElementById('viewport');
+      // 绑定失败不应导致整图空白：先展示 SVG，再尽量挂交互
+      try {
+        bindInteractions(viewport);
+      } catch (bindErr) {
+        try {
+          if (window.console && console.error) {
+            console.error('bindInteractions', bindErr);
+          }
+        } catch (ignore) {}
+      }
+      try {
+        setupViewportGestures(content, viewport);
+      } catch (gestErr) {}
+      try {
+        if (pendingColors) {
+          window.applyMermaidColors(pendingColors);
+        }
+        if (selectedId) {
+          window.setMermaidSelection(selectedKind, selectedId);
+        }
+      } catch (colorErr) {}
+      if (content.style) {
+        content.style.height = '100%';
+        content.style.minHeight = '240px';
+      }
+    } else {
+      content.innerHTML = svg;
+    }
     scheduleHeightReports();
     post('ReadyChannel', 'ok');
   }
 
-  window.renderMermaidPreview = function (source, theme, textColor, bgColor) {
+  window.setMermaidSelection = function (kind, id) {
+    clearSelectionHighlight();
+    selectedKind = kind || '';
+    selectedId = id || '';
+    if (!id) { return; }
+    var nodes = document.querySelectorAll('[data-mmd-kind]');
+    for (var i = 0; i < nodes.length; i++) {
+      var el = nodes[i];
+      var k = el.getAttribute('data-mmd-kind') || '';
+      var eid = idOf(el);
+      if ((kind === '' || k === kind) && (eid === id || eid.indexOf(id) >= 0 || id.indexOf(eid) >= 0)) {
+        highlightEl(el);
+        return;
+      }
+    }
+  };
+
+  window.renderMermaidPreview = function (source, theme, textColor, bgColor, editable, colorsJson) {
     var seq = ++renderSeq;
     var trimmed = (source || '').trim();
     var safeTheme = theme === 'dark' ? 'dark' : 'default';
     var safeColor = textColor || '#1D1D1F';
     var safeBg = bgColor || 'transparent';
+    editableMode = editable === true || editable === 'true' || editable === 1 || editable === '1';
+    if (colorsJson) {
+      try {
+        pendingColors = typeof colorsJson === 'string' ? JSON.parse(colorsJson) : colorsJson;
+      } catch (ce) {
+        pendingColors = null;
+      }
+    }
     document.body.style.background = safeBg;
     document.body.style.color = safeColor;
+    document.body.style.overflow = editableMode ? 'hidden' : 'visible';
+    document.documentElement.style.height = editableMode ? '100%' : 'auto';
+    document.body.style.height = editableMode ? '100%' : 'auto';
 
     if (!trimmed) {
       document.getElementById('content').innerHTML = '';
@@ -153,11 +1290,11 @@
     try {
       mermaid.initialize({
         startOnLoad: false,
-        securityLevel: 'strict',
+        securityLevel: 'loose',
         theme: safeTheme,
-        flowchart: { useMaxWidth: true, htmlLabels: true },
-        sequence: { useMaxWidth: true },
-        gantt: { useMaxWidth: true }
+        flowchart: { useMaxWidth: !editableMode, htmlLabels: true },
+        sequence: { useMaxWidth: !editableMode },
+        gantt: { useMaxWidth: !editableMode }
       });
     } catch (e) {
       showError(e && e.message ? e.message : String(e), safeColor);

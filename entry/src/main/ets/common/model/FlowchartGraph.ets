@@ -46,6 +46,18 @@ export const FLOWCHART_LINE_PROP_TO_Y = 'toY'
 /** 布局后启用正交连线（仅 0°/90° 折线）的 metadata 键。 */
 export const FLOWCHART_ORTHOGONAL_ROUTING_KEY = 'orthogonalRouting'
 
+/** Mermaid 源码节点标识（类名 / commit id）。 */
+export const FLOWCHART_MERMAID_NAME_KEY = 'mermaidName'
+
+/** gitGraph commit tag。 */
+export const FLOWCHART_GIT_TAG_KEY = 'gitTag'
+
+/** gitGraph 分叉分支名（metadata）。 */
+export const FLOWCHART_GIT_BRANCH_NAME_KEY = 'gitBranchName'
+
+/** 用户旅程图 section 名（metadata）。 */
+export const FLOWCHART_JOURNEY_SECTION_KEY = 'journeySection'
+
 /** 节点连接数超过该值视为思维导图中心，保留直线连接。 */
 export const FLOWCHART_MIND_MAP_DEGREE_THRESHOLD = 4
 
@@ -66,6 +78,10 @@ export const FLOWCHART_MIND_MAP_BUS_GAP = 28
 export const FLOWCHART_MIND_MAP_DEFAULT_CHILD_COUNT = 3
 export const FLOWCHART_MIND_MAP_SIDE_LEFT = 'left'
 export const FLOWCHART_MIND_MAP_SIDE_RIGHT = 'right'
+/** 思维导图节点左右侧属性键（NOTE_STATE flowchart_ext / 节点 properties）。 */
+export const FLOWCHART_MIND_MAP_SIDE_KEY = 'mindMapSide'
+/** 写入 graph.metadata / flowchart_ext 的 diagram 类型键。 */
+export const FLOWCHART_DIAGRAM_KIND_KEY = 'diagramKind'
 export const FLOWCHART_MIND_MAP_BLOCK_PROXY_ID = '__flowchartMindMapBlock__'
 
 export type FlowchartAnchor = 'top' | 'right' | 'bottom' | 'left'
@@ -154,7 +170,7 @@ export function flowchartSearchableText(graph: FlowchartGraphModel): string {
 
 export function flowchartSearchSummary(graph: FlowchartGraphModel): string {
   const titles = graph.nodes.map((n) => n.title.trim()).filter((t) => t.length > 0).slice(0, 3)
-  return titles.length > 0 ? titles.join(' · ') : '编辑标题'
+  return titles.length > 0 ? titles.join(' · ') : FLOWCHART_DEFAULT_TITLE
 }
 
 export function createFlowchartPosition(x: number, y: number): FlowchartNodePosition {
@@ -250,14 +266,19 @@ export function cloneFlowchartGraph(graph: FlowchartGraphModel): FlowchartGraphM
   }
 }
 
-export const FLOWCHART_DEFAULT_TITLE = '编辑标题'
+export const FLOWCHART_DEFAULT_TITLE = '点击编辑标题'
+
+/** 历史默认标题，兼容升级前笔记。 */
+export const FLOWCHART_LEGACY_DEFAULT_TITLE = '编辑标题'
 
 /** 旧版占位图唯一节点标题（Flutter 历史 `emptyGraph` 行为）。 */
 export const FLOWCHART_LEGACY_STARTER_NODE_TITLE = '开始'
 
 export function isDefaultFlowchartTitle(title: string): boolean {
   const trimmed = title.trim()
-  return trimmed.length === 0 || trimmed === FLOWCHART_DEFAULT_TITLE
+  return trimmed.length === 0 ||
+    trimmed === FLOWCHART_DEFAULT_TITLE ||
+    trimmed === FLOWCHART_LEGACY_DEFAULT_TITLE
 }
 
 export function isPlaceholderFlowchartGraph(graph: FlowchartGraphModel): boolean {

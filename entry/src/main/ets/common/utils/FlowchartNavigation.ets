@@ -1,5 +1,6 @@
 import router from '@ohos.router'
 import { UIContext } from '@kit.ArkUI'
+import { openFlowchartInline, FLOWCHART_PC_LAYOUT_KEY } from './FlowchartInlineBridge'
 
 const FLOWCHART_URL = 'pages/Flowchart'
 
@@ -10,6 +11,8 @@ export interface FlowchartNavParams {
   noteId: string
   focusQuery?: string
   initialMindMap?: boolean
+  /** PC / iPad 横屏：内嵌 MainShell，保留 TabBar。 */
+  inlineInShell?: boolean
 }
 
 /** 知识图谱页单例导航（RouterMode.Single）。 */
@@ -22,6 +25,15 @@ export async function navigateToFlowchart(
   }
   flowchartNavigationInFlight = true
   try {
+    const shellPcLayout = AppStorage.get<boolean>(FLOWCHART_PC_LAYOUT_KEY) ?? false
+    if (params.inlineInShell === true || shellPcLayout) {
+      openFlowchartInline({
+        noteId: params.noteId,
+        focusQuery: params.focusQuery,
+        initialMindMap: params.initialMindMap
+      })
+      return
+    }
     await uiContext.getRouter().pushUrl({
       url: FLOWCHART_URL,
       params: {

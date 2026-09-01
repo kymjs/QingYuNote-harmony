@@ -11,6 +11,7 @@ import { NoteHistoryReason } from '../common/model/NoteHistory'
 import { TimeUtils } from '../common/utils/TimeUtils'
 import { NoteSyncConflictLogic } from '../common/utils/NoteSyncConflictLogic'
 import { NoteStateCodec } from '../common/utils/NoteStateCodec'
+import { FlowchartMermaidCodec } from '../common/utils/FlowchartMermaidCodec'
 import { Logger } from '../common/utils/Logger'
 import { UserFacingMessage } from '../common/utils/UserFacingMessage'
 import { AppContextHolder } from './AppContextHolder'
@@ -74,6 +75,7 @@ export class SyncService {
   getLastFullSyncHadMoreNotes(): boolean {
     return this.lastFullSyncHadMoreNotesFlag
   }
+
 
   async init(): Promise<void> {
     if (this.initialized) {
@@ -300,6 +302,7 @@ export class SyncService {
         await this.syncImagesForNote(note, rawContent)
         await this.syncAudioForNote(note)
         await this.uploadFlowchartSidecarIfNeeded(noteId, note)
+        await this.cleanupRemoteFlowchartSidecar(noteId, note)
         await this.syncHistoryQuietly(noteId)
         if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced',
           uploaded.remoteModified || note.lastOperationAt, note.lastOperationAt)) {
@@ -332,6 +335,7 @@ export class SyncService {
         await this.syncImagesForNote(note, rawContent)
         await this.syncAudioForNote(note)
         await this.uploadFlowchartSidecarIfNeeded(noteId, note)
+        await this.cleanupRemoteFlowchartSidecar(noteId, note)
         await this.syncHistoryQuietly(noteId)
         if (await DatabaseService.getInstance().updateSyncStatus(noteId, 'synced',
           uploaded.remoteModified || note.lastOperationAt, note.lastOperationAt)) {
@@ -354,7 +358,7 @@ export class SyncService {
           return remotePermanent
         }
         await NoteRepository.getInstance().overwriteFromRemote(noteId, remoteContent, remoteStat.remoteModified)
-        await this.downloadFlowchartSidecarIfRemote(noteId)
+        await this.downloadFlowchartSidecarIfRemote(noteId, remoteContent)
         await this.downloadImagesForNote(noteId, remoteContent)
         await this.downloadAudioForNote(noteId, remoteContent)
         await this.syncHistoryQuietly(noteId)
@@ -381,9 +385,8 @@ export class SyncService {
       if (purgeWhenEqual !== null) {
         return purgeWhenEqual
       }
-      // 知识图谱：.md 时间戳容差内一致但 .qy 边车可能仍存在差异，仍拉一次以防漏同步。
       if (note.type_ === NOTE_TYPE_FLOWCHART) {
-        await this.downloadFlowchartSidecarIfRemote(noteId)
+        await this.downloadFlowchartSidecarIfRemote(noteId, remoteWhenEqual)
       }
       await this.downloadImagesForNote(noteId, remoteWhenEqual)
       await this.downloadAudioForNote(noteId, remoteWhenEqual)
@@ -764,7 +767,7 @@ export class SyncService {
       return tombstonePurge
     }
     await NoteRepository.getInstance().overwriteFromRemote(noteId, remoteContent, remoteModified)
-    await this.downloadFlowchartSidecarIfRemote(noteId)
+    await this.downloadFlowchartSidecarIfRemote(noteId, remoteContent)
     await this.downloadImagesForNote(noteId, remoteContent)
     await this.downloadAudioForNote(noteId, remoteContent)
     return {
@@ -867,8 +870,13 @@ export class SyncService {
     await NoteHistoryService.getInstance().syncWithCloud(noteId)
   }
 
+  private isMigratedFlowchartContent(content: string): boolean {
+    const body = FlowchartMermaidCodec.unwrapMermaidFence(content)
+    return body !== undefined && body.length > 0
+  }
+
   private async uploadFlowchartSidecarIfNeeded(noteId: string, note: Note): Promise<void> {
-    if (note.type_ !== 2) {
+    if (note.type_ !== NOTE_TYPE_FLOWCHART) {
       return
     }
     if (!FileService.getInstance().flowchartFileExists(noteId)) {
@@ -881,8 +889,14 @@ export class SyncService {
     await WebDAVClient.getInstance().uploadFlowchart(noteId, raw, note.lastOperationAt)
   }
 
-  private async downloadFlowchartSidecarIfRemote(noteId: string): Promise<void> {
+  private async downloadFlowchartSidecarIfRemote(noteId: string, mdContent?: string): Promise<void> {
     try {
+      if (mdContent !== undefined && this.isMigratedFlowchartContent(mdContent)) {
+        return
+      }
+      if (FileService.getInstance().flowchartFileExists(noteId)) {
+        return
+      }
       const stat = await WebDAVClient.getInstance().getFlowchartRemoteStat(noteId)
       if (!stat.exists) {
         return
@@ -893,6 +907,22 @@ export class SyncService {
       }
     } catch (error) {
       Logger.warn('SyncService', `flowchart download skipped: ${JSON.stringify(error)}`)
+    }
+  }
+
+  private async cleanupRemoteFlowchartSidecar(noteId: string, note: Note): Promise<void> {
+    if (note.type_ !== NOTE_TYPE_FLOWCHART) {
+      return
+    }
+    if (!this.isMigratedFlowchartContent(note.content)) {
+      return
+    }
+    if (FileService.getInstance().flowchartFileExists(noteId)) {
+      return
+    }
+    try {
+      await WebDAVClient.getInstance().deleteFlowchart(noteId)
+    } catch (_) {
     }
   }
 
@@ -1123,7 +1153,7 @@ export class SyncService {
       return remotePermanent
     }
     await NoteRepository.getInstance().overwriteFromRemote(noteId, remoteContent, remoteStat.remoteModified)
-    await this.downloadFlowchartSidecarIfRemote(noteId)
+    await this.downloadFlowchartSidecarIfRemote(noteId, remoteContent)
     await this.downloadImagesForNote(noteId, remoteContent)
     await this.downloadAudioForNote(noteId, remoteContent)
     return {

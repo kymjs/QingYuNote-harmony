@@ -1,6 +1,12 @@
 import type { FlowchartAnchor, FlowchartNodePosition } from '../model/FlowchartGraph'
 import { FLOWCHART_MIND_MAP_BUS_GAP, FLOWCHART_MIND_MAP_DEGREE_THRESHOLD } from '../model/FlowchartGraph'
 
+/** 思维导图边左右侧锚点对。 */
+export interface FlowchartSideAnchors {
+  source: FlowchartAnchor
+  target: FlowchartAnchor
+}
+
 export class FlowchartEdgeRouting {
   static isHorizontalAnchor(anchor: FlowchartAnchor): boolean {
     return anchor === 'left' || anchor === 'right'
@@ -43,6 +49,37 @@ export class FlowchartEdgeRouting {
       points.push({ x: toX, y: toY })
     }
     return FlowchartEdgeRouting.simplifyPolyline(points)
+  }
+
+  /** 思维导图：按水平位置（或已有左右锚点）决定左右侧连接。 */
+  static mindMapSideAnchors(
+    sourceLeft: number, sourceRight: number,
+    targetLeft: number, targetRight: number,
+    preferredSource: FlowchartAnchor, preferredTarget: FlowchartAnchor
+  ): FlowchartSideAnchors {
+    const srcH = FlowchartEdgeRouting.isHorizontalAnchor(preferredSource)
+    const tgtH = FlowchartEdgeRouting.isHorizontalAnchor(preferredTarget)
+    if (srcH && tgtH) {
+      const keep: FlowchartSideAnchors = {
+        source: preferredSource,
+        target: preferredTarget
+      }
+      return keep
+    }
+    const sourceCx = (sourceLeft + sourceRight) / 2
+    const targetCx = (targetLeft + targetRight) / 2
+    if (sourceCx <= targetCx) {
+      const rightToLeft: FlowchartSideAnchors = {
+        source: 'right',
+        target: 'left'
+      }
+      return rightToLeft
+    }
+    const leftToRight: FlowchartSideAnchors = {
+      source: 'left',
+      target: 'right'
+    }
+    return leftToRight
   }
 
   static mindMapTreePath(fromX: number, fromY: number, toX: number, toY: number,
