@@ -128,13 +128,25 @@ struct Profile {
       return
     }
     if (tok === null || tok.length === 0) {
-      await PreferencesService.getInstance().clearLoginSession()
-      this.loading = false
-      this.loadError = ''
-      this.profile = null
-      this.noteApiUserId = ''
-      this.avatarNetworkLoadFailed = false
-      return
+      const fresh = await NoteApiClient.getInstance().ensureSessionFresh()
+      const again = await PreferencesService.getInstance().getNoteApiAccessToken()
+      if (!fresh || again === null || again.length === 0) {
+        if (!await PreferencesService.getInstance().isUserLoggedIn()) {
+          this.loading = false
+          this.loadError = ''
+          this.profile = null
+          this.noteApiUserId = ''
+          this.avatarNetworkLoadFailed = false
+          return
+        }
+        // 会话暂不可用（如无网且 token 已过期）：不强制清会话。
+        this.loading = false
+        this.loadError = ''
+        this.profile = null
+        this.noteApiUserId = ''
+        this.avatarNetworkLoadFailed = false
+        return
+      }
     }
     this.loading = true
     this.loadError = ''

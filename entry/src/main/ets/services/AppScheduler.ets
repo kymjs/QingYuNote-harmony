@@ -1,6 +1,7 @@
 import { connection } from '@kit.NetworkKit'
 import { PreferencesService } from './PreferencesService'
 import { SyncService } from './SyncService'
+import { NoteApiClient } from './NoteApiClient'
 import { Logger } from '../common/utils/Logger'
 
 export class AppScheduler {
@@ -26,6 +27,7 @@ export class AppScheduler {
   }
 
   async onForeground(): Promise<void> {
+    void NoteApiClient.getInstance().ensureSessionFresh()
     if (!await this.canAutoSync()) {
       return
     }

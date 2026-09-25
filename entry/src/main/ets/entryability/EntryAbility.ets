@@ -2,6 +2,7 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.Ab
 import { hilog } from '@kit.PerformanceAnalysisKit'
 import { window } from '@kit.ArkUI'
 import { PreferencesService } from '../services/PreferencesService'
+import { NoteApiClient } from '../services/NoteApiClient'
 import { buildQingyuCloudWebDavConfig } from '../services/QingyuCloudConfigHelper'
 import { CryptoService } from '../services/CryptoService'
 import { NoteRepository } from '../services/NoteRepository'
@@ -66,6 +67,10 @@ export default class EntryAbility extends UIAbility {
       await PreferencesService.getInstance().init(this.context)
       await LocaleService.getInstance().load(this.context)
       await PreferencesService.getInstance().repairAbnormalLoginSessionIfNeeded()
+      if (await PreferencesService.getInstance().isUserLoggedIn() &&
+        !(await PreferencesService.getInstance().isGuestMode())) {
+        void NoteApiClient.getInstance().ensureSessionFresh()
+      }
       const loggedIn = await PreferencesService.getInstance().isUserLoggedIn()
       const guest = await PreferencesService.getInstance().isGuestMode()
       if (!loggedIn && !guest) {

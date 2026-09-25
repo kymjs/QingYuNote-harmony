@@ -1439,7 +1439,7 @@ struct MainShell {
   @Builder
   buildMobileBody() {
     Column({ space: 16 }) {
-      this.noteSection('continue', false)
+      this.noteSection('continue', true)
       this.todoScheduleRow()
       this.noteSection('recent', true)
       this.statsCard()
@@ -1451,7 +1451,7 @@ struct MainShell {
   buildPcBody() {
     Row({ space: 16 }) {
       Column({ space: 16 }) {
-        this.noteSection('continue', false)
+        this.noteSection('continue', true)
       }
       .layoutWeight(4)
       Column({ space: 12 }) {
@@ -1460,7 +1460,7 @@ struct MainShell {
       }
       .layoutWeight(3)
       Column({ space: 16 }) {
-        this.noteSection('recent', false)
+        this.noteSection('recent', true)
         this.statsCard()
       }
       .layoutWeight(3)

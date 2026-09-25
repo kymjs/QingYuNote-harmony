@@ -22,6 +22,7 @@ export async function buildQingyuCloudWebDavConfig(): Promise<WebDAVConfig | nul
 
 async function buildQingyuCloudWebDavConfigInner(): Promise<WebDAVConfig | null> {
   try {
+    await NoteApiClient.getInstance().ensureSessionFresh()
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (tok === null || tok.length === 0) {
       Logger.warn('QingyuCloudConfigHelper', 'no Note API token')

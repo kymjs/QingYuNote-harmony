@@ -3,6 +3,7 @@ import { NOTE_TYPE_FLOWCHART } from '../common/model/FlowchartGraph'
 import { DatabaseService } from './DatabaseService'
 import { NoteRepository } from './NoteRepository'
 import { PreferencesService } from './PreferencesService'
+import { NoteApiClient } from './NoteApiClient'
 import { WebDAVClient } from './WebDAVClient'
 import type { RemoteIndexEntry, RemoteIndexSnapshot } from './WebDAVClient'
 import { FileService } from './FileService'
@@ -685,12 +686,22 @@ export class SyncService {
     if (hub === undefined) {
       return
     }
-    let hasSelfHosted = false
     try {
       const ctx = AppContextHolder.tryGetContext()
       if (ctx !== undefined) {
         await PreferencesService.getInstance().init(ctx)
       }
+      const sessionOk = await NoteApiClient.getInstance().ensureSessionFresh()
+      const token = await PreferencesService.getInstance().getNoteApiAccessToken()
+      if (!sessionOk || token === null || token.length === 0) {
+        // 会话暂不可用：勿误报「未配置云服务」。
+        return
+      }
+    } catch (_) {
+      return
+    }
+    let hasSelfHosted = false
+    try {
       const snapshot = await PreferencesService.getInstance().getSavedCustomWebDAVConfigSnapshot()
       hasSelfHosted = snapshot !== null && snapshot.enabled
     } catch (_) {

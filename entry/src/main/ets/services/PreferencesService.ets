@@ -18,6 +18,8 @@ const HUAWEI_LOGGED_IN_KEY = 'account_huawei_logged_in'
 const NOTE_API_USER_ID_KEY = 'note_api_user_id'
 const NOTE_API_ACCESS_TOKEN_KEY = 'note_api_access_token'
 const NOTE_API_EXPIRES_AT_MS_KEY = 'note_api_expires_at_ms'
+/** 与 Flutter `AppConst.prefNoteApiLastRefreshAtMsKey` 一致 */
+const NOTE_API_LAST_REFRESH_AT_MS_KEY = 'note_api_last_refresh_at_ms'
 /** 与 Flutter `AppConst.prefCachedUserProfileKey` 一致：最近一次成功拉取的 profile，按用户 id 隔离 */
 const NOTE_API_CACHED_USER_PROFILE_KEY = 'note_api_cached_user_profile'
 /**
@@ -591,13 +593,30 @@ export class PreferencesService {
     try {
       const store = this.ensureStore()
       const skewMs = 60_000
-      const exp = Date.now() + expiresInSec * 1000 - skewMs
+      const now = Date.now()
+      const exp = now + expiresInSec * 1000 - skewMs
       store.putSync(NOTE_API_ACCESS_TOKEN_KEY, accessToken)
       store.putSync(NOTE_API_EXPIRES_AT_MS_KEY, exp)
+      store.putSync(NOTE_API_LAST_REFRESH_AT_MS_KEY, now)
       await store.flush()
     } catch (error) {
       Logger.warn('PreferencesService', `setNoteApiSession failed: ${this.describeError(error as Object)}`)
       throw this.toRuntimeError(error as Object)
+    }
+  }
+
+  /** 忽略本地过期时间，仅读盘上的 token（供 refresh / 异常会话修复）。 */
+  async getNoteApiAccessTokenRaw(): Promise<string | null> {
+    try {
+      const store = this.ensureStore()
+      const tok = store.getSync(NOTE_API_ACCESS_TOKEN_KEY, '') as string
+      if (tok.trim().length === 0) {
+        return null
+      }
+      return tok.trim()
+    } catch (error) {
+      Logger.warn('PreferencesService', `getNoteApiAccessTokenRaw failed: ${this.describeError(error as Object)}`)
+      return null
     }
   }
 
@@ -619,11 +638,21 @@ export class PreferencesService {
     }
   }
 
+  async getNoteApiLastRefreshAtMs(): Promise<number> {
+    try {
+      return this.ensureStore().getSync(NOTE_API_LAST_REFRESH_AT_MS_KEY, 0) as number
+    } catch (error) {
+      Logger.warn('PreferencesService', `getNoteApiLastRefreshAtMs failed: ${this.describeError(error as Object)}`)
+      return 0
+    }
+  }
+
   async clearNoteApiSession(): Promise<void> {
     try {
       const store = this.ensureStore()
       store.putSync(NOTE_API_ACCESS_TOKEN_KEY, '')
       store.putSync(NOTE_API_EXPIRES_AT_MS_KEY, 0)
+      store.putSync(NOTE_API_LAST_REFRESH_AT_MS_KEY, 0)
       await store.flush()
     } catch (error) {
       Logger.warn('PreferencesService', `clearNoteApiSession failed: ${this.describeError(error as Object)}`)
@@ -857,14 +886,15 @@ export class PreferencesService {
     }
   }
 
-  /** 覆盖安装等场景：userId 与 token 仅残留其一时清除，由启动页重新登录。 */
+  /** 覆盖安装等场景：userId 与 token 仅残留其一时清除，由启动页重新登录。
+   * 用 raw token 判断，避免本地墙钟过期被误判为「仅有 userId」。 */
   async repairAbnormalLoginSessionIfNeeded(): Promise<boolean> {
     try {
       if (await this.isGuestMode()) {
         return false
       }
       const hasUserId = (await this.getNoteApiUserId()).trim().length > 0
-      const tok = await this.getNoteApiAccessToken()
+      const tok = await this.getNoteApiAccessTokenRaw()
       const hasToken = tok !== null && tok.length > 0
       if (hasUserId === hasToken) {
         return false
@@ -886,6 +916,7 @@ export class PreferencesService {
       store.putSync('auth_invalid', false)
       store.putSync(NOTE_API_ACCESS_TOKEN_KEY, '')
       store.putSync(NOTE_API_EXPIRES_AT_MS_KEY, 0)
+      store.putSync(NOTE_API_LAST_REFRESH_AT_MS_KEY, 0)
       store.putSync(LOGIN_RETURN_TARGET_KEY, '')
       store.putSync(NOTE_API_CACHED_USER_PROFILE_KEY, '')
       // 微信读书导入 Key 与账号绑定，登出后必须清空，避免下一个账号沿用上一个用户的 token。

@@ -210,9 +210,73 @@ export interface ProfileBody {
 
 export class NoteApiClient {
   private static instance: NoteApiClient = new NoteApiClient()
+  private static readonly SESSION_REFRESH_THROTTLE_MS: number = 60 * 60 * 1000
+  private ensureSessionFreshInflight: Promise<boolean> | null = null
 
   static getInstance(): NoteApiClient {
     return NoteApiClient.instance
+  }
+
+  /**
+   * 滑动续期：POST /api/v1/auth/refresh。
+   * 401/403 → clearLoginSession；网络失败且本地未过期 → true；已过期 → false（不清会话）。
+   */
+  async ensureSessionFresh(force: boolean = false): Promise<boolean> {
+    if (this.ensureSessionFreshInflight !== null) {
+      return this.ensureSessionFreshInflight
+    }
+    const started = this.ensureSessionFreshInner(force)
+    this.ensureSessionFreshInflight = started
+    try {
+      return await started
+    } finally {
+      if (this.ensureSessionFreshInflight === started) {
+        this.ensureSessionFreshInflight = null
+      }
+    }
+  }
+
+  private async ensureSessionFreshInner(force: boolean): Promise<boolean> {
+    try {
+      if (await PreferencesService.getInstance().isGuestMode()) {
+        return false
+      }
+      const userId = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
+      const raw = await PreferencesService.getInstance().getNoteApiAccessTokenRaw()
+      if (userId.length === 0 || raw === null || raw.length === 0) {
+        return false
+      }
+      const validTok = await PreferencesService.getInstance().getNoteApiAccessToken()
+      const lastRefresh = await PreferencesService.getInstance().getNoteApiLastRefreshAtMs()
+      const now = Date.now()
+      if (!force &&
+        validTok !== null &&
+        validTok.length > 0 &&
+        lastRefresh > 0 &&
+        now - lastRefresh < NoteApiClient.SESSION_REFRESH_THROTTLE_MS) {
+        return true
+      }
+      const result = await this.postAuthJsonStatus('/api/v1/auth/refresh', '{}', raw)
+      if (result.status === 401 || result.status === 403) {
+        await PreferencesService.getInstance().clearLoginSession()
+        return false
+      }
+      if (result.status < 200 || result.status >= 300 || result.obj === null) {
+        return validTok !== null && validTok.length > 0
+      }
+      const body = result.obj as AuthLoginResponseBody
+      const token = body.access_token?.trim() ?? ''
+      const expiresIn = body.expires_in ?? 1209600
+      if (token.length === 0) {
+        return validTok !== null && validTok.length > 0
+      }
+      await PreferencesService.getInstance().setNoteApiSession(token, expiresIn)
+      return true
+    } catch (e) {
+      Logger.warn('NoteApiClient', `ensureSessionFresh failed: ${JSON.stringify(e)}`)
+      const validTok = await PreferencesService.getInstance().getNoteApiAccessToken()
+      return validTok !== null && validTok.length > 0
+    }
   }
 
   private joinUrl(path: string): string {
@@ -444,7 +508,7 @@ export class NoteApiClient {
     }
     const raw = obj as AuthLoginResponseBody
     const token = raw.access_token?.trim() ?? ''
-    const expiresIn = raw.expires_in ?? 604800
+    const expiresIn = raw.expires_in ?? 1209600
     const uid = parseAuthLoginUserId(obj)
     if (token.length === 0 || uid.length === 0) {
       return false
@@ -494,7 +558,7 @@ export class NoteApiClient {
         }
         const raw = obj as AuthLoginResponseBody
         const token = raw.access_token?.trim() ?? ''
-        const expiresIn = raw.expires_in ?? 604800
+        const expiresIn = raw.expires_in ?? 1209600
         const uid = parseAuthLoginUserId(obj)
         if (token.length === 0 || uid.length === 0) {
           return 'unknown_error'
@@ -1229,7 +1293,7 @@ export class NoteApiClient {
         }
         const raw = obj as AuthLoginResponseBody
         const token = raw.access_token?.trim() ?? ''
-        const expiresIn = raw.expires_in ?? 604800
+        const expiresIn = raw.expires_in ?? 1209600
         const uid = parseAuthLoginUserId(obj)
         if (token.length === 0 || uid.length === 0) {
           return 'unknown_error'
