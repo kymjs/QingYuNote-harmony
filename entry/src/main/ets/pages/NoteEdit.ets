@@ -2372,9 +2372,10 @@ struct NoteEdit {
       const savedToneRaw = await PreferencesService.getInstance().getShareCardTone()
       const savedTheme = ShareThemeColors.parseTheme(savedThemeRaw)
       const savedTone = ShareThemeColors.parseTone(savedToneRaw)
+      const savedShowAppIcon = await PreferencesService.getInstance().getShareCardShowAppIcon()
       this.shareTheme = savedTheme
       this.shareTone = savedTone
-      this.shareShowAppIcon = false
+      this.shareShowAppIcon = savedShowAppIcon
       const path = await this.exportShareImageToCache(savedTheme, savedTone)
       if (!path || path.length === 0) {
         this.showPreviewMessage(EditorUiStrings.loc('生成长图失败', 'Failed to generate long image', '長画像の生成に失敗しました'))
@@ -2394,12 +2395,15 @@ struct NoteEdit {
 
   private async persistShareCardPreferences(
     theme: ShareCardTheme,
-    tone: ShareCardTone
+    tone: ShareCardTone,
+    showAppIcon: boolean
   ): Promise<void> {
     await this.ensurePreferencesInitialized()
     await PreferencesService.getInstance().setShareCardTheme(`${theme}`)
     await PreferencesService.getInstance().setShareCardTone(`${tone}`)
-    Logger.info('NoteEdit', `persistShareCardPreferences theme=${theme} tone=${tone}`)
+    await PreferencesService.getInstance().setShareCardShowAppIcon(showAppIcon)
+    Logger.info('NoteEdit',
+      `persistShareCardPreferences theme=${theme} tone=${tone} showAppIcon=${showAppIcon}`)
   }
 
   private async regenerateSharePreview(
@@ -2474,7 +2478,7 @@ struct NoteEdit {
         if (this.shareTheme !== theme) {
           this.shareTheme = theme
           this.shareSheetRevision++
-          void this.persistShareCardPreferences(theme, this.shareTone)
+          void this.persistShareCardPreferences(theme, this.shareTone, this.shareShowAppIcon)
           void this.regenerateSharePreview(theme, this.shareTone)
         }
       },
@@ -2485,7 +2489,7 @@ struct NoteEdit {
         if (this.shareTone !== tone) {
           this.shareTone = tone
           this.shareSheetRevision++
-          void this.persistShareCardPreferences(this.shareTheme, tone)
+          void this.persistShareCardPreferences(this.shareTheme, tone, this.shareShowAppIcon)
           void this.regenerateSharePreview(this.shareTheme, tone)
         }
       },
@@ -2493,6 +2497,7 @@ struct NoteEdit {
         this.shareShowAppIcon = !this.shareShowAppIcon
         Logger.info('NoteEdit',
           `shareSheet button=footerImage showAppIcon=${this.shareShowAppIcon}`)
+        void this.persistShareCardPreferences(this.shareTheme, this.shareTone, this.shareShowAppIcon)
         void this.regenerateSharePreview()
       },
       onSave: (): void => {

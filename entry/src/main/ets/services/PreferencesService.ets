@@ -54,6 +54,8 @@ const SHARE_CARD_THEME_KEY = 'share_card_theme'
 const APP_THEME_MODE_KEY = 'theme_mode'
 /** 与 Flutter `AppConst.prefShareCardToneKey` 一致 */
 const SHARE_CARD_TONE_KEY = 'share_card_tone'
+/** 与 Flutter `AppConst.prefShareCardShowAppIconKey` 一致：true 展示应用图标，false 展示二维码 */
+const SHARE_CARD_SHOW_APP_ICON_KEY = 'share_card_show_app_icon'
 /** 登录成功后导航：`Login` 消费并清空（OAuth 返回后 router params 可能丢失） */
 const LOGIN_RETURN_TARGET_KEY = 'login_return_target'
 /** 与 Flutter `AppConst.prefBiometricLockEnabledKey` 一致：本机生物识别锁，不同步远端 */
@@ -1193,6 +1195,26 @@ export class PreferencesService {
       await store.flush()
     } catch (error) {
       Logger.warn('PreferencesService', `setShareCardTone failed: ${this.describeError(error as Object)}`)
+    }
+  }
+
+  /** 分享卡片上次是否展示应用图标（默认展示二维码）。 */
+  async getShareCardShowAppIcon(): Promise<boolean> {
+    try {
+      return this.ensureStore().getSync(SHARE_CARD_SHOW_APP_ICON_KEY, false) as boolean
+    } catch (error) {
+      Logger.warn('PreferencesService', `getShareCardShowAppIcon failed: ${this.describeError(error as Object)}`)
+      return false
+    }
+  }
+
+  async setShareCardShowAppIcon(showAppIcon: boolean): Promise<void> {
+    try {
+      const store = this.ensureStore()
+      store.putSync(SHARE_CARD_SHOW_APP_ICON_KEY, showAppIcon)
+      await store.flush()
+    } catch (error) {
+      Logger.warn('PreferencesService', `setShareCardShowAppIcon failed: ${this.describeError(error as Object)}`)
     }
   }
 

@@ -1237,7 +1237,7 @@ struct VoiceNoteDetail {
       )
       this.shareTheme = savedTheme
       this.shareTone = savedTone
-      this.shareShowAppIcon = false
+      this.shareShowAppIcon = await PreferencesService.getInstance().getShareCardShowAppIcon()
       const path = await this.shareExportFlow().exportShareImageToCache(savedTheme, savedTone)
       if (!path || path.length === 0) {
         this.showToast(EditorUiStrings.loc('生成长图失败', 'Failed to generate long image', '長画像の生成に失敗しました'))
@@ -1253,10 +1253,15 @@ struct VoiceNoteDetail {
     }
   }
 
-  private async persistShareCardPreferences(theme: ShareCardTheme, tone: ShareCardTone): Promise<void> {
+  private async persistShareCardPreferences(
+    theme: ShareCardTheme,
+    tone: ShareCardTone,
+    showAppIcon: boolean
+  ): Promise<void> {
     await this.ensurePreferencesInitialized()
     await PreferencesService.getInstance().setShareCardTheme(`${theme}`)
     await PreferencesService.getInstance().setShareCardTone(`${tone}`)
+    await PreferencesService.getInstance().setShareCardShowAppIcon(showAppIcon)
   }
 
   private async regenerateSharePreview(
@@ -1329,7 +1334,7 @@ struct VoiceNoteDetail {
         if (this.shareTheme !== theme) {
           this.shareTheme = theme
           this.shareSheetRevision++
-          void this.persistShareCardPreferences(theme, this.shareTone)
+          void this.persistShareCardPreferences(theme, this.shareTone, this.shareShowAppIcon)
           void this.regenerateSharePreview(theme, this.shareTone)
         }
       },
@@ -1337,12 +1342,13 @@ struct VoiceNoteDetail {
         if (this.shareTone !== tone) {
           this.shareTone = tone
           this.shareSheetRevision++
-          void this.persistShareCardPreferences(this.shareTheme, tone)
+          void this.persistShareCardPreferences(this.shareTheme, tone, this.shareShowAppIcon)
           void this.regenerateSharePreview(this.shareTheme, tone)
         }
       },
       onFooterImageToggle: (): void => {
         this.shareShowAppIcon = !this.shareShowAppIcon
+        void this.persistShareCardPreferences(this.shareTheme, this.shareTone, this.shareShowAppIcon)
         void this.regenerateSharePreview()
       },
       onSave: (): void => {
