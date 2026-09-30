@@ -9,6 +9,7 @@ import { NoteSettingsService } from './NoteSettingsService'
 import { NoteSettingsRemoteSync } from './NoteSettingsRemoteSync'
 import { WebViewSessionCleaner } from '../common/utils/WebViewSessionCleaner'
 import { AppContextHolder } from './AppContextHolder'
+import { FeedbackReplyInbox } from './FeedbackReplyInbox'
 
 const PREFERENCES_NAME = 'qingyu_preferences'
 const TAG_LIST_KEY = 'note_tags'
@@ -911,6 +912,8 @@ export class PreferencesService {
 
   async clearLoginSession(): Promise<void> {
     try {
+      // 须在清空 userId 前清理按用户隔离的反馈回复缓存。
+      await FeedbackReplyInbox.getInstance().clearLocal()
       const store = this.ensureStore()
       store.putSync(HUAWEI_LOGGED_IN_KEY, false)
       store.putSync(NOTE_API_USER_ID_KEY, '')

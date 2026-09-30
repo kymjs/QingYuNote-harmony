@@ -1,6 +1,7 @@
 import { common, Want } from '@kit.AbilityKit'
 import { UIContext } from '@kit.ArkUI'
 import { AppContextHolder } from '../../services/AppContextHolder'
+import { FeedbackReplyInbox } from '../../services/FeedbackReplyInbox'
 import { LocaleService } from '../../services/LocaleService'
 import { PreferencesService } from '../../services/PreferencesService'
 
@@ -47,6 +48,7 @@ export async function openQingyuFeedbackPage(uiContext: UIContext): Promise<void
     )
     return
   }
+  void FeedbackReplyInbox.getInstance().refreshFromServer()
   const title: string = LocaleService.loc('用户反馈', 'Feedback', 'フィードバック')
   const url: string = buildQingyuFeedbackPageUrl()
   try {

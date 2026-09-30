@@ -11,6 +11,7 @@ import { MineDiamondIcon, MineScalesIcon } from '../../components/MineSvgIcons'
 import { openQingyuActivityPage } from '../../common/utils/ReferralInviteNavigation'
 import { openQingyuFeedbackPage } from '../../common/utils/OpenQingyuFeedbackPage'
 import { openQingyuVipPage } from '../../common/utils/OpenQingyuVipPage'
+import { FeedbackReplyInbox } from '../../services/FeedbackReplyInbox'
 import { Logger } from '../../common/utils/Logger'
 import { ImageCacheService } from '../../services/ImageCacheService'
 import {
@@ -120,11 +121,23 @@ export struct DashboardMineTab {
   @State appLockEnabled: boolean = false
   @State biometricAvailable: boolean = false
   @State biometricEnabled: boolean = false
+  @State feedbackHasUnread: boolean = false
   private reloadGeneration: number = 0
   private lockBusy: boolean = false
+  private readonly onFeedbackInboxChanged: () => void = () => {
+    this.feedbackHasUnread = FeedbackReplyInbox.getInstance().hasUnread()
+  }
 
   aboutToAppear(): void {
+    FeedbackReplyInbox.getInstance().addListener(this.onFeedbackInboxChanged)
+    void FeedbackReplyInbox.getInstance().ensureLoaded().then(() => {
+      this.feedbackHasUnread = FeedbackReplyInbox.getInstance().hasUnread()
+    })
     void this.reload()
+  }
+
+  aboutToDisappear(): void {
+    FeedbackReplyInbox.getInstance().removeListener(this.onFeedbackInboxChanged)
   }
 
   onVisibleChanged(): void {
@@ -232,6 +245,10 @@ export struct DashboardMineTab {
     } catch (error) {
       Logger.warn('DashboardMineTab', `load lock settings failed: ${JSON.stringify(error)}`)
     }
+
+    void FeedbackReplyInbox.getInstance().refreshFromServer().then(() => {
+      this.feedbackHasUnread = FeedbackReplyInbox.getInstance().hasUnread()
+    })
 
     if (generation !== this.reloadGeneration) {
       return
@@ -787,7 +804,7 @@ export struct DashboardMineTab {
       this.menuRow($r('sys.symbol.quote'),
         LocaleService.loc('用户反馈', 'Feedback', 'フィードバック'), '', false, () => {
           void openQingyuFeedbackPage(this.getUIContext())
-        }, false)
+        }, false, this.feedbackHasUnread)
     }
     .width('100%')
     .backgroundColor($r('app.color.card_background'))
@@ -833,7 +850,7 @@ export struct DashboardMineTab {
 
   @Builder
   menuRow(symbol: Resource, title: string, trailing: string, trailingAlert: boolean,
-    onTap: () => void, showDivider: boolean) {
+    onTap: () => void, showDivider: boolean, showUnreadDot: boolean = false) {
     Column() {
       Row() {
         SymbolGlyph(symbol)
@@ -844,6 +861,13 @@ export struct DashboardMineTab {
           .fontColor($r('app.color.primary_text'))
           .margin({ left: 12 })
           .layoutWeight(1)
+        if (showUnreadDot) {
+          Circle()
+            .width(8)
+            .height(8)
+            .fill('#E53935')
+            .margin({ right: 6 })
+        }
         if (trailing.length > 0) {
           Text(trailing)
             .fontSize(13)

@@ -14,6 +14,7 @@ import { LocaleService, APP_LOCALE_REVISION_KEY } from '../services/LocaleServic
 import { SyncConstants } from '../common/constants/SyncConstants'
 import { recheckForceUpdateOnResume } from '../services/AppUpdateUi'
 import { applyAppColorMode } from '../common/utils/AppTheme'
+import { FeedbackReplyInbox } from '../services/FeedbackReplyInbox'
 
 const DOMAIN = 0x0000
 const DEFERRED_SERVICES_DELAY_MS = 1500
@@ -156,5 +157,9 @@ export default class EntryAbility extends UIAbility {
   private async prepareDeferredServices(): Promise<void> {
     await NoteRepository.getInstance().startupRepair()
     await SyncService.getInstance().restorePendingAfterLaunch()
+    try {
+      await FeedbackReplyInbox.getInstance().refreshFromServer()
+    } catch (_) {
+    }
   }
 }

@@ -1,6 +1,7 @@
 import fs from '@ohos.file.fs'
 import http from '@ohos.net.http'
 import { NoteApiConstants } from '../common/constants/NoteApiConstants'
+import { FeedbackReplyInbox, FeedbackReplyItem } from './FeedbackReplyInbox'
 import { PreferencesService } from './PreferencesService'
 import { getAppVersionName } from './AppUpdateService'
 import { handleServerUpgradeRequired } from './AppUpdateUi'
@@ -818,6 +819,36 @@ export class NoteApiClient {
       return null
     } finally {
       req.destroy()
+    }
+  }
+
+  /**
+   * GET /api/v1/me/feedback-reply。
+   * 返回 FeedbackReplyItem；无数据返回 null；网络失败返回字符串 'network_error'。
+   */
+  async fetchLatestFeedbackReply(): Promise<FeedbackReplyItem | null | string> {
+    const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
+    if (tok === null || tok.length === 0) {
+      return null
+    }
+    try {
+      const obj = await this.requestJson(
+        http.RequestMethod.GET,
+        '/api/v1/me/feedback-reply',
+        undefined,
+        tok
+      )
+      if (obj === null) {
+        return 'network_error'
+      }
+      const record = obj as Record<string, Object>
+      const replyRaw = record['reply']
+      if (replyRaw === null || replyRaw === undefined) {
+        return null
+      }
+      return FeedbackReplyInbox.parseItem(replyRaw as Record<string, Object>)
+    } catch (_) {
+      return 'network_error'
     }
   }
 

@@ -16,6 +16,12 @@ import { QingyuAppBridge } from '../common/utils/QingyuAppBridge'
 import { openReferralInviteSharePage } from '../common/utils/ReferralInviteNavigation'
 import { isQingyuVipPageUrl, vipPageLangQuery } from '../common/utils/OpenQingyuVipPage'
 import { isQingyuFeedbackPageUrl } from '../common/utils/OpenQingyuFeedbackPage'
+import {
+  isQingyuMyFeedbackPageUrl,
+  openQingyuMyFeedbackPage
+} from '../common/utils/OpenQingyuMyFeedbackPage'
+import { FeedbackReplyInbox } from '../services/FeedbackReplyInbox'
+import { LocaleService } from '../services/LocaleService'
 import { usePcStyleLayoutWithSize } from '../common/utils/DesktopLayout'
 import { PreferencesService } from '../services/PreferencesService'
 import { AppContextHolder } from '../services/AppContextHolder'
@@ -948,6 +954,8 @@ struct H5WebContainer {
   @State isLoading: boolean = false
   @State pageWidth: number = 0
   @State pageHeight: number = 0
+  @State feedbackHasReply: boolean = false
+  @State feedbackHasUnread: boolean = false
   private webController: webview.WebviewController = new webview.WebviewController()
   private closeGuard = new PageCloseGuard()
   private qrSaveBridge: WereadQrSaveBridge = new WereadQrSaveBridge()
@@ -956,6 +964,7 @@ struct H5WebContainer {
   private vipBridge: QingyuVipBridge = new QingyuVipBridge()
   private feedbackBridge: QingyuFeedbackBridge = new QingyuFeedbackBridge()
   private feedbackSessionCache: string = '{}'
+  private feedbackLatestReplyCache: string = '{"type":"latestReply","reply":null}'
   private appBridge: QingyuAppBridge = new QingyuAppBridge()
   private vipSessionCache: string = '{}'
   private readonly base64: util.Base64Helper = new util.Base64Helper()
@@ -965,6 +974,9 @@ struct H5WebContainer {
   private youdaoApiKeyHandled: boolean = false
   // 印象笔记 Developer Token 流程的独立守卫
   private yinxiangApiKeyHandled: boolean = false
+  private readonly onFeedbackInboxChanged: () => void = () => {
+    this.syncFeedbackInboxState()
+  }
 
   private shouldShowLoadingOverlay(): boolean {
     return this.isLoading &&
@@ -996,6 +1008,18 @@ struct H5WebContainer {
       this.handleToolbarBack()
     })
     this.feedbackBridge.bindSessionProvider(() => this.feedbackSessionCache)
+    this.feedbackBridge.bindLatestReplyProvider(() => this.feedbackLatestReplyCache)
+    this.feedbackBridge.bindMessageHandler((action: string) => {
+      if (action === 'getSession') {
+        void this.pushFeedbackSessionIfNeeded()
+      } else if (action === 'getLatestReply') {
+        void this.pushFeedbackLatestReplyIfNeeded()
+      }
+    })
+    FeedbackReplyInbox.getInstance().addListener(this.onFeedbackInboxChanged)
+    void FeedbackReplyInbox.getInstance().ensureLoaded().then(() => {
+      this.syncFeedbackInboxState()
+    })
     this.appBridge.bindOpenInvite(() => {
       void openReferralInviteSharePage(this.getUIContext())
     })
@@ -1038,7 +1062,19 @@ struct H5WebContainer {
   }
 
   aboutToDisappear(): void {
+    FeedbackReplyInbox.getInstance().removeListener(this.onFeedbackInboxChanged)
     WebViewSessionCleaner.unregisterController(this.webController)
+  }
+
+  private syncFeedbackInboxState(): void {
+    this.feedbackHasReply = FeedbackReplyInbox.getInstance().hasReply()
+    this.feedbackHasUnread = FeedbackReplyInbox.getInstance().hasUnread()
+  }
+
+  private showFeedbackEnvelope(): boolean {
+    return isQingyuFeedbackPageUrl(this.webUrl) &&
+      !isQingyuMyFeedbackPageUrl(this.webUrl) &&
+      this.feedbackHasReply
   }
 
   /**
@@ -1049,7 +1085,7 @@ struct H5WebContainer {
     if (isQingyuVipPageUrl(this.webUrl)) {
       return 'QingyuVipBridge'
     }
-    if (isQingyuFeedbackPageUrl(this.webUrl)) {
+    if (isQingyuFeedbackPageUrl(this.webUrl) || isQingyuMyFeedbackPageUrl(this.webUrl)) {
       return 'QingyuFeedbackBridge'
     }
     if (isWereadSkillsUrl(this.webUrl)) {
@@ -1068,7 +1104,7 @@ struct H5WebContainer {
     if (isQingyuVipPageUrl(this.webUrl)) {
       return this.vipBridge
     }
-    if (isQingyuFeedbackPageUrl(this.webUrl)) {
+    if (isQingyuFeedbackPageUrl(this.webUrl) || isQingyuMyFeedbackPageUrl(this.webUrl)) {
       return this.feedbackBridge
     }
     if (isWereadSkillsUrl(this.webUrl)) {
@@ -1087,8 +1123,8 @@ struct H5WebContainer {
     if (isQingyuVipPageUrl(this.webUrl)) {
       return ['pay', 'close', 'getSession']
     }
-    if (isQingyuFeedbackPageUrl(this.webUrl)) {
-      return ['close', 'getSession']
+    if (isQingyuFeedbackPageUrl(this.webUrl) || isQingyuMyFeedbackPageUrl(this.webUrl)) {
+      return ['close', 'getSession', 'getLatestReply', 'postMessage']
     }
     if (isWereadSkillsUrl(this.webUrl)) {
       return ['saveQrImage', 'onApiKeyCopied']
@@ -1418,6 +1454,15 @@ struct H5WebContainer {
   private updateTitleIfStoreReview(): void {
     try {
       const url = this.webController.getUrl()
+      this.webUrl = url
+      if (isQingyuMyFeedbackPageUrl(url)) {
+        this.pageTitle = LocaleService.loc('我的反馈', 'My feedback', '自分のフィードバック')
+        return
+      }
+      if (isQingyuFeedbackPageUrl(url)) {
+        this.pageTitle = LocaleService.loc('用户反馈', 'Feedback', 'フィードバック')
+        return
+      }
       if (url.indexOf('store_review_upload.html') >= 0) {
         this.pageTitle = '上传好评截图'
       } else if (url.indexOf('store_review_pending.html') >= 0) {
@@ -1588,26 +1633,50 @@ struct H5WebContainer {
 
 
   private async pushFeedbackSessionIfNeeded(): Promise<void> {
-    if (!isQingyuFeedbackPageUrl(this.webUrl)) {
+    if (!isQingyuFeedbackPageUrl(this.webUrl) && !isQingyuMyFeedbackPageUrl(this.webUrl)) {
       return
     }
     try {
+      await FeedbackReplyInbox.getInstance().ensureLoaded()
       const userId = (await PreferencesService.getInstance().getNoteApiUserId()).trim()
       const profile = await PreferencesService.getInstance().getCachedUserProfile()
       let phone = ''
       if (profile !== null) {
         phone = `${profile['phone'] ?? ''}`.trim()
       }
-      const payload: Record<string, string> = {
+      const tok = (await PreferencesService.getInstance().getNoteApiAccessToken()) ?? ''
+      const reply = FeedbackReplyInbox.getInstance().latestToJsonObject()
+      const payload: Record<string, Object | string | null> = {
         'type': 'session',
         'userId': userId,
-        'phone': phone
+        'phone': phone,
+        'accessToken': tok,
+        'reply': reply
       }
       const json = JSON.stringify(payload)
       this.feedbackSessionCache = json
       this.emitFeedbackNativeEvent(json)
+      if (isQingyuMyFeedbackPageUrl(this.webUrl)) {
+        await this.pushFeedbackLatestReplyIfNeeded()
+      }
     } catch (e) {
       console.error(`H5WebContainer pushFeedbackSession: ${JSON.stringify(e)}`)
+    }
+  }
+
+  private async pushFeedbackLatestReplyIfNeeded(): Promise<void> {
+    try {
+      await FeedbackReplyInbox.getInstance().ensureLoaded()
+      const reply = FeedbackReplyInbox.getInstance().latestToJsonObject()
+      const payload: Record<string, Object | null> = {
+        'type': 'latestReply',
+        'reply': reply
+      }
+      const json = JSON.stringify(payload)
+      this.feedbackLatestReplyCache = json
+      this.emitFeedbackNativeEvent(json)
+    } catch (e) {
+      console.error(`H5WebContainer pushFeedbackLatestReply: ${JSON.stringify(e)}`)
     }
   }
 
@@ -1711,6 +1780,38 @@ struct H5WebContainer {
           .height('100%')
           .alignItems(VerticalAlign.Center)
           .justifyContent(FlexAlign.Start)
+
+          if (this.showFeedbackEnvelope()) {
+            Stack() {
+              Row() {
+                SymbolGlyph($r('sys.symbol.envelope'))
+                  .fontSize(18)
+                  .fontColor([$r('app.color.primary_text')])
+              }
+              .height('100%')
+              .padding({
+                left: $r('app.float.toolbar_icon_button_padding_h'),
+                right: $r('app.float.toolbar_icon_button_padding_h')
+              })
+              .justifyContent(FlexAlign.Center)
+              .alignItems(VerticalAlign.Center)
+              .backgroundColor($r('app.color.surface_muted'))
+              .borderRadius($r('app.float.pill_radius'))
+              .onClick(() => {
+                void openQingyuMyFeedbackPage(this.getUIContext())
+              })
+              if (this.feedbackHasUnread) {
+                Circle()
+                  .width(8)
+                  .height(8)
+                  .fill('#E53935')
+                  .position({ x: '72%', y: 4 })
+              }
+            }
+            .height('100%')
+          } else {
+            Row().width(48).height('100%')
+          }
         }
         .width('100%')
         .height($r('app.float.toolbar_height'))
