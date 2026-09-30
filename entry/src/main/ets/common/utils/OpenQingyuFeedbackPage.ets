@@ -17,6 +17,10 @@ export function isQingyuFeedbackPageUrl(url: string): boolean {
   if (trimmed.length === 0) {
     return false
   }
+  // 排除 my-feedback，避免与「我的反馈」页混淆。
+  if (trimmed.indexOf('note.kymjs.com/my-feedback') >= 0) {
+    return false
+  }
   return trimmed.indexOf('note.kymjs.com/feedback') >= 0
 }
 
@@ -48,10 +52,11 @@ export async function openQingyuFeedbackPage(uiContext: UIContext): Promise<void
     )
     return
   }
-  void FeedbackReplyInbox.getInstance().refreshFromServer()
   const title: string = LocaleService.loc('用户反馈', 'Feedback', 'フィードバック')
   const url: string = buildQingyuFeedbackPageUrl()
   try {
+    // 打开前先拉齐最新回复，避免 H5 顶栏信封红点用到过期本地缓存。
+    await FeedbackReplyInbox.getInstance().refreshFromServer()
     await uiContext.getRouter().pushUrl({
       url: 'pages/H5WebContainer',
       params: {

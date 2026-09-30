@@ -1,7 +1,11 @@
 import fs from '@ohos.file.fs'
 import http from '@ohos.net.http'
 import { NoteApiConstants } from '../common/constants/NoteApiConstants'
-import { FeedbackReplyInbox, FeedbackReplyItem } from './FeedbackReplyInbox'
+import {
+  FeedbackReplyInbox,
+  FeedbackReplyFetchResult,
+  FeedbackReplyItem
+} from './FeedbackReplyInbox'
 import { PreferencesService } from './PreferencesService'
 import { getAppVersionName } from './AppUpdateService'
 import { handleServerUpgradeRequired } from './AppUpdateUi'
@@ -824,12 +828,14 @@ export class NoteApiClient {
 
   /**
    * GET /api/v1/me/feedback-reply。
-   * 返回 FeedbackReplyItem；无数据返回 null；网络失败返回字符串 'network_error'。
+   * kind=ok 带 item；empty 表示无数据；network_error 表示请求失败（保留本地缓存）。
    */
-  async fetchLatestFeedbackReply(): Promise<FeedbackReplyItem | null | string> {
+  async fetchLatestFeedbackReply(): Promise<FeedbackReplyFetchResult> {
+    const empty: FeedbackReplyFetchResult = { kind: 'empty', item: null }
+    const networkError: FeedbackReplyFetchResult = { kind: 'network_error', item: null }
     const tok = await PreferencesService.getInstance().getNoteApiAccessToken()
     if (tok === null || tok.length === 0) {
-      return null
+      return empty
     }
     try {
       const obj = await this.requestJson(
@@ -839,16 +845,22 @@ export class NoteApiClient {
         tok
       )
       if (obj === null) {
-        return 'network_error'
+        return networkError
       }
       const record = obj as Record<string, Object>
       const replyRaw = record['reply']
       if (replyRaw === null || replyRaw === undefined) {
-        return null
+        return empty
       }
-      return FeedbackReplyInbox.parseItem(replyRaw as Record<string, Object>)
+      const item: FeedbackReplyItem | null =
+        FeedbackReplyInbox.parseItem(replyRaw as Record<string, Object>)
+      if (item === null) {
+        return empty
+      }
+      const ok: FeedbackReplyFetchResult = { kind: 'ok', item: item }
+      return ok
     } catch (_) {
-      return 'network_error'
+      return networkError
     }
   }
 

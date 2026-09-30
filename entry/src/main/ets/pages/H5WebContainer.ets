@@ -1017,9 +1017,6 @@ struct H5WebContainer {
       }
     })
     FeedbackReplyInbox.getInstance().addListener(this.onFeedbackInboxChanged)
-    void FeedbackReplyInbox.getInstance().ensureLoaded().then(() => {
-      this.syncFeedbackInboxState()
-    })
     this.appBridge.bindOpenInvite(() => {
       void openReferralInviteSharePage(this.getUIContext())
     })
@@ -1058,6 +1055,15 @@ struct H5WebContainer {
       this.pageTitle = '网页'
       this.webUrl = 'about:blank'
       this.isLoading = false
+    }
+    void FeedbackReplyInbox.getInstance().ensureLoaded().then(() => {
+      this.syncFeedbackInboxState()
+    })
+    // 反馈页进入时再拉一次，保证信封与红点跟服务端一致（须在 webUrl 赋值之后判断）。
+    if (isQingyuFeedbackPageUrl(this.webUrl) || isQingyuMyFeedbackPageUrl(this.webUrl)) {
+      void FeedbackReplyInbox.getInstance().refreshFromServer().then(() => {
+        this.syncFeedbackInboxState()
+      })
     }
   }
 
@@ -1782,7 +1788,7 @@ struct H5WebContainer {
           .justifyContent(FlexAlign.Start)
 
           if (this.showFeedbackEnvelope()) {
-            Stack() {
+            Stack({ alignContent: Alignment.TopEnd }) {
               Row() {
                 SymbolGlyph($r('sys.symbol.envelope'))
                   .fontSize(18)
@@ -1805,10 +1811,11 @@ struct H5WebContainer {
                   .width(8)
                   .height(8)
                   .fill('#E53935')
-                  .position({ x: '72%', y: 4 })
+                  .margin({ top: 2, right: 2 })
               }
             }
             .height('100%')
+            .clip(false)
           } else {
             Row().width(48).height('100%')
           }

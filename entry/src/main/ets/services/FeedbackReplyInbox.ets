@@ -11,8 +11,15 @@ export interface FeedbackReplyItem {
   id: number
   feedbackContent: string
   feedbackType: string
+  feedbackAt: string
   officialReply: string
   createdAt: string
+}
+
+/** GET 最新回复结果：避免 ArkTS 对 string|对象 联合类型收窄失败。kind: ok | empty | network_error */
+export interface FeedbackReplyFetchResult {
+  kind: string
+  item: FeedbackReplyItem | null
 }
 
 type InboxListener = () => void
@@ -56,7 +63,10 @@ export class FeedbackReplyInbox {
   }
 
   hasUnread(): boolean {
-    return this.hasReply() && this.latest !== null && this.latest.id !== this.lastReadId
+    if (!this.hasReply() || this.latest === null) {
+      return false
+    }
+    return Number(this.latest.id) !== Number(this.lastReadId)
   }
 
   latestToJsonObject(): Record<string, Object> | null {
@@ -67,6 +77,7 @@ export class FeedbackReplyInbox {
       'id': this.latest.id,
       'feedback_content': this.latest.feedbackContent,
       'feedback_type': this.latest.feedbackType,
+      'feedback_at': this.latest.feedbackAt,
       'official_reply': this.latest.officialReply,
       'created_at': this.latest.createdAt
     }
@@ -95,15 +106,15 @@ export class FeedbackReplyInbox {
     }
     await this.readLocal()
     const result = await NoteApiClient.getInstance().fetchLatestFeedbackReply()
-    if (result === 'network_error') {
+    if (result.kind === 'network_error') {
       this.loaded = true
       this.notify()
       return
     }
-    if (result === null) {
+    if (result.kind === 'empty' || result.item === null) {
       await this.persistLatest(null)
     } else {
-      await this.persistLatest(result)
+      await this.persistLatest(result.item)
     }
     this.loaded = true
     this.notify()
@@ -182,7 +193,8 @@ export class FeedbackReplyInbox {
       }
     }
     const readRaw = store.getSync(`${LAST_READ_KEY_PREFIX}${userId}`, 0)
-    this.lastReadId = typeof readRaw === 'number' ? readRaw : 0
+    const parsed = Number(readRaw)
+    this.lastReadId = Number.isFinite(parsed) ? Math.floor(parsed) : 0
   }
 
   private async persistLatest(item: FeedbackReplyItem | null): Promise<void> {
@@ -205,6 +217,7 @@ export class FeedbackReplyInbox {
       'id': item.id,
       'feedback_content': item.feedbackContent,
       'feedback_type': item.feedbackType,
+      'feedback_at': item.feedbackAt,
       'official_reply': item.officialReply,
       'created_at': item.createdAt
     })
@@ -227,6 +240,7 @@ export class FeedbackReplyInbox {
       id: Math.floor(id),
       feedbackContent: content,
       feedbackType: `${obj['feedback_type'] ?? ''}`.trim(),
+      feedbackAt: `${obj['feedback_at'] ?? ''}`.trim(),
       officialReply: reply,
       createdAt: `${obj['created_at'] ?? ''}`.trim()
     }
