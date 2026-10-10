@@ -35,13 +35,18 @@ import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
 import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
 import { SyncService } from '../services/SyncService'
+import { VoiceTranscribeClient } from '../services/VoiceTranscribeClient'
+import { VoiceTtsClient } from '../services/VoiceTtsClient'
 import { NoteShareExportCard } from '../share/NoteShareExportCard'
 import { NoteSharePreviewSheetParams } from '../share/NoteSharePreviewSheet'
 import { ShareCardTheme, ShareCardTone, ShareThemeColors } from '../share/ShareTheme'
+import { fileIo as fs } from '@kit.CoreFileKit'
 
 interface VoiceNoteDetailParams {
   noteId?: string
   pendingVoicePath?: string
+  pendingTtsText?: string
+  sourceNoteId?: string
 }
 
 interface TranscriptRowAnchor {
@@ -139,8 +144,11 @@ struct VoiceNoteDetail {
 
   private noteId: string = ''
   private pendingVoicePath: string = ''
+  private pendingTtsText: string = ''
+  private sourceNoteId: string = ''
   private bootstrapStarted: boolean = false
   private pendingVoiceHandled: boolean = false
+  private pendingTtsHandled: boolean = false
   private waveTimer: number = -1
   /** Last successful PCM envelope parse; display may discard when duration > 1 min. */
   private parsedEnvelope: number[] = []
@@ -233,7 +241,10 @@ struct VoiceNoteDetail {
     const params = this.getUIContext().getRouter().getParams() as VoiceNoteDetailParams
     this.noteId = `${params?.noteId ?? ''}`.trim()
     this.pendingVoicePath = `${params?.pendingVoicePath ?? ''}`.trim()
+    this.pendingTtsText = `${params?.pendingTtsText ?? ''}`.trim()
+    this.sourceNoteId = `${params?.sourceNoteId ?? ''}`.trim()
     this.pendingVoiceHandled = false
+    this.pendingTtsHandled = false
     this.aiWorkingOverlayMessage = EditorUiStrings.loc('AI 处理中…', 'AI processing…', 'AI処理中…')
     const ctx = this.obtainUiAbilityContext()
     if (ctx !== undefined) {
@@ -338,6 +349,13 @@ struct VoiceNoteDetail {
     }
     this.bootstrapStarted = true
 
+    const pendingTts = this.pendingTtsText.trim()
+    if (pendingTts.length > 0 && !this.pendingTtsHandled) {
+      this.pendingTtsHandled = true
+      await this.runPendingTts(pendingTts)
+      return
+    }
+
     const n = this.note
     if (n !== null && this.shouldOpenLinkExtractProgress(n)) {
       const kind = n.sourceUrl.trim().length === 0 &&
@@ -386,6 +404,108 @@ struct VoiceNoteDetail {
     await this.refreshTagPool()
     await this.ensureVoicePipeline()
     this.ensureExtractOrAudioPoll()
+  }
+
+  private async runPendingTts(plainText: string): Promise<void> {
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    this.aiWorking = true
+    this.aiWorkingOverlayMessage = LocaleService.loc(
+      '转为语音笔记中…',
+      'Converting to voice note…',
+      '音声ノートに変換中…'
+    )
+    this.audioLoading = true
+    try {
+      const result = await VoiceTtsClient.getInstance().synthesize(plainText)
+      const audioId = AudioConstants.audioFileNameForVideoNote(this.noteId)
+      const localPath = this.localAudioPath(audioId)
+      const dir = localPath.substring(0, localPath.lastIndexOf('/'))
+      try {
+        if (!fs.accessSync(dir)) {
+          fs.mkdirSync(dir, true)
+        }
+      } catch (_e) {
+        try {
+          fs.mkdirSync(dir, true)
+        } catch (_e2) {
+          // ignore if already exists
+        }
+      }
+      const file = fs.openSync(localPath, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC)
+      try {
+        fs.writeSync(file.fd, result.audioBytes.buffer.slice(
+          result.audioBytes.byteOffset,
+          result.audioBytes.byteOffset + result.audioBytes.byteLength
+        ))
+      } finally {
+        fs.closeSync(file)
+      }
+      const segmentsJson = VoiceSegmentSplitter.encodeJson(result.segments)
+      await NoteRepository.getInstance().saveDraft(this.noteId, {
+        audioId: audioId,
+        voiceSegmentsJson: segmentsJson
+      })
+      try {
+        const summary = await VoiceTranscribeClient.getInstance().summarizeText(plainText)
+        if (summary.trim().length > 0) {
+          await NoteRepository.getInstance().saveDraft(this.noteId, {
+            voiceSummary: summary
+          })
+        }
+      } catch (_summaryErr) {
+        // 摘要失败不回滚语音笔记。
+      }
+      try {
+        await SyncService.getInstance().syncNote(this.noteId)
+        await SyncService.getInstance().uploadAudioForNoteOrThrow(this.noteId)
+      } catch (_syncErr) {
+        // 同步失败不影响本地可播。
+      }
+      if (!this.lifecycle.isActive()) {
+        return
+      }
+      await this.reloadNote(true)
+      await this.refreshTagPool()
+    } catch (error) {
+      Logger.error('VoiceNoteDetail', `runPendingTts failed: ${JSON.stringify(error)}`)
+      try {
+        await NoteRepository.getInstance().purgeLocalNoteCompletely(this.noteId)
+      } catch (_purgeErr) {
+      }
+      if (!this.lifecycle.isActive()) {
+        return
+      }
+      this.showToast(LocaleService.loc(
+        '转语音笔记失败',
+        'Failed to convert to voice note',
+        '音声ノートへの変換に失敗しました'
+      ))
+      await this.reopenSourceNoteAfterTtsFail()
+      return
+    } finally {
+      if (this.lifecycle.isActive()) {
+        this.aiWorking = false
+      }
+    }
+  }
+
+  private async reopenSourceNoteAfterTtsFail(): Promise<void> {
+    const sourceId = this.sourceNoteId.trim()
+    if (sourceId.length === 0) {
+      this.handleToolbarBack()
+      return
+    }
+    try {
+      await this.getUIContext().getRouter().replaceUrl({
+        url: 'pages/NoteEdit',
+        params: { noteId: sourceId }
+      })
+    } catch (error) {
+      Logger.error('VoiceNoteDetail', `reopenSourceNoteAfterTtsFail failed: ${JSON.stringify(error)}`)
+      this.handleToolbarBack()
+    }
   }
 
   private shouldOpenLinkExtractProgress(n: Note): boolean {

@@ -1,5 +1,5 @@
 import { common } from '@kit.AbilityKit'
-import { fileUri } from '@kit.CoreFileKit'
+import { fileIo, fileUri } from '@kit.CoreFileKit'
 
 import { Note, isExtractStatusPending } from '../common/model/Note'
 import type { SyncResult } from '../common/model/Note'
@@ -50,6 +50,8 @@ import type { CalendarItemKind } from './dashboard/calendar/CalendarModels'
 import { FlowchartService } from '../services/FlowchartService'
 import { FlowchartMindMap } from '../common/utils/FlowchartMindMap'
 import { FlowchartMermaidCodec } from '../common/utils/FlowchartMermaidCodec'
+import { CachedNetworkImage } from '../components/CachedNetworkImage'
+import { ImageCacheService } from '../services/ImageCacheService'
 
 const ACCENT = '#0DAA4A'
 const BLUE = '#3B82F6'
@@ -88,7 +90,7 @@ class DashNoteRow {
   updatedAt: number = 0
 
   updatedKey(): string {
-    return `${this.timeLabel}|${this.title}|${this.thumbUri.length}|${this.leadingKind}|${this.updatedAt}`
+    return `${this.timeLabel}|${this.title}|${this.thumbUri}|${this.leadingKind}|${this.updatedAt}`
   }
 }
 
@@ -434,6 +436,74 @@ struct MainShell {
     await next
   }
 
+  /**
+   * 首页「最近编辑 / 最新笔记」共用缩略图。
+   * 正文 Markdown 按出现顺序优先，再补 NOTE_STATE imageRefs。
+   * 本地文件缺失则试下一张；http(s) 交给 CachedNetworkImage。
+   */
+  private resolveThumbUri(note: Note): string {
+    const ordered: string[] = []
+    const seen = new Set<string>()
+    const pattern = /!\[[^\]]*\]\(([^)]+)\)/g
+    let match: RegExpExecArray | null = pattern.exec(note.content)
+    while (match) {
+      const target = match[1]
+      if (target !== undefined) {
+        this.appendImageCandidate(ordered, seen, target)
+      }
+      match = pattern.exec(note.content)
+    }
+    const refs = note.imageRefs
+    for (let i = 0; i < refs.length; i++) {
+      this.appendImageCandidate(ordered, seen, refs[i])
+    }
+    for (let i = 0; i < ordered.length; i++) {
+      const ref = ordered[i]
+      if (ImageCacheService.isNetworkImageUrl(ref)) {
+        return ref
+      }
+      if (ref.indexOf('://') >= 0 || this.filesDir.length === 0) {
+        continue
+      }
+      const parts = ref.split('/')
+      const fileName = parts.length > 0 ? parts[parts.length - 1] : ''
+      if (fileName.length === 0 || fileName === '.' || fileName === '..') {
+        continue
+      }
+      const full = `${this.filesDir}/qingyu-note-image/${fileName}`
+      let exists = false
+      try {
+        exists = fileIo.accessSync(full)
+      } catch (_) {
+        exists = false
+      }
+      if (!exists) {
+        continue
+      }
+      try {
+        return fileUri.getUriFromPath(full)
+      } catch (_) {
+      }
+    }
+    return ''
+  }
+
+  private appendImageCandidate(ordered: string[], seen: Set<string>, raw: string): void {
+    let value = raw.trim()
+    if (value.length >= 2 && value.startsWith('<') && value.endsWith('>')) {
+      value = value.substring(1, value.length - 1).trim()
+    }
+    const space = value.search(/\s/)
+    if (space > 0) {
+      value = value.substring(0, space)
+    }
+    if (value.length === 0 || seen.has(value)) {
+      return
+    }
+    seen.add(value)
+    ordered.push(value)
+  }
+
   private mapRows(notes: Note[], useUpdated: boolean, mindMapNoteIds: Set<string> = new Set()): DashNoteRow[] {
     const rows: DashNoteRow[] = []
     for (const n of notes) {
@@ -449,17 +519,7 @@ struct MainShell {
       row.leadingKind = this.leadingKindFor(n, mindMapNoteIds)
       row.openWithPreview = n.content.trim().length > 0
       row.updatedAt = n.updatedAt
-      const refs = NoteStateCodec.extractImageRefs(n.content)
-      if (refs.length > 0 && this.filesDir.length > 0) {
-        const parts = refs[0].split('/')
-        const fileName = parts[parts.length - 1]
-        const full = `${this.filesDir}/qingyu-note-image/${fileName}`
-        try {
-          row.thumbUri = fileUri.getUriFromPath(full)
-        } catch (_) {
-          row.thumbUri = ''
-        }
-      }
+      row.thumbUri = this.resolveThumbUri(n)
       rows.push(row)
     }
     return rows
@@ -1613,6 +1673,7 @@ struct MainShell {
           [this.noteRowSoftOuter(row.leadingKind), 1.0]
         ]
       })
+      .flexShrink(0)
       Column({ space: 3 }) {
         Text(row.title)
           .fontSize(14)
@@ -1631,13 +1692,30 @@ struct MainShell {
       Text(row.timeLabel)
         .fontSize(11)
         .fontColor($r('app.color.secondary_text'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .flexShrink(1)
       if (showThumb && row.thumbUri.length > 0) {
-        Image(row.thumbUri)
-          .width(52)
-          .height(40)
-          .borderRadius(8)
-          .objectFit(ImageFit.Cover)
-          .margin({ left: 8 })
+        if (ImageCacheService.isNetworkImageUrl(row.thumbUri)) {
+          CachedNetworkImage({
+            url: row.thumbUri,
+            imageWidth: 52,
+            imageHeight: 40,
+            imageBorderRadius: 8,
+            objectFit: ImageFit.Cover,
+            showLoading: false
+          })
+            .margin({ left: 8 })
+            .flexShrink(0)
+        } else {
+          Image(row.thumbUri)
+            .width(52)
+            .height(40)
+            .borderRadius(8)
+            .objectFit(ImageFit.Cover)
+            .margin({ left: 8 })
+            .flexShrink(0)
+        }
       }
     }
     .width('100%')

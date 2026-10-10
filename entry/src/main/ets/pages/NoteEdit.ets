@@ -87,6 +87,7 @@ import {
   AiNoteBackgroundTaskService,
   type AiNoteBackgroundTaskResult
 } from '../services/AiNoteBackgroundTaskService'
+import { NOTE_TYPE_MARKDOWN } from '../common/model/FlowchartGraph'
 
 interface NoteEditParams {
   noteId?: string
@@ -233,6 +234,8 @@ struct NoteEdit {
   @State shareExportSnapshotSkipQr: boolean = false
   @State shareShowAppIcon: boolean = false
   @State audioId: string = ''
+  @State noteType: number = NOTE_TYPE_MARKDOWN
+  @State isTodo: number = 0
   private saveTimer: number = -1
   private previewTimer: number = -1
   private previewDirty: boolean = true
@@ -530,7 +533,80 @@ struct NoteEdit {
         })
       }
     }
+    if (this.canShowConvertToVoiceMenu()) {
+      const canConvert = this.canConvertToVoiceNote() && !this.aiNoteWorking
+      items.push({
+        value: EditorUiStrings.loc('转为语音笔记', 'Convert to voice note', '音声ノートに変換'),
+        symbolIcon: new SymbolGlyphModifier($r('sys.symbol.mic')),
+        action: (): void => {
+          if (canConvert) {
+            void this.onConvertToVoiceNote()
+          }
+        }
+      })
+    }
     return items
+  }
+
+  private canShowConvertToVoiceMenu(): boolean {
+    return this.noteId.trim().length > 0 &&
+      this.noteType === NOTE_TYPE_MARKDOWN &&
+      this.audioId.trim().length === 0 &&
+      this.isTodo === 0
+  }
+
+  private canConvertToVoiceNote(): boolean {
+    if (!this.canShowConvertToVoiceMenu()) {
+      return false
+    }
+    return MarkdownUtils.stripMarkdown(this.content).trim().length > 0
+  }
+
+  private async onConvertToVoiceNote(): Promise<void> {
+    if (!this.canConvertToVoiceNote()) {
+      return
+    }
+    if (!(await ensureAiMembershipAccess(this.getUIContext()))) {
+      return
+    }
+    if (!this.lifecycle.isActive()) {
+      return
+    }
+    const plain = MarkdownUtils.stripMarkdown(this.content).trim()
+    if (plain.length === 0) {
+      return
+    }
+    const sourceNoteId = this.noteId.trim()
+    try {
+      const created = await NoteRepository.getInstance().createNote({
+        title: this.title.trim(),
+        content: this.content,
+        tags: this.noteTags.slice(),
+        skipTitleAutoFill: true
+      })
+      const folderId = this.parentId.trim()
+      if (folderId.length > 0) {
+        await NoteRepository.getInstance().saveDraft(created.id, {
+          parentId: folderId
+        })
+      }
+      if (!this.lifecycle.isActive()) {
+        return
+      }
+      await this.getUIContext().getRouter().replaceUrl({
+        url: 'pages/VoiceNoteDetail',
+        params: {
+          noteId: created.id,
+          pendingTtsText: plain,
+          sourceNoteId: sourceNoteId
+        }
+      })
+    } catch (error) {
+      Logger.error('NoteEdit', `onConvertToVoiceNote failed: ${JSON.stringify(error)}`)
+      this.showPreviewMessage(
+        EditorUiStrings.loc('转语音笔记失败', 'Failed to convert to voice note', '音声ノートへの変換に失敗しました')
+      )
+    }
   }
 
   private static readonly FLOAT_MENU_WIDTH: number = 154
@@ -1165,6 +1241,8 @@ struct NoteEdit {
     this.title = note.title
     this.content = note.content
     this.audioId = note.audioId ?? ''
+    this.noteType = note.type_ ?? NOTE_TYPE_MARKDOWN
+    this.isTodo = note.isTodo ?? 0
     this.previousContent = note.content
     this.contentCaretIndex = note.content.length
     this.lastSavedAt = note.updatedAt
