@@ -302,6 +302,8 @@ struct VoiceNote {
       void this.startRecording()
     } else if (this.phase === VoiceNotePhase.Recording) {
       void this.stopRecording()
+    } else if (this.phase === VoiceNotePhase.Stopped) {
+      void this.handleComplete()
     }
   }
 

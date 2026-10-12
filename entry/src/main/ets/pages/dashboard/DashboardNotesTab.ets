@@ -367,7 +367,8 @@ export struct DashboardNotesTab {
         for (const note of group.notes) {
           const row = new NotesTabListRow()
           row.kind = 'note'
-          row.rowKey = `n-${group.id}-${note.id}`
+          // rowKey 含收藏态，确保 LazyForEach 在 toggleFavorite 后重建星标。
+          row.rowKey = `n-${group.id}-${note.id}-f${note.isFavorite ?? 0}`
           row.groupId = group.id
           row.note = note
           rows.push(row)
@@ -1281,6 +1282,7 @@ export struct DashboardNotesTab {
           SymbolGlyph((note.isFavorite ?? 0) !== 0 ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'))
             .fontSize(16)
             .fontColor([(note.isFavorite ?? 0) !== 0 ? $r('app.color.accent') : $r('app.color.secondary_text')])
+            .hitTestBehavior(HitTestMode.Block)
             .onClick((): void => {
               void this.toggleFavorite(note)
             })
@@ -1295,6 +1297,7 @@ export struct DashboardNotesTab {
             SymbolGlyph((note.isFavorite ?? 0) !== 0 ? $r('sys.symbol.star_fill') : $r('sys.symbol.star'))
               .fontSize(16)
               .fontColor([(note.isFavorite ?? 0) !== 0 ? $r('app.color.accent') : $r('app.color.secondary_text')])
+              .hitTestBehavior(HitTestMode.Block)
               .onClick((): void => {
                 void this.toggleFavorite(note)
               })

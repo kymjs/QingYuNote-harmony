@@ -1861,7 +1861,7 @@ struct MainShell {
     // 内容部分在标题对齐基础上左右各 +8vp。
     Stack({ alignContent: Alignment.BottomStart }) {
       Column({ space: 6 }) {
-        Text(LocaleService.loc('日程清单', 'Schedule list', '予定一覧'))
+        Text(LocaleService.loc('今日日程', "Today's schedule", '今日の予定'))
           .fontSize(16)
           .fontWeight(FontWeight.Bold)
           .width('100%')
