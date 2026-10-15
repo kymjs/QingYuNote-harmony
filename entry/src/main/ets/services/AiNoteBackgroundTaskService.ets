@@ -1,4 +1,5 @@
 import { AppContextHolder } from './AppContextHolder'
+import { RemoteAppConfigService } from './RemoteAppConfigService'
 import { AiNoteService } from './AiNoteService'
 import { LinkExtractClient } from './LinkExtractClient'
 import { NoteRepository } from './NoteRepository'
@@ -147,12 +148,20 @@ export class AiNoteBackgroundTaskService {
     }
     const hasImageRefs = NoteStateCodec.extractImageRefs(content).length > 0
     const noteHasText = NoteStateCodec.hasSubstantiveNoteText(content)
+    const filesDir = AppContextHolder.tryGetContext()?.filesDir ?? ''
+    const aiEnabled = await RemoteAppConfigService.readAiConfigFromCache(filesDir)
     const message = overlayMessage.trim().length > 0
       ? overlayMessage.trim()
       : EditorUiStrings.loc(
-        !noteHasText && hasImageRefs ? 'AI 生成笔记中…' : 'AI 处理中…',
-        !noteHasText && hasImageRefs ? 'AI generating note…' : 'AI processing…',
-        !noteHasText && hasImageRefs ? 'AIがノートを生成中…' : 'AI処理中…'
+        !noteHasText && hasImageRefs
+          ? (aiEnabled ? 'AI 生成笔记中…' : '为您创建笔记中…')
+          : 'AI 处理中…',
+        !noteHasText && hasImageRefs
+          ? (aiEnabled ? 'AI generating note…' : 'Creating a note for you…')
+          : 'AI processing…',
+        !noteHasText && hasImageRefs
+          ? (aiEnabled ? 'AIがノートを生成中…' : 'ノートを作成しています…')
+          : 'AI処理中…'
       )
     return this.runLocked(id, message, async (): Promise<AiNoteBackgroundTaskResult> => {
       const contentBefore = content
@@ -176,12 +185,14 @@ export class AiNoteBackgroundTaskService {
         skipTitleAutoFill: nextTitle.trim().length === 0
       })
       const successText = bookExtract
-        ? EditorUiStrings.loc('AI 已提取书中文字', 'AI extracted text from the book', 'AIが本の文字を抽出しました')
-        : EditorUiStrings.loc(
-          noteHasText ? 'AI 已优化笔记正文' : 'AI 已根据图片生成笔记',
-          noteHasText ? 'AI polished the note' : 'AI generated note from image',
-          noteHasText ? 'AIがノート本文を最適化しました' : 'AIが画像からノートを生成しました'
-        )
+        ? (aiEnabled
+          ? EditorUiStrings.loc('AI 已提取书中文字', 'AI extracted text from the book', 'AIが本の文字を抽出しました')
+          : EditorUiStrings.loc('已提取书中文字', 'Text extracted from the book', '書籍の文字を抽出しました'))
+        : (noteHasText
+          ? EditorUiStrings.loc('AI 已优化笔记正文', 'AI polished the note', 'AIがノート本文を最適化しました')
+          : (aiEnabled
+            ? EditorUiStrings.loc('AI 已根据图片生成笔记', 'AI generated note from image', 'AIが画像からノートを生成しました')
+            : EditorUiStrings.loc('已创建笔记', 'Note created', 'ノートを作成しました')))
       const result = new AiNoteBackgroundTaskResult()
       result.noteId = id
       result.kind = 'optimize'

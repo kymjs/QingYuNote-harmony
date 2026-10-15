@@ -15,6 +15,7 @@ import { FlowchartService } from '../../services/FlowchartService'
 import { LocaleService } from '../../services/LocaleService'
 import { NoteRepository } from '../../services/NoteRepository'
 import { PreferencesService } from '../../services/PreferencesService'
+import { RemoteAppConfigService } from '../../services/RemoteAppConfigService'
 import { SyncService } from '../../services/SyncService'
 import { WebDAVClient } from '../../services/WebDAVClient'
 import { previewQingyuForHomeSubscription } from '../../services/QingyuCloudAutoProvision'
@@ -55,6 +56,7 @@ export struct DashboardNotesTab {
   @State allNotes: Note[] = []
   @State mindMapNoteIds: string[] = []
   @State loading: boolean = true
+  @State aiFeatureEnabled: boolean = true
   @State syncing: boolean = false
   @State refreshing: boolean = false
   @State cloudConfigured: boolean = true
@@ -248,6 +250,7 @@ export struct DashboardNotesTab {
       const notes = await NoteRepository.getInstance().listNotes()
       const mindMaps = await this.detectMindMaps(notes)
       const cloudConfigured = await this.resolveCloudConfigured()
+      const aiFeatureEnabled = await RemoteAppConfigService.readAiConfigFromCache(this.filesDir)
       if (generation !== this.reloadGeneration) {
         return
       }
@@ -258,6 +261,7 @@ export struct DashboardNotesTab {
       this.allNotes = notes
       this.mindMapNoteIds = Array.from(mindMaps)
       this.cloudConfigured = cloudConfigured
+      this.aiFeatureEnabled = aiFeatureEnabled
       this.loading = false
       this.initialLoaded = true
       this.rebuildListRows()
@@ -1326,10 +1330,14 @@ export struct DashboardNotesTab {
 
   private noteTitleLabel(note: Note): string {
     if (isExtractStatusPending(note.extractStatus)) {
-      return LocaleService.loc('AI 提取链接中…', 'AI extracting link…', 'AIリンク抽出中…')
+      return this.aiFeatureEnabled
+        ? LocaleService.loc('AI 提取链接中…', 'AI extracting link…', 'AIリンク抽出中…')
+        : LocaleService.loc('正在提取链接中…', 'Extracting link…', 'リンクを抽出しています…')
     }
     if (note.extractStatus === 'failed') {
-      return LocaleService.loc('AI 提取失败', 'AI extract failed', 'AI抽出失敗')
+      return this.aiFeatureEnabled
+        ? LocaleService.loc('AI 提取失败', 'AI extract failed', 'AI抽出失敗')
+        : LocaleService.loc('提取失败', 'Extraction failed', '抽出失敗')
     }
     const t = `${note.title ?? ''}`.trim()
     return t.length > 0 ? t : LocaleService.loc('无标题', 'Untitled', '無題')

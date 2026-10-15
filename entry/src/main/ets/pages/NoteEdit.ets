@@ -126,6 +126,7 @@ struct NoteEdit {
   @State tagMenuVisible: boolean = false
   @State aiTagCreating: boolean = false
   @State aiFeatureEnabled: boolean = false
+  @State aiFeatureConfigReady: boolean = false
   @State aiNoteWorking: boolean = false
   @State aiWorkingOverlayMessage: string = 'AI 处理中…'
   private extractPollTimer: number = -1
@@ -462,6 +463,7 @@ struct NoteEdit {
     const enabled = await RemoteAppConfigService.readAiConfigFromCache(filesDir)
     if (this.lifecycle.isActive()) {
       this.aiFeatureEnabled = enabled
+      this.aiFeatureConfigReady = true
     }
   }
 
@@ -2802,12 +2804,19 @@ struct NoteEdit {
     if (!svc.ensureIdleOrNotifyBusy()) {
       return
     }
+    await this.loadAiFeatureConfig()
     const optimizeMessage = bookExtract
       ? EditorUiStrings.loc('正在识别书中文字…', 'Extracting text from book…', '書籍の文字を認識中…')
       : EditorUiStrings.loc(
-        !noteHasText && hasImageRefs ? 'AI 生成笔记中…' : 'AI 处理中…',
-        !noteHasText && hasImageRefs ? 'AI writing note…' : 'AI working…',
-        !noteHasText && hasImageRefs ? 'AIがノートを生成中…' : 'AI処理中…'
+        !noteHasText && hasImageRefs
+          ? (this.aiFeatureEnabled ? 'AI 生成笔记中…' : '为您创建笔记中…')
+          : 'AI 处理中…',
+        !noteHasText && hasImageRefs
+          ? (this.aiFeatureEnabled ? 'AI writing note…' : 'Creating a note for you…')
+          : 'AI working…',
+        !noteHasText && hasImageRefs
+          ? (this.aiFeatureEnabled ? 'AIがノートを生成中…' : 'ノートを作成しています…')
+          : 'AI処理中…'
       )
     this.aiWorkingOverlayMessage = optimizeMessage
     this.aiNoteWorking = true
@@ -3522,6 +3531,7 @@ struct NoteEdit {
           tagPool: this.tagPool,
           noteTags: this.noteTagsSafe(),
           aiTagCreating: this.aiTagCreating,
+          aiFeatureEnabled: !this.aiFeatureConfigReady || this.aiFeatureEnabled,
           onTagChecked: (tag: string, selected: boolean) => {
             void this.onTagChecked(tag, selected)
           },

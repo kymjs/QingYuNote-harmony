@@ -34,6 +34,7 @@ import { APP_LOCALE_REVISION_KEY, LocaleService } from '../services/LocaleServic
 import { NoteApiClient, type ProfileBody } from '../services/NoteApiClient'
 import { NoteRepository } from '../services/NoteRepository'
 import { PreferencesService } from '../services/PreferencesService'
+import { RemoteAppConfigService } from '../services/RemoteAppConfigService'
 import { SyncService } from '../services/SyncService'
 import { VoiceTranscribeClient } from '../services/VoiceTranscribeClient'
 import { VoiceTtsClient } from '../services/VoiceTtsClient'
@@ -113,6 +114,8 @@ struct VoiceNoteDetail {
   @State private waveVisualTick: number = 0
 
   @State private contentTabIndex: number = 0
+  /** 远端配置 `ai` + `ai_version`。关闭时不展示摘要 Tab，也不静默补摘要。 */
+  @State private aiFeatureEnabled: boolean = false
   @State private aiWorking: boolean = false
   @State private aiWorkingOverlayMessage: string = 'AI 处理中…'
   /** 外层 Scroll 视口高；TabBar 高；吸顶后 Swiper = viewport - tabBar。 */
@@ -338,11 +341,33 @@ struct VoiceNoteDetail {
     return (this.note?.voiceSummary.trim() ?? '').length > 0
   }
 
+  /** 摘要 Tab：配置开启且已有摘要时才展示。 */
+  private showSummaryTab(): boolean {
+    return this.aiFeatureEnabled && this.hasSummary()
+  }
+
+  private async loadAiFeatureConfig(): Promise<void> {
+    const filesDir = this.filesDirCache.length > 0
+      ? this.filesDirCache
+      : (this.obtainUiAbilityContext()?.filesDir ?? '')
+    const enabled = await RemoteAppConfigService.readAiConfigFromCache(filesDir)
+    if (this.lifecycle.isActive()) {
+      this.aiFeatureEnabled = enabled
+      if (!enabled) {
+        this.contentTabIndex = 0
+      }
+    }
+  }
+
   private segments(): VoiceTranscriptSegment[] {
     return VoiceSegmentSplitter.decodeJson(this.note?.voiceSegmentsJson ?? '')
   }
 
   private async bootstrap(): Promise<void> {
+    await this.loadAiFeatureConfig()
+    if (!this.lifecycle.isActive()) {
+      return
+    }
     await this.reloadNote(true)
     if (!this.lifecycle.isActive() || this.bootstrapStarted) {
       return
@@ -632,7 +657,8 @@ struct VoiceNoteDetail {
     if (!this.lifecycle.isActive() || latest === null) {
       return
     }
-    if (latest.content.trim().length > 0 &&
+    if (this.aiFeatureEnabled &&
+      latest.content.trim().length > 0 &&
       latest.voiceSummary.trim().length === 0 &&
       !VoiceNoteDetail.summaryBackfillAttempted.has(this.noteId)) {
       VoiceNoteDetail.summaryBackfillAttempted.add(this.noteId)
@@ -2052,7 +2078,7 @@ struct VoiceNoteDetail {
       ))
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.secondary_text'))
+        .fontColor(Color.White)
     }
     .padding({ left: 10, right: 10, top: 6, bottom: 6 })
     .borderRadius(999)
@@ -2425,7 +2451,7 @@ struct VoiceNoteDetail {
           Scroll(this.outerScroller) {
             Column() {
               this.buildStickyHeaderBlock()
-              if (this.hasSummary()) {
+              if (this.showSummaryTab()) {
                 this.buildTabbedContent()
               } else {
                 List() {

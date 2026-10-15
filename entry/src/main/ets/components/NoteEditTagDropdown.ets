@@ -6,6 +6,8 @@ export struct NoteEditTagDropdown {
   @Prop tagPool: string[] = []
   @Prop noteTags: string[] = []
   @Prop aiTagCreating: boolean = false
+  /** 远端 AI 关闭时，菜单文案为「自动创建标签」。 */
+  @Prop aiFeatureEnabled: boolean = true
   onTagChecked: (tag: string, selected: boolean) => void = () => {
   }
   onAiCreateTag: () => void = () => {
@@ -103,7 +105,9 @@ export struct NoteEditTagDropdown {
         }
         Text(this.aiTagCreating
           ? EditorUiStrings.loc('AI 生成中…', 'AI generating…', 'AI生成中…')
-          : EditorUiStrings.loc('AI创建标签', 'AI create tag', 'AIでタグ作成'))
+          : (this.aiFeatureEnabled
+            ? EditorUiStrings.loc('AI创建标签', 'AI create tag', 'AIでタグ作成')
+            : EditorUiStrings.loc('自动创建标签', 'Auto-create tag', 'タグを自動作成')))
           .fontSize($r('app.float.body_font_size'))
           .fontColor($r('app.color.accent'))
           .margin({ left: 8 })
